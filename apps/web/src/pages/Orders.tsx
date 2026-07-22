@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
 
 interface Order {
   id: string;
@@ -11,47 +13,58 @@ interface Order {
 
 export default function Orders() {
   const { activeSlug } = useAuth();
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[] | null>(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     if (!activeSlug) return;
-    setOrders([]);
+    setOrders(null);
     setErr("");
     api
       .get<{ orders: Order[] }>("/orders")
       .then((r) => setOrders(r.orders))
-      .catch((e) => setErr((e as Error).message));
+      .catch((e) => {
+        setErr((e as Error).message);
+        setOrders([]);
+      });
   }, [activeSlug]);
 
   return (
     <>
-      <div className="page-head"><h1>Orders</h1></div>
-      <div className="card">
-        {err && <div className="err">{err}</div>}
-        {orders.length === 0 ? (
-          <div className="empty">No confirmed orders yet.</div>
+      <PageHeader title="Orders" subtitle="Confirmed orders in this workspace" />
+      <Card pad={false}>
+        {err && <div className="px-5 py-3 text-[13px] text-accent">{err}</div>}
+        {orders === null ? (
+          <Spinner />
+        ) : orders.length === 0 ? (
+          <EmptyState title="No confirmed orders yet" hint="Orders appear here once an RFQ is confirmed." />
         ) : (
-          <table>
+          <table className="w-full">
             <thead>
               <tr>
-                <th>Order #</th>
-                <th>Items</th>
-                <th>Status</th>
+                <th className="th">Order</th>
+                <th className="th">Items</th>
+                <th className="th">Status</th>
+                <th className="th w-4" />
               </tr>
             </thead>
             <tbody>
               {orders.map((o) => (
-                <tr key={o.id}>
-                  <td><strong>{o.order_number}</strong></td>
-                  <td>{o.items}</td>
-                  <td><span className="badge">{o.status ?? "—"}</span></td>
+                <tr key={o.id} className="trow cursor-pointer">
+                  <td className="td font-semibold text-accent tnum">{o.order_number}</td>
+                  <td className="td tnum">{o.items}</td>
+                  <td className="td">
+                    <Badge tone={statusTone(o.status)}>{o.status ?? "—"}</Badge>
+                  </td>
+                  <td className="td text-right">
+                    <ChevronRight className="ml-auto h-4 w-4 text-line" />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
-      </div>
+      </Card>
     </>
   );
 }

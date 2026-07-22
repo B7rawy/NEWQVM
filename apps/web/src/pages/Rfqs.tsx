@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
+import { ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
 
 interface Rfq {
   id: string;
@@ -16,7 +18,7 @@ interface Branch {
 
 export default function Rfqs() {
   const { activeSlug } = useAuth();
-  const [rfqs, setRfqs] = useState<Rfq[]>([]);
+  const [rfqs, setRfqs] = useState<Rfq[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
   const [plate, setPlate] = useState("");
@@ -28,23 +30,25 @@ export default function Rfqs() {
   const load = useCallback(async () => {
     const res = await api.get<{ rfqs: Rfq[] }>("/rfqs");
     setRfqs(res.rfqs);
-    // branches come from a lightweight endpoint; fall back gracefully if none
     try {
       const b = await api.get<{ branches: Branch[] }>("/workspaces/branches");
       setBranches(b.branches);
       if (b.branches[0]) setBranchId((cur) => cur || b.branches[0].id);
     } catch {
-      /* endpoint optional */
+      /* optional */
     }
   }, []);
 
   useEffect(() => {
     if (!activeSlug) return;
-    setRfqs([]);
+    setRfqs(null);
     setBranches([]);
     setBranchId("");
     setErr("");
-    load().catch((e) => setErr((e as Error).message));
+    load().catch((e) => {
+      setErr((e as Error).message);
+      setRfqs([]);
+    });
   }, [activeSlug, load]);
 
   async function create(e: React.FormEvent) {
@@ -70,67 +74,74 @@ export default function Rfqs() {
 
   return (
     <>
-      <div className="page-head">
-        <h1>RFQs</h1>
-      </div>
-      <div className="grid2">
-        <div className="card">
-          {rfqs.length === 0 ? (
-            <div className="empty">No RFQs yet in this workspace.</div>
+      <PageHeader title="RFQs" subtitle="Requests for quote in this workspace" />
+      <div className="grid grid-cols-1 items-start gap-5 lg:grid-cols-[1fr_320px]">
+        <Card pad={false}>
+          {rfqs === null ? (
+            <Spinner />
+          ) : rfqs.length === 0 ? (
+            <EmptyState title="No RFQs yet" hint="Create one from the form to get started." />
           ) : (
-            <table>
+            <table className="w-full">
               <thead>
                 <tr>
-                  <th>Order #</th>
-                  <th>Plate</th>
-                  <th>Items</th>
-                  <th>Status</th>
+                  <th className="th">Order</th>
+                  <th className="th">Plate</th>
+                  <th className="th">Items</th>
+                  <th className="th">Status</th>
+                  <th className="th w-4" />
                 </tr>
               </thead>
               <tbody>
                 {rfqs.map((r) => (
-                  <tr key={r.id}>
-                    <td><strong>{r.order_number}</strong></td>
-                    <td>{r.plate_number ?? <span className="muted">—</span>}</td>
-                    <td>{r.items}</td>
-                    <td><span className="badge">{r.status ?? "—"}</span></td>
+                  <tr key={r.id} className="trow cursor-pointer">
+                    <td className="td font-semibold text-accent tnum">{r.order_number}</td>
+                    <td className="td tnum">{r.plate_number ?? <span className="text-faint">—</span>}</td>
+                    <td className="td tnum">{r.items}</td>
+                    <td className="td">
+                      <Badge tone={statusTone(r.status)}>{r.status ?? "—"}</Badge>
+                    </td>
+                    <td className="td text-right">
+                      <ChevronRight className="ml-auto h-4 w-4 text-line" />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
-        </div>
-        <form className="card" onSubmit={create}>
-          <h3 style={{ marginTop: 0 }}>New RFQ</h3>
-          <div className="field">
-            <label>Workshop branch</label>
-            {branches.length ? (
-              <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
-            ) : (
-              <input value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder="branch id" />
-            )}
-          </div>
-          <div className="field">
-            <label>Plate number</label>
-            <input value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="ABC-1234" />
-          </div>
-          <div className="field">
-            <label>Part number</label>
-            <input value={partNumber} onChange={(e) => setPartNumber(e.target.value)} placeholder="BRK-01" />
-          </div>
-          <div className="field">
-            <label>Quantity</label>
-            <input type="number" min={1} value={qty} onChange={(e) => setQty(Number(e.target.value))} />
-          </div>
-          {err && <div className="err">{err}</div>}
-          <button className="primary" style={{ width: "100%" }} disabled={busy || !branchId}>
-            {busy ? "Creating…" : "Create RFQ"}
-          </button>
-        </form>
+        </Card>
+
+        <Card>
+          <h3 className="mb-3 text-[14px] font-semibold text-ink">New RFQ</h3>
+          <form onSubmit={create}>
+            <Field label="Workshop branch">
+              {branches.length ? (
+                <select className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input className="input" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder="branch id" />
+              )}
+            </Field>
+            <Field label="Plate number">
+              <input className="input" value={plate} onChange={(e) => setPlate(e.target.value)} placeholder="ABC-1234" />
+            </Field>
+            <Field label="Part number">
+              <input className="input" value={partNumber} onChange={(e) => setPartNumber(e.target.value)} placeholder="BRK-01" />
+            </Field>
+            <Field label="Quantity">
+              <input className="input" type="number" min={1} value={qty} onChange={(e) => setQty(Number(e.target.value))} />
+            </Field>
+            {err && <div className="mb-2 text-[13px] text-accent">{err}</div>}
+            <button className="btn-primary w-full rounded-md" disabled={busy || !branchId}>
+              {busy ? "Creating…" : "Create RFQ"}
+            </button>
+          </form>
+        </Card>
       </div>
     </>
   );

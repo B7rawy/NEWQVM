@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
+import { Field } from "../components/ui";
 
 export default function Login() {
   const { login } = useAuth();
@@ -22,27 +23,26 @@ export default function Login() {
   }
 
   return (
-    <div className="login-wrap">
-      <form className="login-card" onSubmit={submit}>
-        <div className="brand" style={{ marginBottom: 4 }}>
-          QVM<span> Platform</span>
+    <div className="grid h-full place-items-center bg-surface">
+      <form onSubmit={submit} className="w-[360px] rounded-xl2 border border-line bg-white p-7 shadow-card">
+        <div className="text-[22px] font-bold tracking-tight text-navy">
+          QVM<span className="text-accent"> Platform</span>
         </div>
-        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>Sign in to your workspace</p>
-        <div className="field">
-          <label>Email</label>
-          <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
-        </div>
-        <div className="field">
-          <label>Password</label>
+        <p className="mb-4 mt-0.5 text-[13px] text-muted">Sign in to your workspace</p>
+        <Field label="Email">
+          <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
+        </Field>
+        <Field label="Password">
           <input
+            className="input"
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
           />
-        </div>
-        {err && <div className="err">{err}</div>}
-        <button className="primary" style={{ width: "100%" }} disabled={busy}>
+        </Field>
+        {err && <div className="mb-2 text-[13px] text-accent">{err}</div>}
+        <button className="btn-primary w-full rounded-md" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>

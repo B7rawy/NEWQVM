@@ -1,87 +1,79 @@
-/* QVM Platform — brand tokens (navy/red, from the old design system) + clean B2B layout. */
-:root {
-  --navy: #0d4151;
-  --navy-2: #123b48;
-  --red: #e21a1a;
-  --bg: #f4f6f8;
-  --card: #ffffff;
-  --line: #e3e8ee;
-  --text: #16232a;
-  --muted: #6b7a86;
-  --ok: #178a52;
-  --radius: 10px;
-  --shadow: 0 1px 2px rgba(16, 35, 42, 0.06), 0 4px 16px rgba(16, 35, 42, 0.05);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap");
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
 }
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; margin: 0; }
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Cairo, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 14px;
+  @apply bg-surface text-ink antialiased;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Cairo, sans-serif;
 }
-a { color: var(--navy); }
-button {
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid var(--line);
-  background: #fff;
-  border-radius: 8px;
-  padding: 8px 14px;
+.tnum {
+  font-variant-numeric: tabular-nums;
 }
-button.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
-button.primary:hover { background: var(--navy-2); }
-button.danger { color: var(--red); border-color: var(--red); }
-button:disabled { opacity: 0.5; cursor: default; }
-input, select {
-  font: inherit;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  width: 100%;
-}
-label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.field { margin-bottom: 12px; }
 
-/* login */
-.login-wrap { display: grid; place-items: center; height: 100%; }
-.login-card {
-  width: 360px; background: var(--card); border-radius: var(--radius);
-  box-shadow: var(--shadow); padding: 28px;
+@layer components {
+  /* Buttons — Stripe shape (6px radius), red primary */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border-0 bg-white px-3.5 py-2 text-[13px] font-medium text-sub transition;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02), 0 0 0 1px rgba(50, 50, 93, 0.1), 0 1px 2px rgba(50, 50, 93, 0.08);
+  }
+  .btn:hover {
+    @apply bg-surface;
+  }
+  .btn-primary {
+    @apply bg-accent px-3.5 py-2 text-[13px] font-medium text-white;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06), 0 2px 5px rgba(50, 50, 93, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  }
+  .btn-primary:hover {
+    @apply bg-accent-hover;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-white px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-faint;
+  }
+  .input:focus {
+    @apply border-accent;
+    box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium text-muted;
+  }
+  .card {
+    @apply rounded-xl2 border border-line bg-white shadow-card;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold;
+  }
+  /* Table — Stripe: sentence-case gray headers, clickable rows */
+  .th {
+    @apply px-4 py-3 text-left text-[12px] font-medium text-muted;
+  }
+  .td {
+    @apply px-4 py-3.5 text-[13px] text-ink;
+  }
+  .trow {
+    @apply border-t border-line-2 transition;
+  }
+  .trow:hover {
+    @apply bg-surface;
+  }
+  /* Sidebar nav item */
+  .nav-item {
+    @apply mx-2 flex items-center gap-3 rounded-md px-2.5 py-1.5 text-[13px] font-normal text-sub no-underline transition;
+  }
+  .nav-item:hover {
+    @apply bg-surface;
+  }
+  .nav-item.active {
+    @apply bg-accent-50 font-medium text-accent;
+  }
 }
-.brand { font-weight: 800; letter-spacing: -0.5px; color: var(--navy); font-size: 22px; }
-.brand span { color: var(--red); }
-.err { color: var(--red); font-size: 13px; margin: 8px 0; }
-
-/* shell */
-.shell { display: grid; grid-template-rows: auto 1fr; height: 100%; }
-.topbar {
-  display: flex; align-items: center; gap: 16px;
-  background: var(--navy); color: #fff; padding: 0 18px; height: 56px;
-}
-.topbar .brand { color: #fff; }
-.topbar .brand span { color: #ff8a8a; }
-.topbar nav { display: flex; gap: 4px; margin-left: 12px; }
-.topbar nav a {
-  color: #cfe0e6; text-decoration: none; padding: 8px 12px; border-radius: 8px; font-size: 13px;
-}
-.topbar nav a.active, .topbar nav a:hover { background: rgba(255,255,255,0.12); color: #fff; }
-.spacer { flex: 1; }
-.ws-switch { display: flex; align-items: center; gap: 8px; }
-.ws-switch select { width: auto; background: rgba(255,255,255,0.12); color: #fff; border-color: transparent; }
-.ws-switch select option { color: #16232a; }
-.who { font-size: 12px; color: #cfe0e6; }
-.content { padding: 24px; overflow: auto; }
-
-/* cards + tables */
-.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
-.page-head { display: flex; align-items: center; margin-bottom: 18px; }
-.page-head h1 { font-size: 20px; margin: 0; }
-.grid2 { display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
-th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
-.badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; background: #eef3f6; color: var(--navy); }
-.muted { color: var(--muted); }
-.empty { color: var(--muted); text-align: center; padding: 40px; }
