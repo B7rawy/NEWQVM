@@ -86,5 +86,16 @@ this workspace").
 **مُتحقَّق HTTP:** طلب ببندين من موردين مختلفين → **أمرا شراء منفصلان** (بند لكل) بتكلفة صحيحة من
 التسعيرات الفائزة (600 / 180) · إنشاء مكرر مرفوض · الورشة (advisor) → 403.
 
-## التالي (Phase 2g+)
-التسليم (deliveries — تسليم مجزّأ) → الفوترة (invoices) → المرتجعات (returns + credit notes). ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
+### Phase 2g — التسليم (مجزّأ) + الفوترة ✅ (هذا الكومِت)
+- `DeliveryService.create`: تسليم مجموعة بنود، **يدعم التجزئة/التسليم على دفعات** (القديم المسطّح
+  ماكانش يقدر)؛ يمنع تجاوز الكمية (المُسلَّم+المطلوب ≤ approved_qty)؛ البند يصير `delivered` فقط عند
+  اكتمال كميته. POST/GET /orders/:id/deliveries (@PlatformOnly).
+- `InvoiceService.issue`: فاتورة واحدة لكل طلب (idempotent)، **ضريبة 15%**؛ سعر البيع = selling_price
+  وإلا تكلفة التسعيرة الفائزة (placeholder موثَّق لحين محرك التسعير QNEW-30)؛ رقم فاتورة عبر
+  next_order_number('INV-'). POST/GET /orders/:id/invoice (@PlatformOnly).
+
+**مُتحقَّق HTTP:** تسليم جزئي 3/5 (البند يظل confirmed) → تسليم 2 (يكتمل → delivered) → تجاوز 6>5
+مرفوض → فاتورة (500 + 75 ضريبة = 575) → فاتورة مكررة مرفوضة → الورشة 403.
+
+## التالي (Phase 2h+)
+المرتجعات (returns + return_items + credit_notes) — إغلاق دورة الحياة. ثم موديولات الرودماب. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).

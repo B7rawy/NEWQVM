@@ -11,6 +11,10 @@ import { OrdersController } from "./modules/orders/orders.controller.js";
 import { OrdersService } from "./modules/orders/orders.service.js";
 import { PurchasingController } from "./modules/purchasing/purchasing.controller.js";
 import { PurchasingService } from "./modules/purchasing/purchasing.service.js";
+import { DeliveryController } from "./modules/delivery/delivery.controller.js";
+import { DeliveryService } from "./modules/delivery/delivery.service.js";
+import { InvoiceController } from "./modules/invoicing/invoice.controller.js";
+import { InvoiceService } from "./modules/invoicing/invoice.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -26,7 +30,16 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     QuoteAccessController,
     OrdersController,
     PurchasingController,
+    DeliveryController,
+    InvoiceController,
   ],
-  providers: [RfqService, VendorRfqService, OrdersService, PurchasingService],
+  providers: [
+    RfqService,
+    VendorRfqService,
+    OrdersService,
+    PurchasingService,
+    DeliveryService,
+    InvoiceService,
+  ],
 })
 export class AppModule {}
