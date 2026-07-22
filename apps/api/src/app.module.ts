@@ -5,6 +5,8 @@ import { NotificationsModule } from "./modules/notifications/notifications.modul
 import { MeController } from "./modules/me/me.controller.js";
 import { WorkspacesAdminController } from "./modules/admin/workspaces-admin.controller.js";
 import { WorkspacesAdminService } from "./modules/admin/workspaces-admin.service.js";
+import { OrgController } from "./modules/org/org.controller.js";
+import { OrgService } from "./modules/org/org.service.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
 import { RfqService } from "./modules/rfq/rfq.service.js";
 import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
@@ -65,6 +67,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorFinanceController,
     ShippingController,
     WorkspacesAdminController,
+    OrgController,
   ],
   providers: [
     RfqService,
@@ -85,6 +88,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorFinanceService,
     ShippingService,
     WorkspacesAdminService,
+    OrgService,
   ],
 })
 export class AppModule {}
