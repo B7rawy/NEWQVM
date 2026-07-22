@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Send } from "lucide-react";
+import { ArrowLeft, Send, Check } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Card, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
@@ -38,6 +38,16 @@ interface VendorOpt {
   id: string;
   legal_name: string;
 }
+interface QuoteRow {
+  item_id: string;
+  part_number: string | null;
+  part_description: string | null;
+  winning_vendor_quote_item_id: string | null;
+  quote_id: string | null;
+  offered_cost: string | null;
+  sla_hours: number | null;
+  vendor: string | null;
+}
 
 export default function RfqDetail() {
   const { id } = useParams();
@@ -49,10 +59,20 @@ export default function RfqDetail() {
   const [picking, setPicking] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
+  const [quotes, setQuotes] = useState<QuoteRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const isPlatform = me?.persona === "platform";
 
   const load = useCallback(async () => {
-    setD(await api.get<Detail>(`/rfqs/${id}`));
-  }, [id]);
+    const detail = await api.get<Detail>(`/rfqs/${id}`);
+    setD(detail);
+    if (me?.persona === "platform" && detail.vendors.length > 0) {
+      const q = await api.get<{ rows: QuoteRow[] }>(`/rfqs/${id}/quotes`).catch(() => ({ rows: [] }));
+      setQuotes(q.rows);
+    } else {
+      setQuotes(null);
+    }
+  }, [id, me?.persona]);
   useEffect(() => {
     setD(null);
     setErr("");
@@ -60,6 +80,28 @@ export default function RfqDetail() {
     setSelected(new Set());
     load().catch((e) => setErr((e as Error).message));
   }, [id, activeSlug, environment, load]);
+
+  async function pickWinner(itemId: string, quoteId: string) {
+    setBusy(true);
+    try {
+      await api.post(`/rfqs/${id}/items/${itemId}/winning-quote`, { quoteItemId: quoteId });
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function confirm() {
+    setBusy(true);
+    try {
+      await api.post(`/rfqs/${id}/confirm`, {});
+      nav("/orders");
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusy(false);
+    }
+  }
 
   async function openPicker() {
     setPicking(true);
@@ -88,6 +130,16 @@ export default function RfqDetail() {
 
   const { rfq, items, vendors } = d;
 
+  // group quote rows by item
+  const quoteGroups = new Map<string, { part: string | null; winner: string | null; rows: QuoteRow[] }>();
+  for (const r of quotes ?? []) {
+    if (!quoteGroups.has(r.item_id))
+      quoteGroups.set(r.item_id, { part: r.part_number, winner: r.winning_vendor_quote_item_id, rows: [] });
+    if (r.quote_id) quoteGroups.get(r.item_id)!.rows.push(r);
+  }
+  const anyWinner = [...quoteGroups.values()].some((g) => g.winner);
+  const isConfirmed = /confirm/i.test(rfq.status_code ?? rfq.status ?? "");
+
   return (
     <>
       <button onClick={() => nav("/rfqs")} className="mb-3 inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink">
@@ -96,6 +148,11 @@ export default function RfqDetail() {
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-[20px] font-semibold tracking-tight text-ink tnum">{rfq.order_number}</h1>
         <Badge tone={statusTone(rfq.status)}>{rfq.status ?? "—"}</Badge>
+        {anyWinner && !isConfirmed && (
+          <button className="btn-primary ml-auto rounded-md" disabled={busy} onClick={confirm}>
+            <Check className="h-4 w-4" /> Confirm order
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
@@ -199,6 +256,45 @@ export default function RfqDetail() {
               </table>
             )}
           </Card>
+
+          {isPlatform && quotes && quotes.length > 0 && (
+            <Card pad={false}>
+              <div className="border-b border-line-2 px-5 py-3 text-[14px] font-semibold text-ink">Quotes — pick a winner per item</div>
+              <div className="flex flex-col divide-y divide-line-2">
+                {[...quoteGroups.entries()].map(([itemId, g]) => (
+                  <div key={itemId} className="px-5 py-3">
+                    <div className="mb-2 text-[13px] font-medium text-ink tnum">{g.part ?? "—"}</div>
+                    {g.rows.length === 0 ? (
+                      <div className="text-[12px] text-muted">No quotes yet</div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        {g.rows.map((q) => {
+                          const won = g.winner === q.quote_id;
+                          return (
+                            <div
+                              key={q.quote_id}
+                              className={`flex items-center gap-3 rounded-md border px-3 py-2 text-[13px] ${won ? "border-emerald-300 bg-emerald-50" : "border-line"}`}
+                            >
+                              <span className="font-medium text-ink">{q.vendor}</span>
+                              <span className="tnum text-ink">SAR {q.offered_cost}</span>
+                              {q.sla_hours != null && <span className="text-muted">· {q.sla_hours}h</span>}
+                              {won ? (
+                                <span className="ml-auto"><Badge tone="green">Winner</Badge></span>
+                              ) : (
+                                <button className="btn btn-sm ml-auto rounded-md" disabled={busy} onClick={() => pickWinner(itemId, q.quote_id!)}>
+                                  Pick
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
         </div>
 
         <Card>
