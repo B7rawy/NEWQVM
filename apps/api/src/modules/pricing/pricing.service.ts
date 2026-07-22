@@ -68,8 +68,8 @@ export class PricingService {
         select price_basis, adjustment_type, adjustment_pct
         from pricing_basis_settings
         where tenant_id = ${tenantId}::uuid and payer_scenario = ${scenario}
-          and insurance_company_id is not distinct from ${inputs.insuranceCompanyId ?? null}
-        limit 1`)) as Array<{ price_basis: string; adjustment_type: string; adjustment_pct: string }>
+          and insurance_company_id is not distinct from ${inputs.insuranceCompanyId ?? null}::uuid
+        order by updated_at desc limit 1`)) as Array<{ price_basis: string; adjustment_type: string; adjustment_pct: string }>
     )[0];
 
     let base = inputs.cost;

@@ -72,8 +72,11 @@ export class VendorSelfServiceService {
       await tx.execute(sql`
         insert into vendor_pricing_policies
           (tenant_id, vendor_id, scope_type, region_id, workshop_branch_id, adjustment_type, adjustment_pct)
-        values (${ctx.tenantId}::uuid, ${dto.vendorId}::uuid, ${dto.scopeType}, ${dto.regionId ?? null},
-                ${dto.workshopBranchId ?? null}, ${dto.adjustmentType}, ${dto.adjustmentPct})`);
+        values (${ctx.tenantId}::uuid, ${dto.vendorId}::uuid, ${dto.scopeType}, ${dto.regionId ?? null}::uuid,
+                ${dto.workshopBranchId ?? null}::uuid, ${dto.adjustmentType}, ${dto.adjustmentPct})
+        on conflict (tenant_id, vendor_id, scope_type, region_id, workshop_branch_id)
+        do update set adjustment_type = excluded.adjustment_type,
+                      adjustment_pct = excluded.adjustment_pct, updated_at = now()`);
       return { ok: true };
     });
   }
@@ -95,9 +98,9 @@ export class VendorSelfServiceService {
           from vendor_pricing_policies
           where tenant_id = ${ctx.tenantId}::uuid and vendor_id = ${vendorId}::uuid
             and (scope_type = 'global'
-                 or (scope_type = 'region' and region_id is not distinct from ${opts.regionId ?? null})
-                 or (scope_type = 'client_branch' and workshop_branch_id is not distinct from ${opts.workshopBranchId ?? null}))
-          order by case scope_type when 'client_branch' then 1 when 'region' then 2 else 3 end
+                 or (scope_type = 'region' and region_id is not distinct from ${opts.regionId ?? null}::uuid)
+                 or (scope_type = 'client_branch' and workshop_branch_id is not distinct from ${opts.workshopBranchId ?? null}::uuid))
+          order by case scope_type when 'client_branch' then 1 when 'region' then 2 else 3 end, updated_at desc
           limit 1`)) as Array<{ scope_type: string; adjustment_type: string; adjustment_pct: string }>
       )[0];
       if (!policy) return { basePrice, finalPrice: basePrice, applied: null };

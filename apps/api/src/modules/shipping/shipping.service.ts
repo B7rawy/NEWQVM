@@ -75,6 +75,11 @@ export class ShippingService {
   /** Broadcast a delivery to all active marketplace drivers (QNEW-55). */
   async broadcast(ctx: RlsContext, orderId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // RLS-scoped ownership check (FK validation runs as owner and bypasses RLS)
+      const order = (
+        (await tx.execute(sql`select id from orders where id = ${orderId}::uuid limit 1`)) as Array<{ id: string }>
+      )[0];
+      if (!order) throw new NotFoundException("order not found in this workspace");
       const drivers = (await tx.execute(sql`
         select id from drivers where tenant_id = ${ctx.tenantId}::uuid and owner_type = 'marketplace' and is_active`)) as Array<{ id: string }>;
       if (drivers.length === 0) throw new BadRequestException("no marketplace drivers available");
@@ -99,7 +104,15 @@ export class ShippingService {
       )[0];
       if (taken) throw new BadRequestException("delivery already accepted by another driver");
 
-      await tx.execute(sql`update driver_delivery_requests set status = 'accepted', responded_at = now() where id = ${requestId}::uuid`);
+      try {
+        await tx.execute(sql`update driver_delivery_requests set status = 'accepted', responded_at = now() where id = ${requestId}::uuid`);
+      } catch (e) {
+        // partial-unique index (one accepted per order) — lost the race
+        if ((e as { code?: string }).code === "23505") {
+          throw new BadRequestException("delivery already accepted by another driver");
+        }
+        throw e;
+      }
       await tx.execute(sql`update driver_delivery_requests set status = 'expired' where order_id = ${req.order_id}::uuid and id <> ${requestId}::uuid and status = 'pending'`);
       return { requestId, orderId: req.order_id, status: "accepted" };
     });

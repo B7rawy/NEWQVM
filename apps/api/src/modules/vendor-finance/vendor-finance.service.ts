@@ -29,6 +29,25 @@ export class VendorFinanceService {
       throw new BadRequestException("allocations exceed the payment amount");
     }
     return this.dbService.withContext(ctx, async (tx) => {
+      // validate each allocation: PO belongs to this vendor (RLS-scoped) + running balance ok
+      for (const a of dto.allocations ?? []) {
+        const po = (
+          (await tx.execute(sql`
+            select po.invoice_amount,
+                   coalesce((select sum(allocated_amount) from vendor_payment_allocations
+                             where purchase_order_id = po.id), 0) as already_allocated
+            from purchase_orders po
+            where po.id = ${a.purchaseOrderId}::uuid and po.vendor_id = ${dto.vendorId}::uuid limit 1`)) as Array<{
+            invoice_amount: string | null;
+            already_allocated: string;
+          }>
+        )[0];
+        if (!po) throw new BadRequestException(`PO ${a.purchaseOrderId} is not this vendor's in this workspace`);
+        const cap = Number(po.invoice_amount ?? 0);
+        if (cap > 0 && Number(po.already_allocated) + a.amount > cap + 0.001) {
+          throw new BadRequestException(`allocation exceeds PO invoice amount (${cap})`);
+        }
+      }
       const [p] = await tx
         .insert(schema.vendorPayments)
         .values({

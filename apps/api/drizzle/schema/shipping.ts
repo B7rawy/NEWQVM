@@ -1,4 +1,5 @@
 import { integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { audit, isActive, money, pk } from "./_shared";
 import {
   carrierModel,
@@ -114,6 +115,10 @@ export const driverDeliveryRequests = pgTable(
   },
   (t) => [
     uniqueIndex("ddr_order_driver_uq").on(t.orderId, t.driverId),
+    // at most ONE accepted driver per order — enforces first-accept-wins at the DB level
+    uniqueIndex("ddr_one_accepted_per_order_uq")
+      .on(t.orderId)
+      .where(sql`status = 'accepted'`),
     index("ddr_tenant_idx").on(t.tenantId),
     index("ddr_order_idx").on(t.orderId),
     index("ddr_driver_idx").on(t.driverId),

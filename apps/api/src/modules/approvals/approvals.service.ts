@@ -72,10 +72,11 @@ export class ApprovalsService {
    */
   async act(ctx: RlsContext, requestId: string, dto: z.infer<typeof actSchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // FOR UPDATE serializes concurrent acts on the same request (prevents level-skip race)
       const req = (
         (await tx.execute(sql`
           select id, policy_id, current_level, overall_status
-          from approval_requests where id = ${requestId}::uuid limit 1`)) as Array<{
+          from approval_requests where id = ${requestId}::uuid limit 1 for update`)) as Array<{
           id: string;
           policy_id: string;
           current_level: number;
@@ -119,8 +120,10 @@ export class ApprovalsService {
         );
         return { requestId, status: "approved" };
       }
+      // guard the advance on the level we actually acted on
       await tx.execute(
-        sql`update approval_requests set current_level = current_level + 1 where id = ${requestId}::uuid`,
+        sql`update approval_requests set current_level = current_level + 1
+            where id = ${requestId}::uuid and current_level = ${req.current_level}`,
       );
       return { requestId, status: "pending", currentLevel: req.current_level + 1 };
     });

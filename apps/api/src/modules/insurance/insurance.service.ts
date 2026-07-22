@@ -67,6 +67,7 @@ export class InsuranceService {
           sql`select id from item_statuses where code = ${code} limit 1`,
         )) as Array<{ id: string }>
       )[0];
+      if (!st) throw new BadRequestException(`status '${code}' is not configured`);
       const r = (
         (await tx.execute(
           sql`update rfqs set status_id = ${st.id} where id = ${rfqId}::uuid returning id`,

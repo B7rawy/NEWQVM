@@ -45,7 +45,9 @@ export const pricingBasisSettings = pgTable(
     ...audit,
   },
   (t) => [
-    uniqueIndex("pricing_basis_uq").on(t.tenantId, t.payerScenario, t.insuranceCompanyId),
+    // the UNIQUE (…) NULLS NOT DISTINCT constraint is added by a hand-written migration
+    // (drizzle 0.36 can't emit NULLS NOT DISTINCT) so cash/credit (null insurer) upserts, not dup.
+    index("pricing_basis_scope_idx").on(t.tenantId, t.payerScenario, t.insuranceCompanyId),
     index("pricing_basis_tenant_idx").on(t.tenantId),
     index("pricing_basis_insurance_idx").on(t.insuranceCompanyId),
   ],
