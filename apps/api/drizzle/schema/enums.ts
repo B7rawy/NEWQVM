@@ -68,6 +68,29 @@ export const financingStatus = pgEnum("financing_status", [
   "disbursed",
 ]);
 
+/** Shipping / logistics (QNEW-54/55). */
+export const carrierModel = pgEnum("carrier_model", [
+  "on_demand_same_city",
+  "hub_dropoff_pickup",
+  "hub_and_spoke",
+  "independent_driver",
+]);
+export const carrierOwnerType = pgEnum("carrier_owner_type", ["vendor", "client_branch"]);
+export const shipmentStatus = pgEnum("shipment_status", [
+  "created",
+  "assigned",
+  "in_transit",
+  "delivered",
+  "cancelled",
+]);
+export const driverOwnerType = pgEnum("driver_owner_type", ["private", "marketplace"]);
+export const driverRequestStatus = pgEnum("driver_request_status", [
+  "pending",
+  "accepted",
+  "rejected",
+  "expired",
+]);
+
 /** Vendor-assignment automation (QNEW-35): suggest in the modal vs auto-send. */
 export const automationMode = pgEnum("automation_mode", ["suggest", "auto"]);
 

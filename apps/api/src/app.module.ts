@@ -33,6 +33,8 @@ import { VendorSelfServiceController } from "./modules/vendor-selfservice/vendor
 import { VendorSelfServiceService } from "./modules/vendor-selfservice/vendor-selfservice.service.js";
 import { VendorFinanceController } from "./modules/vendor-finance/vendor-finance.controller.js";
 import { VendorFinanceService } from "./modules/vendor-finance/vendor-finance.service.js";
+import { ShippingController } from "./modules/shipping/shipping.controller.js";
+import { ShippingService } from "./modules/shipping/shipping.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -59,6 +61,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     ApprovalsController,
     VendorSelfServiceController,
     VendorFinanceController,
+    ShippingController,
   ],
   providers: [
     RfqService,
@@ -77,6 +80,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     ApprovalsService,
     VendorSelfServiceService,
     VendorFinanceService,
+    ShippingService,
   ],
 })
 export class AppModule {}
