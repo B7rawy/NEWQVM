@@ -166,4 +166,47 @@ export class VendorRfqService {
       },
     );
   }
+
+  /** Comparison view: every item with its vendor quotes (for purchasing to pick the winner). */
+  async getQuotes(ctx: RlsContext, rfqId: string) {
+    const rows = await this.dbService.withContext(ctx, (tx) =>
+      tx.execute(sql`
+        select i.id as item_id, i.part_number, i.part_description,
+               i.winning_vendor_quote_item_id,
+               vi.id as quote_id, vi.offered_cost, vi.sla_hours, v.legal_name as vendor
+        from rfq_items i
+        left join rfq_vendor_items vi on vi.rfq_item_id = i.id
+        left join rfq_vendors rv on rv.id = vi.rfq_vendor_id
+        left join vendors v on v.id = rv.vendor_id
+        where i.rfq_id = ${rfqId}::uuid
+        order by i.id, vi.offered_cost asc nulls last`),
+    );
+    return { rfqId, rows };
+  }
+
+  /** Pick the winning quote for an item (old cost_id). Validates the quote belongs to this RFQ+item. */
+  async selectWinner(ctx: RlsContext, rfqId: string, itemId: string, quoteItemId: string) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const ok = (
+        (await tx.execute(sql`
+          select vi.id from rfq_vendor_items vi
+          join rfq_vendors rv on rv.id = vi.rfq_vendor_id
+          where vi.id = ${quoteItemId}::uuid and vi.rfq_item_id = ${itemId}::uuid
+            and rv.rfq_id = ${rfqId}::uuid limit 1`)) as Array<{ id: string }>
+      )[0];
+      if (!ok) throw new BadRequestException("quote does not belong to this RFQ item");
+
+      const pricedStatusId = (
+        (await tx.execute(
+          sql`select id from item_statuses where code = 'priced' limit 1`,
+        )) as Array<{ id: string }>
+      )[0].id;
+
+      await tx.execute(sql`
+        update rfq_items set winning_vendor_quote_item_id = ${quoteItemId}::uuid,
+               status_id = ${pricedStatusId}
+        where id = ${itemId}::uuid and rfq_id = ${rfqId}::uuid`);
+      return { itemId, winningQuoteId: quoteItemId };
+    });
+  }
 }

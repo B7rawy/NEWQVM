@@ -13,8 +13,11 @@ import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
+import { z } from "zod";
 import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
 import { sendRfqSchema, VendorRfqService } from "./vendor-rfq.service.js";
+
+const selectWinnerSchema = z.object({ quoteItemId: z.string().uuid() });
 
 // platform-tier roles only (company/vendor users don't have these → blocked; platform bypasses)
 const INTERNAL = ["purchasing", "account_manager", "super_admin", "staff"];
@@ -60,6 +63,38 @@ export class RfqController {
       { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
       id,
       sendRfqSchema.parse(body),
+    );
+  }
+
+  /** Vendor-quote comparison view (purchasing). */
+  @Get(":id/quotes")
+  @Roles(...INTERNAL)
+  quotes(@Req() req: Request, @Param("id") id: string) {
+    const ctx = getContext(req);
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    return this.vendorRfq.getQuotes(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      id,
+    );
+  }
+
+  /** Pick the winning quote for an item (old cost_id) — purchasing. */
+  @Post(":id/items/:itemId/winning-quote")
+  @Roles(...INTERNAL)
+  selectWinner(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Param("itemId") itemId: string,
+    @Body() body: unknown,
+  ) {
+    const ctx = getContext(req);
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    const { quoteItemId } = selectWinnerSchema.parse(body);
+    return this.vendorRfq.selectWinner(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      id,
+      itemId,
+      quoteItemId,
     );
   }
 }

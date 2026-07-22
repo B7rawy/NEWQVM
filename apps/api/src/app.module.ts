@@ -7,6 +7,8 @@ import { RfqController } from "./modules/rfq/rfq.controller.js";
 import { RfqService } from "./modules/rfq/rfq.service.js";
 import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
 import { QuoteAccessController } from "./modules/rfq/quote-access.controller.js";
+import { OrdersController } from "./modules/orders/orders.controller.js";
+import { OrdersService } from "./modules/orders/orders.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -15,7 +17,13 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
  */
 @Module({
   imports: [DbModule, NotificationsModule, AuthModule],
-  controllers: [MeController, RfqController, WorkspacesController, QuoteAccessController],
-  providers: [RfqService, VendorRfqService],
+  controllers: [
+    MeController,
+    RfqController,
+    WorkspacesController,
+    QuoteAccessController,
+    OrdersController,
+  ],
+  providers: [RfqService, VendorRfqService, OrdersService],
 })
 export class AppModule {}

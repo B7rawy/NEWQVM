@@ -47,6 +47,17 @@ this workspace").
 **إرسال على sandbox → `suppressed`**؛ **notification_log: riyadh=sent, sandbox=suppressed** (برهان
 عزل الـ sandbox)؛ توكن غلط → 404.
 
-## التالي (Phase 2e+)
-اختيار التسعيرة الفائزة (rfq_items.winning_vendor_quote_item_id) → تأكيد الطلب (orders/order_items)
-→ الشراء والتسليم والفوترة. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
+### Phase 2e — اختيار الفائز + تأكيد الطلب ✅ (هذا الكومِت)
+- `VendorRfqService.getQuotes` (مقارنة التسعيرات) + `selectWinner` (يضبط
+  rfq_items.winning_vendor_quote_item_id = old cost_id؛ يتحقق أن التسعيرة تخص الـ RFQ+البند).
+- `OrdersService.confirm`: ينشئ order + order_items للبنود ذات التسعيرة الفائزة فقط؛ **رقم الطلب
+  يُعاد استخدامه من الـ RFQ (يظل ثابتاً عبر دورة الحياة)**؛ order_item↔rfq_item علاقة 1:1
+  (DB-enforced) → RFQ يُؤكَّد مرة واحدة فقط.
+- Endpoints: GET /rfqs/:id/quotes، POST /rfqs/:id/items/:itemId/winning-quote (داخلي)،
+  POST /rfqs/:id/confirm (أدوار الورش)، GET /orders.
+
+**مُتحقَّق HTTP (السلسلة الكاملة):** RFQ ببندين → إرسال → تسعير المورّد → مقارنة → اختيار الفائز
+→ تأكيد (CEN-1 نفس الرقم، بندين) → قائمة الطلبات (Confirmed) → تأكيد مكرر مرفوض → 1:1 مؤكَّد.
+
+## التالي (Phase 2f+)
+الشراء (purchase_orders/items) → التسليم → الفوترة → المرتجعات. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
