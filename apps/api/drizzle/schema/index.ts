@@ -17,3 +17,6 @@ export * from "./fulfillment";
 export * from "./billing";
 export * from "./pricing";
 export * from "./crosscutting";
+
+// Roadmap modules (QNEW):
+export * from "./parts"; // QNEW-28 Master Data Foundation

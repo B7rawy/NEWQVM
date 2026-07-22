@@ -57,6 +57,20 @@
       "when": 1784694851682,
       "tag": "0007_review_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784695811722,
+      "tag": "0008_master_data",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784695812221,
+      "tag": "0009_master_data_rls",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,8 @@ import { InvoiceController } from "./modules/invoicing/invoice.controller.js";
 import { InvoiceService } from "./modules/invoicing/invoice.service.js";
 import { ReturnsController } from "./modules/returns/returns.controller.js";
 import { ReturnsService } from "./modules/returns/returns.service.js";
+import { PartsController } from "./modules/parts/parts.controller.js";
+import { PartsService } from "./modules/parts/parts.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -35,6 +37,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     DeliveryController,
     InvoiceController,
     ReturnsController,
+    PartsController,
   ],
   providers: [
     RfqService,
@@ -44,6 +47,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     DeliveryService,
     InvoiceService,
     ReturnsService,
+    PartsService,
   ],
 })
 export class AppModule {}

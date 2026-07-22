@@ -38,6 +38,16 @@ export const platformRole = pgEnum("platform_role", [
   "pricing_supervisor",
 ]);
 
+/** Where a parts_master row came from (QNEW-32) — mandatory provenance on every part. */
+export const partSource = pgEnum("part_source", [
+  "manual_purchasing",
+  "vendor_portal",
+  "excel_upload",
+  "invoice_ocr",
+  "direct_admin",
+  "dictionary_migration",
+]);
+
 /** RFQ / order commercial type. */
 export const orderType = pgEnum("order_type", ["regular", "bulk"]);
 

@@ -29,7 +29,7 @@ async function main() {
       tenants, plans, users, order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
       regions, cities, cancellation_reasons, return_reasons, payment_accounts,
-      cost_ranges
+      cost_ranges, parts_master, part_synonyms, part_category_mapping
     restart identity cascade`;
 
   // ---- reference vocabulary (statuses preserved exactly as old system) ----
@@ -53,7 +53,19 @@ async function main() {
   await sql`insert into car_brands (code,label_en,label_ar) values
     ('toyota','Toyota','تويوتا'),('nissan','Nissan','نيسان'),('hyundai','Hyundai','هيونداي')`;
   await sql`insert into part_categories (code,label_en,label_ar) values
-    ('engine','Engine','محرك'),('body','Body','هيكل'),('electrical','Electrical','كهرباء')`;
+    ('engine','Engine','محرك'),('body','Body','هيكل'),('electrical','Electrical','كهرباء'),
+    ('brake','Brake','فرامل')`;
+  // master-data foundation (QNEW-28): a few canonical parts + synonyms + category mapping
+  const [brakeCat] = await sql`select id from part_categories where code='brake'`;
+  const [engineCat] = await sql`select id from part_categories where code='engine'`;
+  const [pad] = await sql`insert into parts_master (name_en,name_ar,part_category_id,source)
+    values ('Brake Pad','تيل فرامل',${brakeCat.id},'dictionary_migration') returning id`;
+  await sql`insert into part_synonyms (part_id,synonym) values
+    (${pad.id},'brake pads'),(${pad.id},'تيل'),(${pad.id},'disc pad')`;
+  await sql`insert into parts_master (name_en,name_ar,part_category_id,source)
+    values ('Oil Filter','فلتر زيت',${engineCat.id},'dictionary_migration')`;
+  await sql`insert into part_category_mapping (raw_variant,part_category_id) values
+    ('Brakes',${brakeCat.id}),('BRAKE',${brakeCat.id})`;
   const [central] =
     await sql`insert into regions (code,label_en,label_ar) values ('central','Central','الوسطى') returning id`;
   await sql`insert into regions (code,label_en,label_ar) values
