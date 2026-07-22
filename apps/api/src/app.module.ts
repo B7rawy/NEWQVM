@@ -3,6 +3,8 @@ import { DbModule } from "./db/db.module.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
 import { NotificationsModule } from "./modules/notifications/notifications.module.js";
 import { MeController } from "./modules/me/me.controller.js";
+import { WorkspacesAdminController } from "./modules/admin/workspaces-admin.controller.js";
+import { WorkspacesAdminService } from "./modules/admin/workspaces-admin.service.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
 import { RfqService } from "./modules/rfq/rfq.service.js";
 import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
@@ -62,6 +64,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorSelfServiceController,
     VendorFinanceController,
     ShippingController,
+    WorkspacesAdminController,
   ],
   providers: [
     RfqService,
@@ -81,6 +84,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorSelfServiceService,
     VendorFinanceService,
     ShippingService,
+    WorkspacesAdminService,
   ],
 })
 export class AppModule {}
