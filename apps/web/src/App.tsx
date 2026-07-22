@@ -4,6 +4,7 @@ import Login from "./pages/Login";
 import AppShell from "./components/AppShell";
 import Overview from "./pages/Overview";
 import Rfqs from "./pages/Rfqs";
+import RfqDetail from "./pages/RfqDetail";
 import Orders from "./pages/Orders";
 import Workshops from "./pages/Workshops";
 import Vendors from "./pages/Vendors";
@@ -50,6 +51,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/overview" element={<Overview />} />
         <Route path="/rfqs" element={<Rfqs />} />
+        <Route path="/rfqs/:id" element={<RfqDetail />} />
         <Route path="/orders" element={<Orders />} />
         <Route path="/org/workshops" element={<Workshops />} />
         <Route path="/vendors" element={<Vendors />} />

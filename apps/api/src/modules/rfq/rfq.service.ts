@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService } from "../../db/db.service.js";
@@ -113,5 +113,39 @@ export class RfqService {
         limit 50`),
     );
     return { count: rows.length, rfqs: rows };
+  }
+
+  /** Full RFQ detail: header + items + invited vendors. Scoped to workspace + environment. */
+  async detail(ctx: RlsContext, id: string) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const rfq = (
+        (await tx.execute(sql`
+          select r.id, r.order_number, r.plate_number, r.vin, r.model, r.order_type, r.delivery_type,
+                 r.payer_type, r.environment, r.created_at, s.label_en as status,
+                 s.code as status_code, w.name as workshop, wb.name as branch
+          from rfqs r
+          left join item_statuses s on s.id = r.status_id
+          left join workshop_branches wb on wb.id = r.workshop_branch_id
+          left join workshops w on w.id = wb.workshop_id
+          where r.id = ${id}::uuid and r.environment = ${ctx.environment ?? "live"} limit 1`)) as Array<Record<string, unknown>>
+      )[0];
+      if (!rfq) throw new NotFoundException("RFQ not found in this workspace / environment");
+
+      const items = await tx.execute(sql`
+        select i.id, i.part_number, i.part_description, i.quantity, s.label_en as status
+        from rfq_items i left join item_statuses s on s.id = i.status_id
+        where i.rfq_id = ${id}::uuid order by i.created_at`);
+
+      const vendors = await tx.execute(sql`
+        select rv.id, v.legal_name as vendor, rv.sent_at, vs.label_en as status,
+               (select count(*) from rfq_vendor_items vi
+                where vi.rfq_vendor_id = rv.id and vi.offered_cost is not null) as quoted
+        from rfq_vendors rv
+        join vendors v on v.id = rv.vendor_id
+        left join vendor_statuses vs on vs.id = rv.status_id
+        where rv.rfq_id = ${id}::uuid order by rv.sent_at desc nulls last`);
+
+      return { rfq, items, vendors };
+    });
   }
 }

@@ -40,6 +40,16 @@ export class RfqController {
     return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment });
   }
 
+  @Get(":id")
+  detail(@Req() req: Request, @Param("id") id: string) {
+    const ctx = getContext(req);
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    return this.rfq.detail(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment },
+      id,
+    );
+  }
+
   @Post()
   @Roles("company_admin", "branch_manager", "service_advisor")
   create(@Req() req: Request, @Body() body: unknown) {

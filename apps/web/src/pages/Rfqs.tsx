@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { ChevronRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
@@ -18,6 +19,7 @@ interface Branch {
 
 export default function Rfqs() {
   const { activeSlug } = useAuth();
+  const nav = useNavigate();
   const [rfqs, setRfqs] = useState<Rfq[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchId, setBranchId] = useState("");
@@ -94,7 +96,7 @@ export default function Rfqs() {
               </thead>
               <tbody>
                 {rfqs.map((r) => (
-                  <tr key={r.id} className="trow cursor-pointer">
+                  <tr key={r.id} className="trow cursor-pointer" onClick={() => nav(`/rfqs/${r.id}`)}>
                     <td className="td font-semibold text-accent tnum">{r.order_number}</td>
                     <td className="td tnum">{r.plate_number ?? <span className="text-faint">—</span>}</td>
                     <td className="td tnum">{r.items}</td>
