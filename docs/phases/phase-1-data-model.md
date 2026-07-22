@@ -108,6 +108,23 @@
 `54 جدول · 142 FK · 209 index · 71 policy · 39 trigger` · **صفر FK بدون index** ·
 عزل RLS مؤكَّد (t1=صفّه، آخر=صفر) · `next_order_number`=RYD-1 · cost_ranges بحدود · return_reasons بجانبين.
 
+### 2026-07-22 — نموذج الهوية + التبديل بين الـ workspaces (Phase 2b) ✅
+قرار صاحب المشروع: **قاعدة واحدة multi-tenant بطريقتنا** — أُلغيت فكرة القاعدة-المنفصلة-لكل-شركة
+(QNEW-56) نهائياً (ADR-0010). كشف متطلب "تبديل الـ workspace" ثغرة: "الداخلي" كان يُشتق من عضوية
+tenant واحد، فموظف Qparts لم يكن يرى كل الـ workspaces. المعالجة:
+- **جدول `platform_members`** (global): موظفو Qparts، دور على مستوى المنصّة → يرون كل الـ workspaces.
+  enum `platform_role` (+ finance_manager/pricing_supervisor لمعالجة تعارض الأدوار QNEW-48-A).
+- **`AuthGuard` أعيد تصميمه:** is_internal من platform_members؛ الوصول = platform staff أو عضو الـ
+  workspace، وإلا **403**.
+- **`GET /api/workspaces`** — يرجّع كل الـ workspaces التي يصلها المستخدم من الطبقات الثلاث
+  (platform / membership / vendor) — أساس السويتشر في الواجهة.
+- **seed** موسّع: workspaceان حقيقيان (riyadh, jeddah) + sandbox؛ admin=platform staff؛
+  advisor=عضو t1؛ **multi=عضو t1+t2** (لاختبار التبديل).
+- ميجريشنز 0003 (الجدول) + 0004 (RLS/trigger للجدول الجديد).
+
+**مُتحقَّق عبر HTTP:** admin يرى 3 workspaces؛ advisor يرى riyadh فقط؛ **multi يرى riyadh+jeddah
+بأدوار مختلفة ويبدّل بينهما فعلياً**؛ غير العضو = 403؛ platform staff يصل الكل بـ isInternal=true.
+
 ## المشاكل القديمة التي تُعالَج هنا صراحةً
 | مشكلة النظام القديم | المعالجة في التصميم الجديد |
 |---|---|

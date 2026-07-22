@@ -1,6 +1,7 @@
 import {
   CanActivate,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from "@nestjs/common";
@@ -8,15 +9,18 @@ import { JwtService } from "@nestjs/jwt";
 import { sql } from "drizzle-orm";
 import type { Request } from "express";
 import { DbService } from "../db/db.service.js";
-import { isInternalRole, resolveTenantSlug, type RequestContext } from "./request-context.js";
+import { resolveTenantSlug, type RequestContext } from "./request-context.js";
 
 const ROOT_DOMAIN = process.env.APP_ROOT_DOMAIN ?? "qvm.localhost";
 
 /**
- * Authenticates the JWT, resolves the current tenant (subdomain / X-Tenant), and computes the
- * user's role + is_internal for that tenant. The resolved RequestContext is attached to req.ctx
- * and later fed into DbService.withContext so RLS scopes every query. Tenant + membership lookups
- * run as internal (bootstrap) since they precede tenant scoping.
+ * Authenticates the JWT, resolves the active workspace (subdomain / X-Tenant), and computes
+ * access (ADR-0010):
+ *   - is_internal  ← the user has a platform_members row (Qparts staff → sees every workspace)
+ *   - role         ← their tenant_memberships role for THIS workspace (company/workshop users)
+ *   - access       ← platform staff OR a member of this workspace; otherwise 403
+ * The resolved RequestContext is attached to req.ctx and fed into DbService.withContext so RLS
+ * scopes every query. Bootstrap lookups run as internal (they precede tenant scoping).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -32,39 +36,49 @@ export class AuthGuard implements CanActivate {
 
     let userId: string;
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: string }>(auth.slice(7));
-      userId = payload.sub;
+      userId = (await this.jwt.verifyAsync<{ sub: string }>(auth.slice(7))).sub;
     } catch {
       throw new UnauthorizedException("invalid token");
     }
 
     const tenantSlug = resolveTenantSlug(req, ROOT_DOMAIN);
 
+    const info = await this.dbService.withContext(
+      { tenantId: null, userId, isInternal: true },
+      async (tx) => {
+        const platform = (await tx.execute(sql`
+          select role from platform_members where user_id = ${userId}::uuid and is_active = true limit 1`))[0] as
+          | { role?: string }
+          | undefined;
+
+        let tenant: { tenant_id?: string; role?: string } | undefined;
+        if (tenantSlug) {
+          tenant = (await tx.execute(sql`
+            select t.id as tenant_id, m.role as role
+            from tenants t
+            left join tenant_memberships m
+              on m.tenant_id = t.id and m.user_id = ${userId}::uuid and m.is_active = true
+            where t.slug = ${tenantSlug} and t.is_active = true
+            limit 1`))[0] as { tenant_id?: string; role?: string } | undefined;
+        }
+        return { platformRole: platform?.role ?? null, tenant };
+      },
+    );
+
+    const isInternal = info.platformRole != null;
     const ctx: RequestContext = {
       userId,
       tenantSlug,
-      tenantId: null,
-      role: null,
-      isInternal: false,
+      tenantId: info.tenant?.tenant_id ?? null,
+      role: info.tenant?.role ?? info.platformRole,
+      isInternal,
     };
 
+    // If a workspace was requested, require access to it (member or platform staff).
     if (tenantSlug) {
-      // bootstrap lookup as internal (precedes tenant scoping)
-      const rows = await this.dbService.withContext(
-        { tenantId: null, userId, isInternal: true },
-        (tx) =>
-          tx.execute(sql`
-            select t.id as tenant_id, m.role as role
-            from tenants t
-            left join tenant_memberships m on m.tenant_id = t.id and m.user_id = ${userId}::uuid
-            where t.slug = ${tenantSlug} and t.is_active = true
-            limit 1`),
-      );
-      const row = rows[0] as { tenant_id?: string; role?: string } | undefined;
-      if (row?.tenant_id) {
-        ctx.tenantId = row.tenant_id;
-        ctx.role = row.role ?? null;
-        ctx.isInternal = isInternalRole(row.role);
+      if (!info.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
+      if (!isInternal && !info.tenant.role) {
+        throw new ForbiddenException("no access to this workspace");
       }
     }
 

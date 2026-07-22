@@ -25,8 +25,8 @@ async function main() {
     truncate table
       order_items, orders, rfq_vendor_items, rfq_vendors, rfq_items, rfqs,
       tenant_vendors, vendor_users, vendor_branches, vendors,
-      workshop_branches, workshops, tenant_memberships, tenants, plans, users,
-      order_number_counters,
+      workshop_branches, workshops, tenant_memberships, platform_members,
+      tenants, plans, users, order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
       regions, cities, cancellation_reasons, return_reasons, payment_accounts,
       cost_ranges
@@ -78,15 +78,21 @@ async function main() {
   // ---- users (real argon2 passwords so login works over HTTP) ----
   const adminHash = await argon2.hash("admin1234");
   const advisorHash = await argon2.hash("advisor1234");
+  const multiHash = await argon2.hash("multi1234");
   const [admin] = await sql`insert into users (email,full_name,password_hash)
     values ('admin@qvm.local','Platform Admin',${adminHash}) returning id`;
   const [advisor] = await sql`insert into users (email,full_name,password_hash)
     values ('advisor@riyadh.local','Riyadh Advisor',${advisorHash}) returning id`;
+  // a user who works with TWO workspaces — exercises workspace switching (ADR-0010)
+  const [multi] = await sql`insert into users (email,full_name,password_hash)
+    values ('multi@qvm.local','Multi Workspace User',${multiHash}) returning id`;
   await sql`select set_config('app.user_id', ${admin.id}, false)`;
 
-  // ---- tenants: one real workspace + one sandbox ----
+  // ---- tenants: two real workspaces + one sandbox ----
   const [t1] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
     values ('Qparts Riyadh','riyadh',${pro.id},false) returning id`;
+  const [t2] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
+    values ('Qparts Jeddah','jeddah',${pro.id},false) returning id`;
   const [tSandbox] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
     values ('Sandbox Workspace','sandbox',${pro.id},true) returning id`;
 
@@ -94,11 +100,22 @@ async function main() {
   const [ws] = await sql`insert into workshops (tenant_id,name) values (${t1.id},'Al Faisal Motors') returning id`;
   const [branch] = await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
     values (${t1.id},${ws.id},'Riyadh Main',${central.id}) returning id`;
+  // org for t2 (so the multi-workspace user has a real branch there)
+  const [ws2] = await sql`insert into workshops (tenant_id,name) values (${t2.id},'Jeddah Auto') returning id`;
+  const [branch2] = await sql`insert into workshop_branches (tenant_id,workshop_id,name)
+    values (${t2.id},${ws2.id},'Jeddah Main') returning id`;
 
-  // ---- memberships: admin = platform staff (sees all); advisor = company-scoped to t1 ----
-  await sql`insert into tenant_memberships (tenant_id,user_id,role) values (${t1.id},${admin.id},'super_admin')`;
+  // ---- access (ADR-0010 three layers) ----
+  // admin = platform staff → sees ALL workspaces
+  await sql`insert into platform_members (user_id,role) values (${admin.id},'super_admin')`;
+  // advisor = company-scoped to t1 only
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
     values (${t1.id},${advisor.id},'service_advisor',${branch.id})`;
+  // multi = member of BOTH t1 and t2 (can switch between them)
+  await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
+    values (${t1.id},${multi.id},'branch_manager',${branch.id})`;
+  await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
+    values (${t2.id},${multi.id},'service_advisor',${branch2.id})`;
 
   // ---- global vendor linked to t1 ----
   const [vendor] = await sql`insert into vendors (legal_name,vendor_type)

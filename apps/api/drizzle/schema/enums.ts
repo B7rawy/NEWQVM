@@ -23,6 +23,21 @@ export const membershipRole = pgEnum("membership_role", [
   "vendor_user",
 ]);
 
+/**
+ * Platform-staff roles (Qparts internal) — a member with any of these sees ALL workspaces.
+ * Distinct from membershipRole (per-tenant). Includes finance_manager / pricing_supervisor
+ * to reconcile the role list ↔ code mismatch flagged by QNEW-48-A.
+ */
+export const platformRole = pgEnum("platform_role", [
+  "super_admin",
+  "staff",
+  "account_manager",
+  "purchasing",
+  "part_extractor",
+  "finance_manager",
+  "pricing_supervisor",
+]);
+
 /** RFQ / order commercial type. */
 export const orderType = pgEnum("order_type", ["regular", "bulk"]);
 

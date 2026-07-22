@@ -3,6 +3,7 @@ import { DbModule } from "./db/db.module.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
 import { MeController } from "./modules/me/me.controller.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
+import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -10,6 +11,6 @@ import { RfqController } from "./modules/rfq/rfq.controller.js";
  */
 @Module({
   imports: [DbModule, AuthModule],
-  controllers: [MeController, RfqController],
+  controllers: [MeController, RfqController, WorkspacesController],
 })
 export class AppModule {}

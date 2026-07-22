@@ -1,6 +1,6 @@
 import { pgTable, text, uuid, index, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { membershipRole } from "./enums";
+import { membershipRole, platformRole } from "./enums";
 import { tenants } from "./tenancy";
 import { workshopBranches } from "./org";
 
@@ -23,6 +23,24 @@ export const users = pgTable(
     ...audit,
   },
   (t) => [uniqueIndex("users_email_uq").on(t.email)],
+);
+
+/**
+ * Platform staff (Qparts internal). A row here = the user oversees ALL workspaces
+ * (drives app.is_internal). Global (no tenant_id) — see ADR-0010.
+ */
+export const platformMembers = pgTable(
+  "platform_members",
+  {
+    id: pk(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: platformRole("role").notNull(),
+    isActive: isActive(),
+    ...audit,
+  },
+  (t) => [uniqueIndex("platform_members_user_uq").on(t.userId)],
 );
 
 /**
