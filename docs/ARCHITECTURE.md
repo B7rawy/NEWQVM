@@ -42,8 +42,23 @@
 **النموذج: Shared schema + `tenant_id` على كل جدول + RLS + subdomain routing.**
 (ليس database-per-tenant ولا schema-per-tenant — هذان كابوس تشغيلي.)
 
-- كيان **`tenants`** (companies) حقيقي: id, name, slug/subdomain, logo, settings, plan, is_sandbox, created_at…
+**الـ tenant = workspace كامل** (مؤسسة وسيطة مثل Qparts) وتحته عالمه المعزول بالكامل:
+
+```
+tenant (workspace)  ← ساب-دومين + هوية + إعدادات + باقة
+├── workshops (الورش العميلة) + فروعها
+├── vendors (الموردون المرتبطون بهذا الـ workspace)
+├── users (موظفو المشغّل + مستخدمو الورش + مستخدمو الموردين)
+├── RFQs → quotations → orders → deliveries → returns → invoices
+└── portals: بوابة الورشة + بوابة المورد + لوحة المشغّل
+```
+
+- كيان **`tenants`** حقيقي: id, name, slug/subdomain, logo, settings, plan, is_sandbox, created_at…
 - **كل جدول أساسي يحمل `tenant_id`** (FK → tenants) مع composite index على `(tenant_id, …)`.
+- **الموردون استثناء مقصود (ADR-0008)**: `vendors` كيان **عالمي بلا `tenant_id`**، ويُربط بالـ workspaces
+  عبر جدول ربط **`tenant_vendors`** (هو الذي يحمل الـ `tenant_id` والـ RLS وإعدادات العلاقة).
+  اليوم: كل workspace يرى مورديه فقط. مستقبلاً: نفس المورد يُربط بأكثر من workspace **بلا أي تغيير سكيما**.
+  بيانات المعاملات (عروض/أوامر شراء/فواتير) تحمل `tenant_id` دائماً — تاريخ كل workspace معزول حتى مع مورد مشترك.
 - **RLS من أول ميجريشن**: كل جدول له policy `tenant_id = current_tenant()` — العزل مضمون على مستوى قاعدة البيانات، لا يعتمد على التطبيق.
 - **`current_tenant()`**: يُشتق من الـ JWT claim / session، يُضبط عبر `SET LOCAL app.tenant_id` في بداية كل request.
 - **Subdomain routing**: `company-a.qvm.app` → middleware يحلّ الـ slug إلى `tenant_id` → يُضبط في السياق → كل الاستعلامات مفلترة تلقائياً.
@@ -108,8 +123,8 @@ qvm-platform/
 
 ## 10. خارطة الطريق (7 مراحل)
 
-- **0** التأسيس والعزل (monorepo, docker, بيئات, ميجريشنز) ← *نحن هنا*
-- **1** نموذج البيانات + الـ tenancy + RLS + seed
+- **0** التأسيس والعزل (monorepo, docker, بيئات, ميجريشنز) — ✅ مكتملة
+- **1** نموذج البيانات + الـ tenancy + RLS + seed ← *نحن هنا*
 - **2** الباك إند NestJS (auth, موديولات المجالات, طبقة الآثار الجانبية)
 - **3** الفرونت إند (إعادة استخدام + تنظيف + code-splitting + subdomain routing)
 - **4** فيتشرز الـ workspace + الـ sandbox
