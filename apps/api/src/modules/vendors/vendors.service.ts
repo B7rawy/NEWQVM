@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
@@ -12,7 +12,22 @@ export const createVendorSchema = z.object({
   vendorType: z.enum(["agency", "commercial", "external"]).optional(),
   paymentTermsDays: z.number().int().nonnegative().optional(),
   classification: z.string().optional(),
+  tenantId: z.string().uuid().optional(), // super-admin: target a specific workspace
 });
+export const updateVendorSchema = z.object({
+  legalName: z.string().min(2).optional(),
+  commercialRegistrationNumber: z.string().nullable().optional(),
+  taxNumber: z.string().nullable().optional(),
+  primaryEmail: z.string().email().nullable().optional(),
+  primaryPhone: z.string().nullable().optional(),
+  vendorType: z.enum(["agency", "commercial", "external"]).optional(),
+  paymentTermsDays: z.number().int().nonnegative().nullable().optional(),
+});
+export const vendorStatusSchema = z.object({
+  status: z.enum(["active", "suspended", "archived"]),
+  tenantId: z.string().uuid().optional(),
+});
+export const linkVendorSchema = z.object({ tenantId: z.string().uuid().optional(), classification: z.string().optional() });
 export const createVendorBranchSchema = z.object({
   vendorId: z.string().uuid(),
   name: z.string().min(2),
@@ -45,10 +60,19 @@ export class VendorsService {
 
   /** Create a new global vendor AND link it to the active workspace. Needs is_internal (global
    *  write) + the active tenant_id (tenant_vendors isolation) — both satisfied here. */
+  /** Resolve the target workspace: super-admin may target any (dto.tenantId), others use active. */
+  private targetTenant(ctx: RlsContext, dtoTenantId?: string) {
+    if (dtoTenantId && dtoTenantId !== ctx.tenantId && !ctx.isInternal)
+      throw new ForbiddenException("only platform staff can target another workspace");
+    const target = ctx.isInternal ? dtoTenantId ?? ctx.tenantId : ctx.tenantId;
+    if (!target) throw new BadRequestException("no target workspace");
+    return target;
+  }
+
   async create(ctx: RlsContext, dto: z.infer<typeof createVendorSchema>) {
-    if (!ctx.tenantId) throw new BadRequestException("no active workspace");
+    const target = this.targetTenant(ctx, dto.tenantId);
     return this.dbService.withContext(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true },
+      { tenantId: target, userId: ctx.userId, isInternal: true },
       async (tx) => {
         const [v] = (await tx.execute(sql`
           insert into vendors (legal_name, commercial_registration_number, tax_number, primary_email,
@@ -59,11 +83,70 @@ export class VendorsService {
           returning id`)) as Array<{ id: string }>;
         await tx.execute(sql`
           insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
-          values (${ctx.tenantId}::uuid, ${v.id}::uuid, 'active', ${dto.classification ?? null},
+          values (${target}::uuid, ${v.id}::uuid, 'active', ${dto.classification ?? null},
             ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);
         return { id: v.id };
       },
     );
+  }
+
+  /** Edit the global vendor's master data (platform-only). */
+  async update(ctx: RlsContext, vendorId: string, dto: z.infer<typeof updateVendorSchema>) {
+    const has = (k: string) => Object.prototype.hasOwnProperty.call(dto, k);
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const rows = (await tx.execute(sql`
+        update vendors set
+          legal_name = coalesce(${dto.legalName ?? null}, legal_name),
+          commercial_registration_number = ${has("commercialRegistrationNumber") ? sql`${dto.commercialRegistrationNumber ?? null}` : sql`commercial_registration_number`},
+          tax_number = ${has("taxNumber") ? sql`${dto.taxNumber ?? null}` : sql`tax_number`},
+          primary_email = ${has("primaryEmail") ? sql`${dto.primaryEmail ?? null}` : sql`primary_email`},
+          primary_phone = ${has("primaryPhone") ? sql`${dto.primaryPhone ?? null}` : sql`primary_phone`},
+          vendor_type = coalesce(${dto.vendorType ?? null}, vendor_type),
+          payment_terms_days = ${has("paymentTermsDays") ? sql`${dto.paymentTermsDays ?? null}` : sql`payment_terms_days`},
+          updated_by = ${ctx.userId}::uuid, updated_at = now()
+        where id = ${vendorId}::uuid returning id`)) as Array<{ id: string }>;
+      if (!rows[0]) throw new NotFoundException("vendor not found");
+      return { ok: true };
+    });
+  }
+
+  /** Suspend / archive / reactivate a vendor's link to a workspace (tenant_vendors.status). */
+  async setStatus(ctx: RlsContext, vendorId: string, dto: z.infer<typeof vendorStatusSchema>) {
+    const target = this.targetTenant(ctx, dto.tenantId);
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const rows = (await tx.execute(sql`
+        update tenant_vendors set status = ${dto.status}, updated_by = ${ctx.userId}::uuid, updated_at = now()
+        where vendor_id = ${vendorId}::uuid and tenant_id = ${target}::uuid returning id`)) as Array<{ id: string }>;
+      if (!rows[0]) throw new NotFoundException("vendor is not linked to this workspace");
+      return { ok: true };
+    });
+  }
+
+  /** Global vendors NOT yet linked to the target workspace (for 'link existing'). */
+  async available(ctx: RlsContext, tenantId?: string) {
+    const target = this.targetTenant(ctx, tenantId);
+    const rows = await this.dbService.withContext(
+      { tenantId: target, userId: ctx.userId, isInternal: true },
+      (tx) =>
+        tx.execute(sql`
+          select v.id, v.legal_name, v.vendor_type from vendors v
+          where v.is_active = true and not exists (
+            select 1 from tenant_vendors tv where tv.vendor_id = v.id and tv.tenant_id = ${target}::uuid and tv.status <> 'archived')
+          order by v.legal_name`),
+    );
+    return { vendors: rows };
+  }
+
+  /** Link an existing global vendor to the target workspace. */
+  async link(ctx: RlsContext, vendorId: string, dto: z.infer<typeof linkVendorSchema>) {
+    const target = this.targetTenant(ctx, dto.tenantId);
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+      await tx.execute(sql`
+        insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
+        values (${target}::uuid, ${vendorId}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+        on conflict (tenant_id, vendor_id) do update set status = 'active', updated_by = ${ctx.userId}::uuid, updated_at = now()`);
+      return { ok: true };
+    });
   }
 
   async listBranches(ctx: RlsContext, vendorId: string) {

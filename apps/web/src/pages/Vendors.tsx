@@ -16,11 +16,20 @@ interface Vendor {
   user_id: string | null;
 }
 
+interface Ws {
+  id: string;
+  slug: string;
+  name: string;
+}
+
 export default function Vendors() {
   const { activeSlug, me, impersonate } = useAuth();
-  const canViewAs = me?.persona === "platform" || me?.role === "company_admin";
+  const isPlatform = me?.persona === "platform";
+  const canViewAs = isPlatform || me?.role === "company_admin";
   const [rows, setRows] = useState<Vendor[] | null>(null);
   const [show, setShow] = useState(false);
+  const [workspaces, setWorkspaces] = useState<Ws[]>([]);
+  const [targetWs, setTargetWs] = useState("");
   const [f, setF] = useState({ legalName: "", vendorType: "commercial", primaryEmail: "", primaryPhone: "", classification: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,7 +45,8 @@ export default function Vendors() {
       setErr((e as Error).message);
       setRows([]);
     });
-  }, [activeSlug, load]);
+    if (isPlatform) api.get<{ workspaces: Ws[] }>("/admin/workspaces").then((r) => setWorkspaces(r.workspaces)).catch(() => {});
+  }, [activeSlug, load, isPlatform]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -49,6 +59,7 @@ export default function Vendors() {
         primaryEmail: f.primaryEmail || undefined,
         primaryPhone: f.primaryPhone || undefined,
         classification: f.classification || undefined,
+        tenantId: targetWs || undefined,
       });
       setF({ legalName: "", vendorType: "commercial", primaryEmail: "", primaryPhone: "", classification: "" });
       setShow(false);
@@ -57,6 +68,15 @@ export default function Vendors() {
       setErr((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  async function setStatus(id: string, status: string) {
+    setErr("");
+    try {
+      await api.post(`/vendors/${id}/status`, { status });
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
     }
   }
 
@@ -76,6 +96,16 @@ export default function Vendors() {
       {show && (
         <Card className="mb-5">
           <form onSubmit={create} className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {isPlatform && (
+              <Field label="Workspace">
+                <select className="input" value={targetWs} onChange={(e) => setTargetWs(e.target.value)}>
+                  <option value="">Active ({activeSlug})</option>
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Legal name">
               <input className="input" value={f.legalName} onChange={(e) => setF({ ...f, legalName: e.target.value })} placeholder="Gulf Auto Parts Co." />
             </Field>
@@ -135,11 +165,19 @@ export default function Vendors() {
                     <Badge tone={statusTone(v.status)}>{v.status}</Badge>
                   </td>
                   <td className="td text-right">
-                    {canViewAs && v.user_id && (
-                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}>
-                        <Eye className="h-3.5 w-3.5" /> View as
-                      </button>
-                    )}
+                    <div className="flex items-center justify-end gap-1.5">
+                      {isPlatform &&
+                        (v.status === "active" ? (
+                          <button className="btn btn-sm rounded-md text-accent" onClick={() => setStatus(v.id, "suspended")}>Suspend</button>
+                        ) : (
+                          <button className="btn btn-sm rounded-md" onClick={() => setStatus(v.id, "active")}>Reactivate</button>
+                        ))}
+                      {canViewAs && v.user_id && (
+                        <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}>
+                          <Eye className="h-3.5 w-3.5" /> View as
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
