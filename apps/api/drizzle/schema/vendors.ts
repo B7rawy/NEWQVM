@@ -1,4 +1,4 @@
-import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
 import { tenantVendorStatus, vendorType } from "./enums";
 import { tenants } from "./tenancy";
@@ -22,6 +22,7 @@ export const vendors = pgTable("vendors", {
   primaryEmail: text("primary_email"),
   primaryPhone: text("primary_phone"),
   vendorType: vendorType("vendor_type").notNull().default("commercial"),
+  paymentTermsDays: integer("payment_terms_days"), // QNEW-50: overdue calc
   isActive: isActive(),
   ...audit,
 });

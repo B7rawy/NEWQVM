@@ -148,6 +148,20 @@
       "when": 1784697209854,
       "tag": "0020_vendor_selfservice_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784697424582,
+      "tag": "0021_vendor_finance",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784697425052,
+      "tag": "0022_vendor_finance_rls",
+      "breakpoints": true
     }
   ]
 }

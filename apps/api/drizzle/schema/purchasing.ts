@@ -29,6 +29,7 @@ export const purchaseOrders = pgTable(
     paymentAccountId: uuid("payment_account_id").references(() => paymentAccounts.id),
     statusId: uuid("status_id").references(() => vendorStatuses.id),
     vendorInvoiceNumber: text("vendor_invoice_number"),
+    invoiceAmount: money("invoice_amount"), // QNEW-50: vendor invoice total
     uploadedBy: uuid("uploaded_by").references(() => users.id),
     ...audit,
   },

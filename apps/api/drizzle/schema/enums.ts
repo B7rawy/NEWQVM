@@ -60,6 +60,14 @@ export const adjustmentType = pgEnum("adjustment_type", ["discount", "markup"]);
 /** Scope of a vendor pricing policy (QNEW-51) — most-specific wins. */
 export const pricingScopeType = pgEnum("pricing_scope_type", ["global", "region", "client_branch"]);
 
+/** Vendor invoice-financing request lifecycle (QNEW-52). */
+export const financingStatus = pgEnum("financing_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "disbursed",
+]);
+
 /** Vendor-assignment automation (QNEW-35): suggest in the modal vs auto-send. */
 export const automationMode = pgEnum("automation_mode", ["suggest", "auto"]);
 
