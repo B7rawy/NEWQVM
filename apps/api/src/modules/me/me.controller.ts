@@ -10,20 +10,41 @@ import { DbService } from "../../db/db.service.js";
 export class MeController {
   constructor(private readonly dbService: DbService) {}
 
-  /** Current user + the tenant/role resolved for this request. */
+  /** Current user + the tenant/role resolved for this request, plus the resolved persona
+   *  (which portal the frontend renders): platform | vendor | workspace. */
   @Get()
   async me(@Req() req: Request) {
     const ctx = getContext(req);
-    const rows = await this.dbService.withContext(
+    const info = await this.dbService.withContext(
       { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true },
-      (tx) => tx.execute(sql`select id, email, full_name from users where id = ${ctx.userId}::uuid`),
+      async (tx) => {
+        const user = (
+          (await tx.execute(sql`select id, email, full_name from users where id = ${ctx.userId}::uuid`)) as Array<{
+            id: string;
+            email: string;
+            full_name: string;
+          }>
+        )[0];
+        const platformRole = (
+          (await tx.execute(sql`
+            select role from platform_members where user_id = ${ctx.userId}::uuid and is_active = true limit 1`)) as Array<{ role: string }>
+        )[0]?.role;
+        const isVendor = !!(
+          (await tx.execute(sql`select 1 from vendor_users where user_id = ${ctx.userId}::uuid limit 1`)) as Array<unknown>
+        )[0];
+        return { user, platformRole, isVendor };
+      },
     );
-    const user = rows[0] as { id: string; email: string; full_name: string } | undefined;
+
+    const persona = ctx.isInternal ? "platform" : info.isVendor ? "vendor" : "workspace";
     return {
-      user,
+      user: info.user,
       tenant: { slug: ctx.tenantSlug, id: ctx.tenantId },
       role: ctx.role,
       isInternal: ctx.isInternal,
+      platformRole: info.platformRole ?? null,
+      isVendor: info.isVendor,
+      persona,
     };
   }
 }

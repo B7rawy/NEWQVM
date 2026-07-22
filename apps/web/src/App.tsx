@@ -11,12 +11,14 @@ import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import { PageHeader, ComingSoon } from "./components/ui";
-import { internalNav } from "./nav";
+import { platformNav, workspaceNav, vendorNav } from "./nav";
+
+const ALL_ITEMS = [...platformNav, ...workspaceNav, ...vendorNav].flatMap((g) => g.items);
 
 /** Honest placeholder for sections not yet wired. */
 function Placeholder() {
   const { pathname } = useLocation();
-  const label = internalNav.flatMap((g) => g.items).find((i) => i.path === pathname)?.label ?? pathname.replace("/", "");
+  const label = ALL_ITEMS.find((i) => i.path === pathname)?.label ?? pathname.replace(/^\//, "");
   return (
     <>
       <PageHeader title={label} />
@@ -25,13 +27,23 @@ function Placeholder() {
   );
 }
 
-const WIRED = ["/overview", "/rfqs", "/orders", "/org/workshops", "/vendors", "/admin/users", "/admin/workspaces"];
+const WIRED = new Set([
+  "/overview",
+  "/rfqs",
+  "/orders",
+  "/org/workshops",
+  "/vendors",
+  "/admin/users",
+  "/admin/workspaces",
+  "/settings",
+]);
 
 export default function App() {
-  const { authed } = useAuth();
+  const { authed, me } = useAuth();
   if (!authed) return <Login />;
 
-  const placeholders = internalNav.flatMap((g) => g.items).filter((i) => !WIRED.includes(i.path));
+  const home = me?.persona === "vendor" ? "/vendor" : "/overview";
+  const placeholders = ALL_ITEMS.filter((i) => !WIRED.has(i.path));
 
   return (
     <Routes>
@@ -48,7 +60,7 @@ export default function App() {
           <Route key={p.path} path={p.path} element={<Placeholder />} />
         ))}
         <Route path="/developers" element={<Placeholder />} />
-        <Route path="*" element={<Navigate to="/overview" replace />} />
+        <Route path="*" element={<Navigate to={home} replace />} />
       </Route>
     </Routes>
   );

@@ -8,10 +8,15 @@ export interface Workspace {
   is_sandbox: boolean;
   role: string | null;
 }
+import type { Persona } from "../nav";
+
 interface Me {
   user: { id: string; email: string; full_name: string } | null;
   role: string | null;
   isInternal: boolean;
+  platformRole: string | null;
+  isVendor: boolean;
+  persona: Persona;
 }
 
 interface AuthState {

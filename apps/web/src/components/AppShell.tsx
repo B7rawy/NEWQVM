@@ -2,7 +2,7 @@ import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { ChevronsUpDown, Search, Settings, Code2, Check } from "lucide-react";
 import { useAuth } from "../lib/auth";
-import { internalNav } from "../nav";
+import { navForPersona } from "../nav";
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
  *  settings pinned at the bottom. QVM red is the accent. */
@@ -10,11 +10,14 @@ export default function AppShell() {
   const { me, workspaces, activeSlug, switchWorkspace, logout } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
-  const items = internalNav.flatMap((g, i) =>
-    g.items
-      .filter((it) => !it.platformOnly || me?.isInternal)
-      .map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })),
-  );
+  const persona = me?.persona ?? "workspace";
+  const groups = navForPersona(persona, {
+    isSuperAdmin: me?.platformRole === "super_admin",
+    isCompanyAdmin: me?.role === "company_admin",
+  });
+  const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
+  const portalLabel =
+    persona === "platform" ? "Platform" : persona === "vendor" ? "Vendor" : "Workspace";
 
   return (
     <div className="grid h-full grid-cols-[248px_1fr] bg-white">
@@ -23,6 +26,9 @@ export default function AppShell() {
         <div className="flex items-center gap-2 px-3.5 pb-1 pt-4">
           <img src="/qvm-logo.png" alt="QParts" className="h-6 w-auto" />
           <span className="text-[17px] font-bold uppercase tracking-tight text-navy">Parts</span>
+          <span className="ml-auto rounded-full bg-accent-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+            {portalLabel}
+          </span>
         </div>
         {/* workspace switcher */}
         <div className="relative px-2.5 pb-1.5 pt-2">
