@@ -11,7 +11,7 @@ import Vendors from "./pages/Vendors";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
-import { PageHeader, ComingSoon } from "./components/ui";
+import { PageHeader, ComingSoon, Spinner } from "./components/ui";
 import { platformNav, workspaceNav, vendorNav } from "./nav";
 
 const ALL_ITEMS = [...platformNav, ...workspaceNav, ...vendorNav].flatMap((g) => g.items);
@@ -42,8 +42,10 @@ const WIRED = new Set([
 export default function App() {
   const { authed, me } = useAuth();
   if (!authed) return <Login />;
+  // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
+  if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
-  const home = me?.persona === "vendor" ? "/vendor" : "/overview";
+  const home = me.persona === "vendor" ? "/vendor" : "/overview";
   const placeholders = ALL_ITEMS.filter((i) => !WIRED.has(i.path));
 
   return (

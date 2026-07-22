@@ -89,14 +89,22 @@ async function main() {
   const [pro] =
     await sql`insert into plans (code,name) values ('pro','Professional') returning id`;
 
-  // ---- users (real argon2 passwords so login works over HTTP) ----
+  // ---- users (real argon2 passwords so login works over HTTP) — one per persona ----
   const adminHash = await argon2.hash("admin1234");
   const advisorHash = await argon2.hash("advisor1234");
   const multiHash = await argon2.hash("multi1234");
+  const managerHash = await argon2.hash("manager1234");
+  const vendorHash = await argon2.hash("vendor1234");
   const [admin] = await sql`insert into users (email,full_name,password_hash)
     values ('admin@qvm.local','Platform Admin',${adminHash}) returning id`;
   const [advisor] = await sql`insert into users (email,full_name,password_hash)
     values ('advisor@riyadh.local','Riyadh Advisor',${advisorHash}) returning id`;
+  // workspace ADMIN (company_admin) — sees Setup + Settings
+  const [manager] = await sql`insert into users (email,full_name,password_hash)
+    values ('manager@riyadh.local','Riyadh Manager',${managerHash}) returning id`;
+  // VENDOR user — lands on the vendor portal
+  const [vendorUser] = await sql`insert into users (email,full_name,password_hash)
+    values ('gulf@vendor.local','Gulf Vendor Admin',${vendorHash}) returning id`;
   // a user who works with TWO workspaces — exercises workspace switching (ADR-0010)
   const [multi] = await sql`insert into users (email,full_name,password_hash)
     values ('multi@qvm.local','Multi Workspace User',${multiHash}) returning id`;
@@ -129,6 +137,9 @@ async function main() {
   // advisor = company-scoped to t1 only
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
     values (${t1.id},${advisor.id},'service_advisor',${branch.id})`;
+  // manager = WORKSPACE ADMIN of t1 (company_admin) → Setup + Settings
+  await sql`insert into tenant_memberships (tenant_id,user_id,role)
+    values (${t1.id},${manager.id},'company_admin')`;
   // multi = member of BOTH t1 and t2 (can switch between them)
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
     values (${t1.id},${multi.id},'branch_manager',${branch.id})`;
@@ -141,6 +152,8 @@ async function main() {
   await sql`insert into vendor_branches (vendor_id,name,region_id) values (${vendor.id},'Riyadh Depot',${central.id})`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${t1.id},${vendor.id},'active')`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${tSandbox.id},${vendor.id},'active')`;
+  // vendor-portal login: gulf@vendor.local is an admin of the Gulf vendor (persona = vendor)
+  await sql`insert into vendor_users (vendor_id,user_id,is_vendor_admin) values (${vendor.id},${vendorUser.id},true)`;
 
   // ---- sandbox org so the sandbox guard can be exercised end-to-end ----
   const [sbWs] = await sql`insert into workshops (name) values ('Sandbox Motors') returning id`;

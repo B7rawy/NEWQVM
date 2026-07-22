@@ -59,6 +59,7 @@ export class AuthGuard implements CanActivate {
           | undefined;
 
         let tenant: { tenant_id?: string; role?: string } | undefined;
+        let vendorAccess = false;
         if (tenantSlug) {
           tenant = (await tx.execute(sql`
             select t.id as tenant_id, m.role as role
@@ -67,27 +68,40 @@ export class AuthGuard implements CanActivate {
               on m.tenant_id = t.id and m.user_id = ${userId}::uuid and m.is_active = true
             where t.slug = ${tenantSlug} and t.is_active = true
             limit 1`))[0] as { tenant_id?: string; role?: string } | undefined;
+          // vendor users access a workspace via their vendor's tenant_vendors link
+          if (tenant?.tenant_id && !tenant.role) {
+            vendorAccess = !!(
+              (await tx.execute(sql`
+                select 1 from vendor_users vu
+                join tenant_vendors tv on tv.vendor_id = vu.vendor_id and tv.status = 'active'
+                where vu.user_id = ${userId}::uuid and tv.tenant_id = ${tenant.tenant_id}::uuid limit 1`)) as Array<unknown>
+            )[0];
+          }
         }
-        return { inactive: false as const, platformRole: platform?.role ?? null, tenant };
+        return { inactive: false as const, platformRole: platform?.role ?? null, tenant, vendorAccess };
       },
     );
 
     if ("inactive" in info && info.inactive) throw new UnauthorizedException("user is deactivated");
-    const active = info as { platformRole: string | null; tenant?: { tenant_id?: string; role?: string } };
+    const active = info as {
+      platformRole: string | null;
+      tenant?: { tenant_id?: string; role?: string };
+      vendorAccess?: boolean;
+    };
     const isInternal = active.platformRole != null;
     const ctx: RequestContext = {
       userId,
       tenantSlug,
       tenantId: active.tenant?.tenant_id ?? null,
-      role: active.tenant?.role ?? active.platformRole,
+      role: active.tenant?.role ?? (active.vendorAccess ? "vendor" : active.platformRole),
       isInternal,
       environment: resolveEnvironment(req),
     };
 
-    // If a workspace was requested, require access to it (member or platform staff).
+    // If a workspace was requested, require access to it (member, vendor link, or platform staff).
     if (tenantSlug) {
       if (!active.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
-      if (!isInternal && !active.tenant.role) {
+      if (!isInternal && !active.tenant.role && !active.vendorAccess) {
         throw new ForbiddenException("no access to this workspace");
       }
     }
