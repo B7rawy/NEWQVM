@@ -23,6 +23,8 @@ import { PricingController } from "./modules/pricing/pricing.controller.js";
 import { PricingService } from "./modules/pricing/pricing.service.js";
 import { InsuranceController } from "./modules/insurance/insurance.controller.js";
 import { InsuranceService } from "./modules/insurance/insurance.service.js";
+import { VendorAssignmentController } from "./modules/vendor-assignment/vendor-assignment.controller.js";
+import { VendorAssignmentService } from "./modules/vendor-assignment/vendor-assignment.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -44,6 +46,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     PartsController,
     PricingController,
     InsuranceController,
+    VendorAssignmentController,
   ],
   providers: [
     RfqService,
@@ -56,6 +59,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     PartsService,
     PricingService,
     InsuranceService,
+    VendorAssignmentService,
   ],
 })
 export class AppModule {}
