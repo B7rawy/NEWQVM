@@ -28,7 +28,9 @@ export class WorkspacesController {
       (tx) =>
         tx.execute(sql`
           select wb.id, wb.name, w.name as workshop
-          from workshop_branches wb join workshops w on w.id = wb.workshop_id
+          from tenant_workshops tw
+          join workshops w on w.id = tw.workshop_id and tw.status <> 'archived'
+          join workshop_branches wb on wb.workshop_id = w.id
           where wb.is_active = true order by w.name, wb.name`),
     );
     return { branches: rows };

@@ -1,39 +1,31 @@
-import { boolean, pgTable, text, uuid, index } from "drizzle-orm/pg-core";
+import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { orderCategory } from "./enums";
+import { orderCategory, tenantWorkshopStatus } from "./enums";
 import { tenants } from "./tenancy";
+import { users } from "./identity";
 import { cities, regions } from "./reference";
 
 /**
- * Client organizations WITHIN a workspace: the workshops (Qparts' clients) and their branches.
- * Fixes old §6.2: the customer now lives at the RFQ HEADER via workshop_branch_id (NOT NULL there),
- * not scattered on line items.
+ * Workshops (Qparts' clients) and their branches. Like vendors, a workshop is a GLOBAL entity so the
+ * same real company can be shared across multiple workspaces (ADR-0011). Workspace access is granted
+ * via `tenant_workshops` (mirrors tenant_vendors); operational rows (RFQs/orders) carry their own
+ * tenant_id, so a branch used in workspace A produces A-scoped RFQs.
  */
 
-/** A client company (workshop) inside a tenant/workspace. */
-export const workshops = pgTable(
-  "workshops",
-  {
-    id: pk(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
-    name: text("name").notNull(),
-    taxNumber: text("tax_number"),
-    isActive: isActive(),
-    ...audit,
-  },
-  (t) => [index("workshops_tenant_idx").on(t.tenantId)],
-);
+/** A client company (workshop) — global master data. */
+export const workshops = pgTable("workshops", {
+  id: pk(),
+  name: text("name").notNull(),
+  taxNumber: text("tax_number"),
+  isActive: isActive(),
+  ...audit,
+});
 
-/** A physical branch of a workshop. RFQs are placed by / for a branch. */
+/** A physical branch of a workshop (global, under the workshop). RFQs are placed for a branch. */
 export const workshopBranches = pgTable(
   "workshop_branches",
   {
     id: pk(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
     workshopId: uuid("workshop_id")
       .notNull()
       .references(() => workshops.id),
@@ -46,9 +38,35 @@ export const workshopBranches = pgTable(
     ...audit,
   },
   (t) => [
-    index("workshop_branches_tenant_idx").on(t.tenantId),
     index("workshop_branches_workshop_idx").on(t.workshopId),
     index("workshop_branches_region_idx").on(t.regionId),
     index("workshop_branches_city_idx").on(t.cityId),
+  ],
+);
+
+/**
+ * Link table: which global workshop is active in which workspace (mirrors tenant_vendors).
+ * Carries tenant_id + RLS — every workspace-scoped workshop query goes through here.
+ */
+export const tenantWorkshops = pgTable(
+  "tenant_workshops",
+  {
+    id: pk(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    workshopId: uuid("workshop_id")
+      .notNull()
+      .references(() => workshops.id),
+    status: tenantWorkshopStatus("status").notNull().default("active"),
+    settings: jsonb("settings").notNull().default({}),
+    linkedBy: uuid("linked_by").references(() => users.id),
+    ...audit,
+  },
+  (t) => [
+    uniqueIndex("tenant_workshops_tenant_workshop_uq").on(t.tenantId, t.workshopId),
+    index("tenant_workshops_tenant_idx").on(t.tenantId),
+    index("tenant_workshops_workshop_idx").on(t.workshopId),
+    index("tenant_workshops_linked_by_idx").on(t.linkedBy),
   ],
 );

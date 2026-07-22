@@ -38,11 +38,13 @@ export class RfqService {
    */
   async create(ctx: RlsContext, dto: CreateRfqDto) {
     return this.dbService.withContext(ctx, async (tx) => {
-      // branch must belong to THIS workspace (RLS already scopes; this also fetches its region)
+      // branch's workshop must be LINKED to THIS workspace (workshops are global now, ADR-0011).
+      // tenant_workshops is tenant-scoped, so the join enforces the branch belongs to a linked workshop.
       const branch = (
         (await tx.execute(sql`
           select wb.id, wb.region_id, r.code as region_code
           from workshop_branches wb
+          join tenant_workshops tw on tw.workshop_id = wb.workshop_id and tw.status <> 'archived'
           left join regions r on r.id = wb.region_id
           where wb.id = ${dto.workshopBranchId}::uuid and wb.is_active = true
           limit 1`)) as Array<{ id: string; region_id: string | null; region_code: string | null }>

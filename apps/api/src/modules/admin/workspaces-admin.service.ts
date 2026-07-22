@@ -30,7 +30,8 @@ export class WorkspacesAdminService {
     const rows = await this.dbService.withContext(INTERNAL, (tx) =>
       tx.execute(sql`
         select t.id, t.slug, t.name, t.is_sandbox, t.is_active, t.created_at,
-          (select count(*) from workshop_branches wb where wb.tenant_id = t.id) as branches,
+          (select count(*) from tenant_workshops tw join workshop_branches wb on wb.workshop_id = tw.workshop_id
+            where tw.tenant_id = t.id and tw.status <> 'archived') as branches,
           (select count(*) from tenant_vendors tv where tv.tenant_id = t.id and tv.status = 'active') as vendors,
           (select count(*) from tenant_memberships m where m.tenant_id = t.id and m.is_active = true) as users
         from tenants t order by t.created_at desc`),

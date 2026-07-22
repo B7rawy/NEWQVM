@@ -110,14 +110,18 @@ async function main() {
   const [tSandbox] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
     values ('Sandbox Workspace','sandbox',${pro.id},true) returning id`;
 
-  // ---- org for t1: a workshop + branch ----
-  const [ws] = await sql`insert into workshops (tenant_id,name) values (${t1.id},'Al Faisal Motors') returning id`;
-  const [branch] = await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
-    values (${t1.id},${ws.id},'Riyadh Main',${central.id}) returning id`;
-  // org for t2 (so the multi-workspace user has a real branch there)
-  const [ws2] = await sql`insert into workshops (tenant_id,name) values (${t2.id},'Jeddah Auto') returning id`;
-  const [branch2] = await sql`insert into workshop_branches (tenant_id,workshop_id,name)
-    values (${t2.id},${ws2.id},'Jeddah Main') returning id`;
+  // ---- org: global workshops + branches, linked to workspaces via tenant_workshops (ADR-0011) ----
+  const [ws] = await sql`insert into workshops (name) values ('Al Faisal Motors') returning id`;
+  const [branch] = await sql`insert into workshop_branches (workshop_id,name,region_id)
+    values (${ws.id},'Riyadh Main',${central.id}) returning id`;
+  await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${t1.id},${ws.id},'active')`;
+  // a second global workshop for t2
+  const [ws2] = await sql`insert into workshops (name) values ('Jeddah Auto') returning id`;
+  const [branch2] = await sql`insert into workshop_branches (workshop_id,name)
+    values (${ws2.id},'Jeddah Main') returning id`;
+  await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${t2.id},${ws2.id},'active')`;
+  // Al Faisal Motors is ALSO shared into t2 (same global workshop, two workspaces — demonstrates ADR-0011)
+  await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${t2.id},${ws.id},'active')`;
 
   // ---- access (ADR-0010 three layers) ----
   // admin = platform staff → sees ALL workspaces
@@ -139,9 +143,10 @@ async function main() {
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${tSandbox.id},${vendor.id},'active')`;
 
   // ---- sandbox org so the sandbox guard can be exercised end-to-end ----
-  const [sbWs] = await sql`insert into workshops (tenant_id,name) values (${tSandbox.id},'Sandbox Motors') returning id`;
-  await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
-    values (${tSandbox.id},${sbWs.id},'Sandbox Branch',${central.id})`;
+  const [sbWs] = await sql`insert into workshops (name) values ('Sandbox Motors') returning id`;
+  await sql`insert into workshop_branches (workshop_id,name,region_id)
+    values (${sbWs.id},'Sandbox Branch',${central.id})`;
+  await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${tSandbox.id},${sbWs.id},'active')`;
 
   // ---- one RFQ chain in t1, using the atomic order-number function ----
   const [num] = await sql`select public.next_order_number(${t1.id},'RYD-',${central.id}) as n`;

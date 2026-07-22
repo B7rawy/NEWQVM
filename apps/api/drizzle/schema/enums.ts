@@ -142,6 +142,13 @@ export const tenantVendorStatus = pgEnum("tenant_vendor_status", [
   "archived",
 ]);
 
+/** Link status of a global workshop within a workspace (mirrors tenant_vendor_status). */
+export const tenantWorkshopStatus = pgEnum("tenant_workshop_status", [
+  "active",
+  "suspended",
+  "archived",
+]);
+
 /** Which side a return reason belongs to (old lists 13 internal + 23 client). */
 export const returnReasonSide = pgEnum("return_reason_side", ["client", "internal"]);
 
