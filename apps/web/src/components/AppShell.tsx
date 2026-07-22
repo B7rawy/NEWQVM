@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { ChevronsUpDown, Search, Settings, Code2, Check } from "lucide-react";
+import { ChevronsUpDown, Search, Settings, Code2, Check, Eye } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { navForPersona } from "../nav";
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
  *  settings pinned at the bottom. QVM red is the accent. */
 export default function AppShell() {
-  const { me, workspaces, activeSlug, environment, switchWorkspace, setEnvironment, logout } = useAuth();
+  const { me, workspaces, activeSlug, environment, switchWorkspace, setEnvironment, logout, stopImpersonating } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
   const persona = me?.persona ?? "workspace";
@@ -98,6 +98,21 @@ export default function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-col">
+        {me?.impersonating && (
+          <div className="flex items-center gap-3 bg-ink px-6 py-2 text-[13px] text-white">
+            <Eye className="h-4 w-4" />
+            <span>
+              Viewing as <b className="font-semibold">{me.user?.full_name}</b>
+              {me.impersonatorName ? ` — as ${me.impersonatorName}` : ""}
+            </span>
+            <button
+              onClick={stopImpersonating}
+              className="ml-auto rounded-md bg-white/15 px-3 py-1 text-[12px] font-semibold hover:bg-white/25"
+            >
+              ← Back to admin
+            </button>
+          </div>
+        )}
         <header className="flex items-center gap-3 border-b border-line px-6 py-3">
           {/* Live ⇄ Sandbox environment toggle */}
           <div className="flex items-center overflow-hidden rounded-md border border-line text-[12px] font-semibold">

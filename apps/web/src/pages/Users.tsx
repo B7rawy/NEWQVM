@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../components/ui";
@@ -25,7 +25,8 @@ const roleLabel: Record<string, string> = {
 };
 
 export default function Users() {
-  const { activeSlug } = useAuth();
+  const { activeSlug, me, impersonate } = useAuth();
+  const canViewAs = me?.persona === "platform" || me?.role === "company_admin";
   const [rows, setRows] = useState<Member[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
@@ -141,6 +142,7 @@ export default function Users() {
                 <th className="th">Role</th>
                 <th className="th">Branch</th>
                 <th className="th">Status</th>
+                <th className="th" />
               </tr>
             </thead>
             <tbody>
@@ -154,6 +156,13 @@ export default function Users() {
                   <td className="td text-muted">{u.branch ?? "All"}</td>
                   <td className="td">
                     <Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge>
+                  </td>
+                  <td className="td text-right">
+                    {canViewAs && u.id !== me?.user?.id && (
+                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}>
+                        <Eye className="h-3.5 w-3.5" /> View as
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

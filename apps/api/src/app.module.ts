@@ -11,6 +11,8 @@ import { VendorsController } from "./modules/vendors/vendors.controller.js";
 import { VendorsService } from "./modules/vendors/vendors.service.js";
 import { UsersAdminController } from "./modules/admin/users-admin.controller.js";
 import { UsersAdminService } from "./modules/admin/users-admin.service.js";
+import { ImpersonationController } from "./modules/admin/impersonation.controller.js";
+import { ImpersonationService } from "./modules/admin/impersonation.service.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
 import { RfqService } from "./modules/rfq/rfq.service.js";
 import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
@@ -74,6 +76,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     OrgController,
     VendorsController,
     UsersAdminController,
+    ImpersonationController,
   ],
   providers: [
     RfqService,
@@ -97,6 +100,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     OrgService,
     VendorsService,
     UsersAdminService,
+    ImpersonationService,
   ],
 })
 export class AppModule {}

@@ -10,6 +10,8 @@ export interface RequestContext {
   isInternal: boolean;
   /** Active data environment within the workspace (X-Environment header; default 'live'). */
   environment: "live" | "sandbox";
+  /** The real actor's user id when this request is impersonating ('view as'); null otherwise. */
+  impersonatorId: string | null;
 }
 
 /** Read the requested data environment from the X-Environment header (default 'live'). */
@@ -43,5 +45,6 @@ export function getContext(req: Request): RequestContext {
     role: null,
     isInternal: false,
     environment: "live",
+    impersonatorId: null,
   };
 }

@@ -33,6 +33,7 @@ export class VendorsService {
         tx.execute(sql`
           select v.id, v.legal_name, v.vendor_type, v.primary_email, v.primary_phone,
             tv.status, tv.classification,
+            (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id,
             (select count(*) from vendor_branches vb where vb.vendor_id = v.id) as branches
           from tenant_vendors tv
           join vendors v on v.id = tv.vendor_id

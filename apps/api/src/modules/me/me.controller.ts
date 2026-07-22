@@ -32,7 +32,10 @@ export class MeController {
         const isVendor = !!(
           (await tx.execute(sql`select 1 from vendor_users where user_id = ${ctx.userId}::uuid limit 1`)) as Array<unknown>
         )[0];
-        return { user, platformRole, isVendor };
+        const impersonator = ctx.impersonatorId
+          ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
+          : undefined;
+        return { user, platformRole, isVendor, impersonatorName: impersonator?.full_name ?? null };
       },
     );
 
@@ -45,6 +48,8 @@ export class MeController {
       platformRole: info.platformRole ?? null,
       isVendor: info.isVendor,
       persona,
+      impersonating: !!ctx.impersonatorId,
+      impersonatorName: info.impersonatorName,
     };
   }
 }

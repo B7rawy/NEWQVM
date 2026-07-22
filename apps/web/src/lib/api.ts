@@ -13,6 +13,9 @@ export const auth = {
     slug ? localStorage.setItem(WS_KEY, slug) : localStorage.removeItem(WS_KEY),
   environment: (): "live" | "sandbox" => (localStorage.getItem(ENV_KEY) === "sandbox" ? "sandbox" : "live"),
   setEnvironment: (e: "live" | "sandbox") => localStorage.setItem(ENV_KEY, e),
+  // "view as": the real admin token is stashed while impersonating so we can return to it.
+  realToken: () => localStorage.getItem("qvm_real_token"),
+  setRealToken: (t: string | null) => (t ? localStorage.setItem("qvm_real_token", t) : localStorage.removeItem("qvm_real_token")),
 };
 
 export class ApiError extends Error {

@@ -17,6 +17,8 @@ interface Me {
   platformRole: string | null;
   isVendor: boolean;
   persona: Persona;
+  impersonating: boolean;
+  impersonatorName: string | null;
 }
 
 interface AuthState {
@@ -29,6 +31,8 @@ interface AuthState {
   logout: () => void;
   switchWorkspace: (slug: string) => Promise<void>;
   setEnvironment: (e: "live" | "sandbox") => void;
+  impersonate: (userId: string) => Promise<void>;
+  stopImpersonating: () => void;
 }
 
 const Ctx = createContext<AuthState | null>(null);
@@ -78,6 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   function logout() {
     auth.setToken(null);
     auth.setWorkspace(null);
+    auth.setRealToken(null);
     setAuthed(false);
     setMe(null);
     setWorkspaces([]);
@@ -92,10 +97,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     auth.setEnvironment(e);
     setEnvironmentState(e);
   }
+  async function impersonate(userId: string) {
+    const res = await api.post<{ token: string }>("/admin/impersonate", { userId });
+    if (!auth.realToken()) auth.setRealToken(auth.token()); // stash the real admin token once
+    auth.setToken(res.token);
+    auth.setWorkspace(null); // let the impersonated user's default workspace resolve
+    window.location.href = "/";
+  }
+  function stopImpersonating() {
+    const real = auth.realToken();
+    if (real) {
+      auth.setToken(real);
+      auth.setRealToken(null);
+      auth.setWorkspace(null);
+    }
+    window.location.href = "/";
+  }
 
   return (
     <Ctx.Provider
-      value={{ authed, me, workspaces, activeSlug, environment, login, logout, switchWorkspace, setEnvironment }}
+      value={{ authed, me, workspaces, activeSlug, environment, login, logout, switchWorkspace, setEnvironment, impersonate, stopImpersonating }}
     >
       {children}
     </Ctx.Provider>

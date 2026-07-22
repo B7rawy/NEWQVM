@@ -35,8 +35,11 @@ export class AuthGuard implements CanActivate {
     if (!auth?.startsWith("Bearer ")) throw new UnauthorizedException("missing bearer token");
 
     let userId: string;
+    let impersonatorId: string | null = null;
     try {
-      userId = (await this.jwt.verifyAsync<{ sub: string }>(auth.slice(7))).sub;
+      const claims = await this.jwt.verifyAsync<{ sub: string; imp?: string }>(auth.slice(7));
+      userId = claims.sub;
+      impersonatorId = claims.imp ?? null;
     } catch {
       throw new UnauthorizedException("invalid token");
     }
@@ -96,6 +99,7 @@ export class AuthGuard implements CanActivate {
       role: active.tenant?.role ?? (active.vendorAccess ? "vendor" : active.platformRole),
       isInternal,
       environment: resolveEnvironment(req),
+      impersonatorId,
     };
 
     // If a workspace was requested, require access to it (member, vendor link, or platform staff).

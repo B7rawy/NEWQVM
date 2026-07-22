@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
@@ -13,10 +13,12 @@ interface Vendor {
   status: string;
   classification: string | null;
   branches: number;
+  user_id: string | null;
 }
 
 export default function Vendors() {
-  const { activeSlug, me } = useAuth();
+  const { activeSlug, me, impersonate } = useAuth();
+  const canViewAs = me?.persona === "platform" || me?.role === "company_admin";
   const [rows, setRows] = useState<Vendor[] | null>(null);
   const [show, setShow] = useState(false);
   const [f, setF] = useState({ legalName: "", vendorType: "commercial", primaryEmail: "", primaryPhone: "", classification: "" });
@@ -118,6 +120,7 @@ export default function Vendors() {
                 <th className="th">Contact</th>
                 <th className="th">Branches</th>
                 <th className="th">Status</th>
+                <th className="th" />
               </tr>
             </thead>
             <tbody>
@@ -130,6 +133,13 @@ export default function Vendors() {
                   <td className="td tnum">{v.branches}</td>
                   <td className="td">
                     <Badge tone={statusTone(v.status)}>{v.status}</Badge>
+                  </td>
+                  <td className="td text-right">
+                    {canViewAs && v.user_id && (
+                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}>
+                        <Eye className="h-3.5 w-3.5" /> View as
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
