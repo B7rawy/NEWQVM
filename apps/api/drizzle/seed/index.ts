@@ -8,6 +8,7 @@
  * RLS isolation, and the atomic order-number function end to end. It grows in later phases.
  */
 import postgres from "postgres";
+import argon2 from "argon2";
 import { ITEM_STATUSES, VENDOR_STATUSES } from "./reference-data";
 
 const sql = postgres(
@@ -74,9 +75,13 @@ async function main() {
   const [pro] =
     await sql`insert into plans (code,name) values ('pro','Professional') returning id`;
 
-  // ---- platform admin user ----
+  // ---- users (real argon2 passwords so login works over HTTP) ----
+  const adminHash = await argon2.hash("admin1234");
+  const advisorHash = await argon2.hash("advisor1234");
   const [admin] = await sql`insert into users (email,full_name,password_hash)
-    values ('admin@qvm.local','Platform Admin','!seed-no-login') returning id`;
+    values ('admin@qvm.local','Platform Admin',${adminHash}) returning id`;
+  const [advisor] = await sql`insert into users (email,full_name,password_hash)
+    values ('advisor@riyadh.local','Riyadh Advisor',${advisorHash}) returning id`;
   await sql`select set_config('app.user_id', ${admin.id}, false)`;
 
   // ---- tenants: one real workspace + one sandbox ----
@@ -89,6 +94,11 @@ async function main() {
   const [ws] = await sql`insert into workshops (tenant_id,name) values (${t1.id},'Al Faisal Motors') returning id`;
   const [branch] = await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
     values (${t1.id},${ws.id},'Riyadh Main',${central.id}) returning id`;
+
+  // ---- memberships: admin = platform staff (sees all); advisor = company-scoped to t1 ----
+  await sql`insert into tenant_memberships (tenant_id,user_id,role) values (${t1.id},${admin.id},'super_admin')`;
+  await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
+    values (${t1.id},${advisor.id},'service_advisor',${branch.id})`;
 
   // ---- global vendor linked to t1 ----
   const [vendor] = await sql`insert into vendors (legal_name,vendor_type)

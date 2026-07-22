@@ -1,42 +1,30 @@
-# @qvm/api — Backend (NestJS)
+# @qvm/api — Backend (NestJS + Drizzle)
 
-الباك إند للمنصّة. **لم يُولَّد بعد** — هذا المجلد يحتفظ بالبنية المستهدفة.
+الباك إند للمنصّة. RLS-scoped لكل request عبر دور `qvm_app` غير الـ superuser.
 
-## التوليد (المرحلة 2، الخطوة الأولى)
-
+## التشغيل
 ```bash
-# من جذر الريبو
-corepack pnpm dlx @nestjs/cli new apps/api --skip-git --package-manager pnpm
+corepack pnpm --filter @qvm/api dev     # node + @swc-node/register (يولّد decorator metadata لـ Nest DI)
+```
+> **مهم:** لا تستخدم `tsx` لتشغيل الـ API — esbuild لا يولّد `emitDecoratorMetadata` فينكسر الـ DI.
+> نستخدم SWC (`.swcrc`). الـ seed والميجريشنز تعمل بـ tsx/drizzle-kit عادي.
+
+## البنية (المرحلة 2a — منفَّذة)
+```
+src/
+├── db/            DbService — يتصل بدور qvm_app؛ withContext() يفتح transaction ويضبط
+│                  SET LOCAL app.tenant_id/user_id/is_internal (هذا ما يجعل RLS فعّالاً)
+├── common/        request-context (حلّ الساب-دومين/الدور) + AuthGuard (JWT → tenant → role)
+└── modules/
+    ├── auth/      POST /api/auth/login — argon2 + JWT
+    ├── me/        GET  /api/me
+    └── rfq/       GET  /api/rfqs — tenant-scoped بلا فلتر يدوي (RLS يعزل)
 ```
 
-ثم إضافة: `drizzle-orm`, `drizzle-kit`, `postgres`, `argon2`, `@nestjs/jwt`, `zod`.
+## مُتحقَّق (HTTP حقيقي)
+login (argon2+JWT) · باسورد غلط مرفوض · /me يحلّ الدور · /rfqs يعزل بالـ RLS
+(مستخدم على workspace آخر = صفر) · بدون توكن = 401 · internal يرى عبر الكل.
 
-## البنية المستهدفة (domain-driven — موديول لكل مجال، لا god-modules)
-
-```
-apps/api/
-├── drizzle/                 # schema + migrations (المصدر الوحيد)
-│   ├── schema/              # جدول لكل ملف، كلها تحمل tenant_id
-│   ├── migrations/          # مولّدة بـ drizzle-kit، اتجاه واحد
-│   └── seed/                # seed وهمي واقعي (شركات/طلبات/موردين)
-├── src/
-│   ├── common/              # tenant-context middleware, guards, RLS session setter,
-│   │                        #   side-effect layer (notifications guard on is_sandbox)
-│   ├── modules/
-│   │   ├── auth/            # JWT + argon2 + resolve tenant from subdomain
-│   │   ├── tenants/         # companies/workspaces CRUD + provisioning + subdomains
-│   │   ├── users/
-│   │   ├── rfq/  quotations/  pricing/  vendors/
-│   │   ├── orders/  deliveries/  returns/  invoices/
-│   │   ├── reports/
-│   │   ├── admin/          # super-admin surface
-│   │   ├── sandbox/        # seed + reset for is_sandbox tenants
-│   │   ├── files/          # MinIO/S3 abstraction
-│   │   └── notifications/  # email/whatsapp/webhooks — ALL guarded by is_sandbox
-│   └── main.ts
-```
-
-## قواعد
-- **RLS مفعّل**؛ كل request يضبط `SET LOCAL app.tenant_id` من سياق الـ tenant.
-- **صفر SECURITY DEFINER مفتوح للعامة** — كل endpoint خلف guard صريح.
-- **الأنواع مولّدة من drizzle schema** — لا `any` على حدود البيانات.
+## التالي (المرحلة 2b)
+موديولات المجالات (rfq كتابة، orders، pricing، vendors…) + طبقة notifications
+(side-effects خلف sandbox guard) + Zod DTOs لكل endpoint.
