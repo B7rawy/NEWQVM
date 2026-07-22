@@ -6,11 +6,13 @@ import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../componen
 
 interface Member {
   id: string;
+  membership_id: string;
   email: string;
   full_name: string;
   phone: string | null;
   role: string;
   branch: string | null;
+  workshop_branch_id: string | null;
   is_active: boolean;
 }
 interface Branch {
@@ -31,20 +33,33 @@ export default function Users() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [roles, setRoles] = useState<string[]>([]);
   const [show, setShow] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [f, setF] = useState({ email: "", fullName: "", role: "service_advisor", workshopBranchId: "", password: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const [u, b, r] = await Promise.all([
-      api.get<{ users: Member[] }>("/admin/users"),
+      api.get<{ users: Member[] }>(`/admin/users?includeInactive=${showInactive}`),
       api.get<{ branches: Branch[] }>("/org/branches").catch(() => ({ branches: [] })),
       api.get<{ roles: string[] }>("/admin/users/roles").catch(() => ({ roles: ["company_admin", "branch_manager", "service_advisor"] })),
     ]);
     setRows(u.users);
     setBranches(b.branches);
     setRoles(r.roles);
-  }, []);
+  }, [showInactive]);
+
+  async function patchMember(membershipId: string, body: Record<string, unknown>) {
+    setErr("");
+    try {
+      await api.patch(`/admin/users/${membershipId}`, body);
+      setEditing(null);
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }
   useEffect(() => {
     if (!activeSlug) return;
     setRows(null);
@@ -82,9 +97,14 @@ export default function Users() {
         title="Users & Permissions"
         subtitle="People with access to this workspace"
         actions={
-          <button className="btn-primary rounded-md" onClick={() => setShow((v) => !v)}>
-            <Plus className="h-4 w-4" /> Add user
-          </button>
+          <>
+            <label className="flex items-center gap-1.5 text-[12.5px] text-muted">
+              <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} /> Show inactive
+            </label>
+            <button className="btn-primary rounded-md" onClick={() => setShow((v) => !v)}>
+              <Plus className="h-4 w-4" /> Add user
+            </button>
+          </>
         }
       />
       {show && (
@@ -146,26 +166,77 @@ export default function Users() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((u) => (
-                <tr key={u.id} className="trow">
-                  <td className="td font-medium text-ink">{u.full_name}</td>
-                  <td className="td text-muted">{u.email}</td>
-                  <td className="td">
-                    <Badge tone="blue">{roleLabel[u.role] ?? u.role}</Badge>
-                  </td>
-                  <td className="td text-muted">{u.branch ?? "All"}</td>
-                  <td className="td">
-                    <Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge>
-                  </td>
-                  <td className="td text-right">
-                    {canViewAs && u.id !== me?.user?.id && (
-                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}>
-                        <Eye className="h-3.5 w-3.5" /> View as
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {rows.map((u) =>
+                editing === u.membership_id ? (
+                  <tr key={u.id} className="trow bg-surface">
+                    <td className="td font-medium text-ink">{u.full_name}</td>
+                    <td className="td text-muted">{u.email}</td>
+                    <td className="td">
+                      <select
+                        className="input py-1 text-[12px]"
+                        defaultValue={u.role}
+                        onChange={(e) => (u.role = e.target.value)}
+                        id={`role-${u.membership_id}`}
+                      >
+                        {roles.map((r) => (
+                          <option key={r} value={r}>{roleLabel[r] ?? r}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="td">
+                      <select className="input py-1 text-[12px]" defaultValue={u.workshop_branch_id ?? ""} id={`branch-${u.membership_id}`}>
+                        <option value="">All branches</option>
+                        {branches.map((b) => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="td" colSpan={2}>
+                      <div className="flex justify-end gap-2">
+                        <button
+                          className="btn-primary btn-sm rounded-md"
+                          onClick={() => {
+                            const role = (document.getElementById(`role-${u.membership_id}`) as HTMLSelectElement).value;
+                            const branch = (document.getElementById(`branch-${u.membership_id}`) as HTMLSelectElement).value;
+                            patchMember(u.membership_id, { role, workshopBranchId: branch || null });
+                          }}
+                        >
+                          Save
+                        </button>
+                        <button className="btn btn-sm rounded-md" onClick={() => setEditing(null)}>Cancel</button>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={u.id} className="trow">
+                    <td className="td font-medium text-ink">{u.full_name}</td>
+                    <td className="td text-muted">{u.email}</td>
+                    <td className="td">
+                      <Badge tone="blue">{roleLabel[u.role] ?? u.role}</Badge>
+                    </td>
+                    <td className="td text-muted">{u.branch ?? "All"}</td>
+                    <td className="td">
+                      <Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge>
+                    </td>
+                    <td className="td">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button className="btn btn-sm rounded-md" onClick={() => setEditing(u.membership_id)}>Edit</button>
+                        <button
+                          className={`btn btn-sm rounded-md ${u.is_active ? "text-accent" : ""}`}
+                          onClick={() => patchMember(u.membership_id, { isActive: !u.is_active })}
+                        >
+                          {u.is_active ? "Deactivate" : "Reactivate"}
+                        </button>
+                        {canViewAs && u.id !== me?.user?.id && u.is_active && (
+                          <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}>
+                            <Eye className="h-3.5 w-3.5" /> View as
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ),
+              )}
             </tbody>
           </table>
         )}

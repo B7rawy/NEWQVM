@@ -9,13 +9,17 @@ import {
   updateWorkspaceSchema,
   WorkspacesAdminService,
 } from "./workspaces-admin.service.js";
+import { updateMembershipSchema, UsersAdminService } from "./users-admin.service.js";
 
 /** /admin/workspaces — platform-staff management of tenants (the root of the hierarchy). */
 @Controller("admin/workspaces")
 @UseGuards(AuthGuard, RolesGuard)
 @PlatformOnly()
 export class WorkspacesAdminController {
-  constructor(private readonly svc: WorkspacesAdminService) {}
+  constructor(
+    private readonly svc: WorkspacesAdminService,
+    private readonly users: UsersAdminService,
+  ) {}
 
   @Get()
   list() {
@@ -40,5 +44,21 @@ export class WorkspacesAdminController {
   @Patch(":id")
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.update(getContext(req).userId!, id, updateWorkspaceSchema.parse(body));
+  }
+
+  /** Super-admin: edit a membership INSIDE a specific workspace (cross-workspace entrance). */
+  @Patch(":id/members/:membershipId")
+  updateMember(
+    @Req() req: Request,
+    @Param("id") id: string,
+    @Param("membershipId") membershipId: string,
+    @Body() body: unknown,
+  ) {
+    const ctx = getContext(req);
+    return this.users.updateMembership(
+      { tenantId: id, userId: ctx.userId, isInternal: true },
+      membershipId,
+      updateMembershipSchema.parse(body),
+    );
   }
 }
