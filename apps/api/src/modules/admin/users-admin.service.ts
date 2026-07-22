@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import argon2 from "argon2";
 import { z } from "zod";
@@ -53,14 +53,20 @@ export class UsersAdminService {
     return this.dbService.withContext(ctx, async (tx) => {
       const m = (
         (await tx.execute(sql`
-          select id, role, is_active from tenant_memberships
+          select id, role, is_active, user_id from tenant_memberships
           where id = ${membershipId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{
           id: string;
           role: string;
           is_active: boolean;
+          user_id: string;
         }>
       )[0];
       if (!m) throw new NotFoundException("membership not found in this workspace");
+
+      // you can't deactivate or demote your OWN membership (prevents self-lockout)
+      if (m.user_id === ctx.userId && (dto.isActive === false || (dto.role && dto.role !== m.role))) {
+        throw new ForbiddenException("you cannot change your own role or status here");
+      }
 
       // protect the last active company_admin
       const losingAdmin =
@@ -86,6 +92,11 @@ export class UsersAdminService {
           workshop_branch_id = ${branchFrag},
           updated_by = ${ctx.userId}::uuid, updated_at = now()
         where id = ${membershipId}::uuid and tenant_id = ${ctx.tenantId}::uuid`);
+      // accountability: record the control action + the real actor when acting under 'view as'
+      await tx.execute(sql`
+        insert into platform_audit (tenant_id, actor_user_id, impersonator_id, action, entity_type, entity_id, metadata)
+        values (${ctx.tenantId}::uuid, ${ctx.userId}::uuid, ${ctx.impersonatorId ?? null}::uuid,
+                'membership.update', 'tenant_membership', ${membershipId}::uuid, ${JSON.stringify(dto)}::jsonb)`);
       return { ok: true };
     });
   }

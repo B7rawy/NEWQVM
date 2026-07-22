@@ -4,7 +4,11 @@ import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
 import { impersonateSchema, ImpersonationService } from "./impersonation.service.js";
 
-/** "View as" — an admin acts as another user without logging out. */
+/**
+ * "View as" — an admin acts as another user without logging out. AuthGuard only (NOT @PlatformOnly)
+ * on purpose: authority is mixed — platform staff can view-as anyone, a company_admin can view-as
+ * users in their own workspace — so it's enforced in ImpersonationService.start(), not by a role guard.
+ */
 @Controller("admin/impersonate")
 @UseGuards(AuthGuard)
 export class ImpersonationController {

@@ -14,6 +14,8 @@ export interface RlsContext {
   isInternal: boolean;
   /** Data environment within the workspace — 'live' (default) or 'sandbox'. */
   environment?: "live" | "sandbox";
+  /** Real actor when acting under 'view as' — for platform_audit accountability. */
+  impersonatorId?: string | null;
 }
 
 /**
@@ -42,7 +44,8 @@ export class DbService implements OnModuleDestroy {
         set_config('app.tenant_id', ${ctx.tenantId ?? ""}, true),
         set_config('app.user_id', ${ctx.userId ?? ""}, true),
         set_config('app.is_internal', ${ctx.isInternal ? "true" : "false"}, true),
-        set_config('app.environment', ${ctx.environment ?? "live"}, true)`);
+        set_config('app.environment', ${ctx.environment ?? "live"}, true),
+        set_config('app.impersonator_id', ${ctx.impersonatorId ?? ""}, true)`);
       return work(tx as unknown as Tx);
     });
   }

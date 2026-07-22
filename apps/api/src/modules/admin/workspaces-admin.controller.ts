@@ -56,7 +56,7 @@ export class WorkspacesAdminController {
   ) {
     const ctx = getContext(req);
     return this.users.updateMembership(
-      { tenantId: id, userId: ctx.userId, isInternal: true },
+      { tenantId: id, userId: ctx.userId, isInternal: true, impersonatorId: ctx.impersonatorId },
       membershipId,
       updateMembershipSchema.parse(body),
     );
