@@ -1,6 +1,6 @@
 import { integer, pgTable, text, timestamp, uuid, index } from "drizzle-orm/pg-core";
-import { audit, pk } from "./_shared";
-import { entityType, returnResponsibility } from "./enums";
+import { audit, money, pk } from "./_shared";
+import { returnIssueType, returnResponsibility } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { itemStatuses, returnReasons } from "./reference";
@@ -42,6 +42,9 @@ export const deliveries = pgTable(
       .references(() => orders.id),
     deliveryNumber: text("delivery_number"),
     clientPo: text("client_po"),
+    deliveryCompany: text("delivery_company"),
+    shippingPrice: money("shipping_price"), // charged to client
+    shippingCost: money("shipping_cost"), // actually paid — delivery margin = price - cost
     signatureId: uuid("signature_id").references(() => signatures.id),
     signedBy: uuid("signed_by").references(() => users.id),
     statusId: uuid("status_id").references(() => itemStatuses.id),
@@ -52,6 +55,8 @@ export const deliveries = pgTable(
     index("deliveries_tenant_idx").on(t.tenantId),
     index("deliveries_order_idx").on(t.orderId),
     index("deliveries_status_idx").on(t.statusId),
+    index("deliveries_signature_idx").on(t.signatureId),
+    index("deliveries_signed_by_idx").on(t.signedBy),
   ],
 );
 
@@ -69,7 +74,8 @@ export const deliveryItems = pgTable(
     orderItemId: uuid("order_item_id")
       .notNull()
       .references(() => orderItems.id),
-    qty: integer("qty"),
+    qty: integer("qty"), // sent
+    receivedQty: integer("received_qty"), // received — discrepancy drives the return flow
     invoiceId: uuid("invoice_id").references(() => invoices.id),
     ...audit,
   },
@@ -102,6 +108,8 @@ export const returns = pgTable(
     index("returns_tenant_idx").on(t.tenantId),
     index("returns_order_idx").on(t.orderId),
     index("returns_status_idx").on(t.statusId),
+    index("returns_signature_idx").on(t.signatureId),
+    index("returns_signed_by_idx").on(t.signedBy),
   ],
 );
 
@@ -145,7 +153,7 @@ export const returnIssues = pgTable(
       .notNull()
       .references(() => orderItems.id),
     responsibility: returnResponsibility("responsibility"),
-    issueType: text("issue_type"),
+    issueType: returnIssueType("issue_type"),
     deliveryAgentId: uuid("delivery_agent_id").references(() => users.id),
     mainVendorId: uuid("main_vendor_id").references(() => vendors.id),
     partNumberSource: text("part_number_source"),

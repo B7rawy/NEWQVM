@@ -59,6 +59,29 @@ export const extractionStatus = pgEnum("extraction_status", [
   "not_found",
 ]);
 
+/** Vendor link status within a workspace (old: tenant_vendors.status free text). */
+export const tenantVendorStatus = pgEnum("tenant_vendor_status", [
+  "active",
+  "suspended",
+  "archived",
+]);
+
+/** Which side a return reason belongs to (old lists 13 internal + 23 client). */
+export const returnReasonSide = pgEnum("return_reason_side", ["client", "internal"]);
+
+/** Return-issue classification (old: return_issues.issue_type free int/text). */
+export const returnIssueType = pgEnum("return_issue_type", [
+  "wrong_part",
+  "wrong_price",
+  "defective",
+  "damaged",
+  "delay",
+  "other",
+]);
+
+/** Status vocabulary a status_log row refers to (item lifecycle vs vendor lifecycle). */
+export const statusDomain = pgEnum("status_domain", ["item", "vendor"]);
+
 /** Polymorphic entity kinds referenced by attachments / status_logs / notes. */
 export const entityType = pgEnum("entity_type", [
   "rfq",

@@ -1,39 +1,23 @@
 -- ============================================================================
--- 0002_security_functions — RLS, audit triggers, atomic order numbering
--- Hand-authored (drizzle-kit --custom). Closes Phase 1c of the data model.
---
--- Fixes old-system findings:
---   • RLS OFF on 56+ tables  -> tenant isolation ENABLED + FORCED on every tenant-scoped table
---   • created_by/updated_by from request body -> set server-side from session in a trigger
---   • order numbers via MAX()+1 (lock contention / duplicates) -> atomic counter function
+-- 0001_security_functions — RLS, audit triggers, atomic order numbering
+-- Generic (loops over information_schema) — covers every current + future table.
+-- Fixes old sins: RLS-off, author-from-body, MAX()+1 numbering.
 -- ============================================================================
 
--- ---------------------------------------------------------------------------
--- 1. Session helpers. The API sets these per-request via SET LOCAL:
---    app.tenant_id  = the resolved workspace (from subdomain/JWT)
---    app.user_id    = the authenticated user (for audit attribution)
---    app.is_internal = 'true' for platform (Qparts) staff / super-admin / seed
--- ---------------------------------------------------------------------------
+-- 1. Session helpers (SET LOCAL per request by the API).
 create or replace function public.current_tenant_id() returns uuid
-  language sql stable
-  set search_path = ''
+  language sql stable set search_path = ''
 as $$ select nullif(current_setting('app.tenant_id', true), '')::uuid $$;
 
 create or replace function public.app_user_id() returns uuid
-  language sql stable
-  set search_path = ''
+  language sql stable set search_path = ''
 as $$ select nullif(current_setting('app.user_id', true), '')::uuid $$;
 
 create or replace function public.app_is_internal() returns boolean
-  language sql stable
-  set search_path = ''
+  language sql stable set search_path = ''
 as $$ select coalesce(current_setting('app.is_internal', true), 'false') = 'true' $$;
 
--- ---------------------------------------------------------------------------
--- 2. Row-Level Security.
---    2a. Tenant-scoped tables (have tenant_id): isolate by current tenant,
---        internal staff bypass. FORCE so even the table owner is subject.
--- ---------------------------------------------------------------------------
+-- 2a. Tenant-scoped tables: enable + FORCE RLS + isolation policy.
 do $$
 declare r record;
 begin
@@ -51,11 +35,7 @@ begin
   end loop;
 end $$;
 
--- ---------------------------------------------------------------------------
---    2b. Global tables (no tenant_id): reference vocab, plans, users, vendors.
---        Readable by any authenticated session; writable only by internal staff.
---        (Per-tenant vendor visibility is enforced in queries via tenant_vendors.)
--- ---------------------------------------------------------------------------
+-- 2b. Global tables (no tenant_id): read to all, write to internal staff only.
 do $$
 declare r record;
 begin
@@ -76,14 +56,9 @@ begin
   end loop;
 end $$;
 
--- ---------------------------------------------------------------------------
--- 3. Audit trigger — created_by/updated_by from the session, never the body.
---    Full-audit tables (have updated_by): stamp author + bump updated_* on UPDATE.
---    Append-only author tables (created_by, no updated_by): stamp created_by only.
--- ---------------------------------------------------------------------------
+-- 3. Audit trigger — author from session, never the body.
 create or replace function public.set_row_audit() returns trigger
-  language plpgsql
-  set search_path = ''
+  language plpgsql set search_path = ''
 as $$
 begin
   if tg_op = 'INSERT' then
@@ -99,8 +74,7 @@ begin
 end $$;
 
 create or replace function public.set_created_by() returns trigger
-  language plpgsql
-  set search_path = ''
+  language plpgsql set search_path = ''
 as $$
 begin
   new.created_by := coalesce(new.created_by, public.app_user_id());
@@ -110,7 +84,6 @@ end $$;
 do $$
 declare r record;
 begin
-  -- full audit: tables carrying updated_by
   for r in
     select table_name from information_schema.columns
     where table_schema = 'public' and column_name = 'updated_by'
@@ -120,7 +93,6 @@ begin
       || 'for each row execute function public.set_row_audit()', r.table_name);
   end loop;
 
-  -- append-only author: created_by present, updated_by absent
   for r in
     select c.table_name from information_schema.columns c
     where c.table_schema = 'public' and c.column_name = 'created_by'
@@ -135,16 +107,11 @@ begin
   end loop;
 end $$;
 
--- ---------------------------------------------------------------------------
 -- 4. Atomic order-number generator — replaces old MAX()+1 + FOR UPDATE.
---    Upserts a per-(tenant,prefix) counter and returns the next number in one
---    statement. No table scan, no cross-order lock contention.
--- ---------------------------------------------------------------------------
 create or replace function public.next_order_number(
   p_tenant uuid, p_prefix text, p_region uuid default null)
 returns text
-  language plpgsql
-  set search_path = ''
+  language plpgsql set search_path = ''
 as $$
 declare v_value int;
 begin
@@ -154,6 +121,5 @@ begin
     do update set next_value = public.order_number_counters.next_value + 1,
                   updated_at = now()
   returning next_value into v_value;
-  -- returns the value just consumed: fresh row -> 1, existing -> prior next_value
   return p_prefix || (v_value - 1)::text;
 end $$;

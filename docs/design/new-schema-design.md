@@ -162,6 +162,11 @@ orders                  (كان confirmed_orders)
 - `return_items`: `id, tenant_id, return_id, order_item_id, qty, return_reason_id, responsibility (enum: internal/vendor/client/delivery_agent), credit_note_id (nullable), created_at`
 > يحلّ §7-الخلاصة-5: المسؤولية عمود enum مستقل.
 
+**`vendor_credit_notes`** + **`vendor_credit_note_items`** — مرتجع/إشعار دائن **للمورّد** (شراء)
+`vendor_credit_notes`: `id, tenant_id, purchase_order_id, credit_note_number, total, status_id`
+`vendor_credit_note_items`: `id, tenant_id, vendor_credit_note_id, purchase_item_id, return_qty, return_reason_id, responsibility`
+> مستقل عن إشعارات خصم العميل — يستعيد حلقة مرتجع الشراء (كانت ناقصة، أصلحها المراجعة C1).
+
 **`credit_notes`** + **`credit_note_items`** — إشعارات الخصم للعميل
 `credit_notes`: `id, tenant_id, order_id, credit_note_number, issued_at, total numeric(14,2), external_ref, status_id, created_at`
 `credit_note_items`: `id, tenant_id, credit_note_id, order_item_id, qty, return_reason_id, created_at`
@@ -231,10 +236,11 @@ orders                  (كان confirmed_orders)
 لكل `(tenant_id, region_id/scope)` **sequence حقيقي** يُنشأ عند إنشاء الـ tenant/النطاق.
 توليد الرقم = `nextval` ذرّي (لا `MAX()+1`، لا `FOR UPDATE`، لا خنق تحت الضغط).
 
-### الحسابات (Account Managers) — نطاق تشغيلي
-`account_managers` (= users بدور)، `account_manager_branches`, `account_manager_slots`,
-`account_manager_allocations`, `account_manager_attendance`, `weekly_days_off` (**جدول واحد** يحلّ §6.4).
-كلها `tenant_id` + RLS.
+### الحسابات (Account Managers) — نطاق تشغيلي **مؤجَّل (ADR-0009)**
+`account_managers` = مستخدمون بدور `account_manager` (موجود). أما جداول الجدولة/التوزيع/الحضور
+(`account_manager_slots/_branches/_allocations/_attendance`, `weekly_days_off`) والأهداف/الحوافز
+(`branch_targets/_bonuses`) فهي **مؤجَّلة لمرحلة لاحقة** — ليست جزء نواة سلسلة الطلب. تُبنى بنفس
+المعايير (tenant_id + RLS + فهارس) عند بنائها.
 
 ---
 

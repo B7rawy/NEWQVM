@@ -88,6 +88,26 @@
 > **درس حرج التقطه الاختبار:** الـ superuser/owner يتخطّى الـ RLS حتى مع FORCE — لذلك التطبيق
 > **يجب** أن يتصل بدور `qvm_app` غير الـ superuser. أُضيف كقاعدة ملزمة في CONVENTIONS §DB-2.
 
+### 2026-07-22 — إصلاحات المراجعة النقدية (Phase 1d) ✅
+مراجعة نقدية (وكيل مستقل) قارنت السكيما بالنظام القديم. المعالَجات:
+- **C1** أُضيف `vendor_credit_notes` + `vendor_credit_note_items` (حلقة مرتجع الشراء كانت مفقودة).
+- **C2** `cost_ranges` بحدود رقمية (`lower_bound/upper_bound`) — محرك الهوامش يقدر يشتغل الآن.
+- **S1** فهرس على `rfq_items.winning_vendor_quote_item_id`.
+- **S2** `status_logs` بـ `status_domain` (item/vendor) — يسجّل تحوّلات حالة المورّد صح.
+- **S4** `return_reasons` بعمود `side` (client/internal) — يستوعب قائمتَي القديم (13+23).
+- **S5** `tenant_vendors.status` → enum؛ `return_issues.issue_type` → enum (بدل نص حر).
+- **S7** أعمدة الشحن (`shipping_price/shipping_cost/delivery_company`) على deliveries + rfqs.
+- **N1** إزالة `any` من forward ref (استخدام `AnyPgColumn`).
+- **N2 + FK-sweep** فهارس على كل FK متبقّي — **صفر FK بدون index** (مُتحقَّق).
+- **N5** أُضيف `car_year`, `alternative_part_number` على rfq_items؛ `received_qty` على delivery_items.
+- **S3** جدولة مديري الحسابات/الحوافز **مؤجَّلة رسمياً** (ADR-0009)؛ حُذف `bonus_tiers` اليتيم.
+- صُحِّح ادعاء خاطئ في وثيقة التصميم (كانت تقول credit_notes تغطّي مرتجع المورّد).
+> ملاحظتا الوكيل S6 (RLS غايب) و N3 (العدّاد) كانتا على لقطة أقدم — الاتنين مطبَّقان ومُتحقَّقان فعلاً.
+
+**التحقق النهائي على Postgres (قاعدة جديدة + seed + دور qvm_app):**
+`54 جدول · 142 FK · 209 index · 71 policy · 39 trigger` · **صفر FK بدون index** ·
+عزل RLS مؤكَّد (t1=صفّه، آخر=صفر) · `next_order_number`=RYD-1 · cost_ranges بحدود · return_reasons بجانبين.
+
 ## المشاكل القديمة التي تُعالَج هنا صراحةً
 | مشكلة النظام القديم | المعالجة في التصميم الجديد |
 |---|---|

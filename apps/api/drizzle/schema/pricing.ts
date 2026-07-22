@@ -33,6 +33,7 @@ export const costLogs = pgTable(
     index("cost_logs_tenant_idx").on(t.tenantId),
     index("cost_logs_rfq_item_idx").on(t.rfqItemId),
     index("cost_logs_vendor_idx").on(t.vendorId),
+    index("cost_logs_created_by_idx").on(t.createdBy),
   ],
 );
 
@@ -53,6 +54,7 @@ export const pricingLogs = pgTable(
   (t) => [
     index("pricing_logs_tenant_idx").on(t.tenantId),
     index("pricing_logs_rfq_item_idx").on(t.rfqItemId),
+    index("pricing_logs_created_by_idx").on(t.createdBy),
   ],
 );
 
@@ -120,6 +122,7 @@ export const profitMarginsBranch = pgTable(
     index("profit_margins_branch_tenant_idx").on(t.tenantId),
     index("profit_margins_branch_branch_idx").on(t.workshopBranchId),
     index("profit_margins_branch_category_idx").on(t.profitCategoryId),
+    index("profit_margins_branch_cost_range_idx").on(t.costRangeId),
   ],
 );
 
@@ -137,7 +140,10 @@ export const profitMarginAudit = pgTable(
     changedBy: uuid("changed_by").references(() => users.id),
     ...timestamps,
   },
-  (t) => [index("profit_margin_audit_tenant_idx").on(t.tenantId)],
+  (t) => [
+    index("profit_margin_audit_tenant_idx").on(t.tenantId),
+    index("profit_margin_audit_changed_by_idx").on(t.changedBy),
+  ],
 );
 
 /** Agency price catalogs (old: stock_files). */

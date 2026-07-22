@@ -5,18 +5,12 @@ CREATE TYPE "public"."membership_role" AS ENUM('super_admin', 'staff', 'account_
 CREATE TYPE "public"."order_category" AS ENUM('regular', 'bulk');--> statement-breakpoint
 CREATE TYPE "public"."order_type" AS ENUM('regular', 'bulk');--> statement-breakpoint
 CREATE TYPE "public"."pricing_source" AS ENUM('internal_erp', 'external_excel', 'external_api', 'manual', 'agency_catalog');--> statement-breakpoint
+CREATE TYPE "public"."return_issue_type" AS ENUM('wrong_part', 'wrong_price', 'defective', 'damaged', 'delay', 'other');--> statement-breakpoint
+CREATE TYPE "public"."return_reason_side" AS ENUM('client', 'internal');--> statement-breakpoint
 CREATE TYPE "public"."return_responsibility" AS ENUM('internal', 'vendor', 'client', 'delivery_agent');--> statement-breakpoint
+CREATE TYPE "public"."status_domain" AS ENUM('item', 'vendor');--> statement-breakpoint
+CREATE TYPE "public"."tenant_vendor_status" AS ENUM('active', 'suspended', 'archived');--> statement-breakpoint
 CREATE TYPE "public"."vendor_type" AS ENUM('agency', 'commercial', 'external');--> statement-breakpoint
-CREATE TABLE IF NOT EXISTS "bonus_tiers" (
-	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"code" text NOT NULL,
-	"label_en" text NOT NULL,
-	"label_ar" text NOT NULL,
-	"sort_order" integer DEFAULT 0 NOT NULL,
-	"is_active" boolean DEFAULT true NOT NULL,
-	"legacy_id" integer
-);
---> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "brand_classes" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"code" text NOT NULL,
@@ -63,6 +57,8 @@ CREATE TABLE IF NOT EXISTS "cost_ranges" (
 	"code" text NOT NULL,
 	"label_en" text NOT NULL,
 	"label_ar" text NOT NULL,
+	"lower_bound" numeric(14, 2) NOT NULL,
+	"upper_bound" numeric(14, 2),
 	"sort_order" integer DEFAULT 0 NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
 	"legacy_id" integer
@@ -110,6 +106,7 @@ CREATE TABLE IF NOT EXISTS "regions" (
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "return_reasons" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"side" "return_reason_side" DEFAULT 'client' NOT NULL,
 	"code" text NOT NULL,
 	"label_en" text NOT NULL,
 	"label_ar" text NOT NULL,
@@ -214,7 +211,7 @@ CREATE TABLE IF NOT EXISTS "tenant_vendors" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
 	"vendor_id" uuid NOT NULL,
-	"status" text DEFAULT 'active' NOT NULL,
+	"status" "tenant_vendor_status" DEFAULT 'active' NOT NULL,
 	"payment_terms" text,
 	"classification" text,
 	"agreement" jsonb DEFAULT '{}'::jsonb NOT NULL,
@@ -273,7 +270,9 @@ CREATE TABLE IF NOT EXISTS "rfq_items" (
 	"rfq_id" uuid NOT NULL,
 	"part_number" text,
 	"part_description" text,
+	"alternative_part_number" text,
 	"quantity" integer DEFAULT 1 NOT NULL,
+	"car_year" integer,
 	"brand_class_id" uuid,
 	"part_category_id" uuid,
 	"part_photo_key" text,
@@ -341,6 +340,8 @@ CREATE TABLE IF NOT EXISTS "rfqs" (
 	"service_advisor_id" uuid,
 	"account_manager_id" uuid,
 	"status_id" uuid,
+	"shipping_price" numeric(14, 2),
+	"shipping_type" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,
@@ -428,12 +429,42 @@ CREATE TABLE IF NOT EXISTS "purchase_orders" (
 	"updated_by" uuid
 );
 --> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "vendor_credit_note_items" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"vendor_credit_note_id" uuid NOT NULL,
+	"purchase_item_id" uuid NOT NULL,
+	"return_qty" integer,
+	"return_reason_id" uuid,
+	"responsibility" "return_responsibility",
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"created_by" uuid,
+	"updated_by" uuid
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "vendor_credit_notes" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"tenant_id" uuid NOT NULL,
+	"purchase_order_id" uuid NOT NULL,
+	"credit_note_number" text,
+	"total" numeric(14, 2),
+	"status_id" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"created_by" uuid,
+	"updated_by" uuid
+);
+--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "deliveries" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
 	"order_id" uuid NOT NULL,
 	"delivery_number" text,
 	"client_po" text,
+	"delivery_company" text,
+	"shipping_price" numeric(14, 2),
+	"shipping_cost" numeric(14, 2),
 	"signature_id" uuid,
 	"signed_by" uuid,
 	"status_id" uuid,
@@ -450,6 +481,7 @@ CREATE TABLE IF NOT EXISTS "delivery_items" (
 	"delivery_id" uuid NOT NULL,
 	"order_item_id" uuid NOT NULL,
 	"qty" integer,
+	"received_qty" integer,
 	"invoice_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -462,7 +494,7 @@ CREATE TABLE IF NOT EXISTS "return_issues" (
 	"tenant_id" uuid NOT NULL,
 	"order_item_id" uuid NOT NULL,
 	"responsibility" "return_responsibility",
-	"issue_type" text,
+	"issue_type" "return_issue_type",
 	"delivery_agent_id" uuid,
 	"main_vendor_id" uuid,
 	"part_number_source" text,
@@ -698,7 +730,7 @@ CREATE TABLE IF NOT EXISTS "order_number_counters" (
 	"next_value" integer DEFAULT 1 NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "order_number_counters_scope_uq" UNIQUE("tenant_id","region_id","prefix")
+	CONSTRAINT "order_number_counters_scope_uq" UNIQUE("tenant_id","prefix")
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "status_logs" (
@@ -706,6 +738,7 @@ CREATE TABLE IF NOT EXISTS "status_logs" (
 	"tenant_id" uuid NOT NULL,
 	"entity_type" "entity_type" NOT NULL,
 	"entity_id" uuid NOT NULL,
+	"status_domain" "status_domain" DEFAULT 'item' NOT NULL,
 	"from_status_id" uuid,
 	"to_status_id" uuid,
 	"changed_by" uuid,
@@ -1116,6 +1149,48 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
+ ALTER TABLE "vendor_credit_note_items" ADD CONSTRAINT "vendor_credit_note_items_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_note_items" ADD CONSTRAINT "vendor_credit_note_items_vendor_credit_note_id_vendor_credit_notes_id_fk" FOREIGN KEY ("vendor_credit_note_id") REFERENCES "public"."vendor_credit_notes"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_note_items" ADD CONSTRAINT "vendor_credit_note_items_purchase_item_id_purchase_items_id_fk" FOREIGN KEY ("purchase_item_id") REFERENCES "public"."purchase_items"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_note_items" ADD CONSTRAINT "vendor_credit_note_items_return_reason_id_return_reasons_id_fk" FOREIGN KEY ("return_reason_id") REFERENCES "public"."return_reasons"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_notes" ADD CONSTRAINT "vendor_credit_notes_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_notes" ADD CONSTRAINT "vendor_credit_notes_purchase_order_id_purchase_orders_id_fk" FOREIGN KEY ("purchase_order_id") REFERENCES "public"."purchase_orders"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "vendor_credit_notes" ADD CONSTRAINT "vendor_credit_notes_status_id_vendor_statuses_id_fk" FOREIGN KEY ("status_id") REFERENCES "public"."vendor_statuses"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
  ALTER TABLE "deliveries" ADD CONSTRAINT "deliveries_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
@@ -1518,18 +1593,6 @@ EXCEPTION
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
- ALTER TABLE "status_logs" ADD CONSTRAINT "status_logs_from_status_id_item_statuses_id_fk" FOREIGN KEY ("from_status_id") REFERENCES "public"."item_statuses"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
- ALTER TABLE "status_logs" ADD CONSTRAINT "status_logs_to_status_id_item_statuses_id_fk" FOREIGN KEY ("to_status_id") REFERENCES "public"."item_statuses"("id") ON DELETE no action ON UPDATE no action;
-EXCEPTION
- WHEN duplicate_object THEN null;
-END $$;
---> statement-breakpoint
-DO $$ BEGIN
  ALTER TABLE "status_logs" ADD CONSTRAINT "status_logs_changed_by_users_id_fk" FOREIGN KEY ("changed_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 EXCEPTION
  WHEN duplicate_object THEN null;
@@ -1539,6 +1602,7 @@ CREATE INDEX IF NOT EXISTS "cities_region_idx" ON "cities" USING btree ("region_
 CREATE UNIQUE INDEX IF NOT EXISTS "item_statuses_code_uq" ON "item_statuses" USING btree ("code");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "vendor_statuses_code_uq" ON "vendor_statuses" USING btree ("code");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "tenants_slug_uq" ON "tenants" USING btree ("slug");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tenants_plan_idx" ON "tenants" USING btree ("plan_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenant_memberships_tenant_idx" ON "tenant_memberships" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenant_memberships_user_idx" ON "tenant_memberships" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenant_memberships_branch_idx" ON "tenant_memberships" USING btree ("workshop_branch_id");--> statement-breakpoint
@@ -1551,6 +1615,7 @@ CREATE INDEX IF NOT EXISTS "workshops_tenant_idx" ON "workshops" USING btree ("t
 CREATE UNIQUE INDEX IF NOT EXISTS "tenant_vendors_tenant_vendor_uq" ON "tenant_vendors" USING btree ("tenant_id","vendor_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenant_vendors_tenant_idx" ON "tenant_vendors" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "tenant_vendors_vendor_idx" ON "tenant_vendors" USING btree ("vendor_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "tenant_vendors_linked_by_idx" ON "tenant_vendors" USING btree ("linked_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "vendor_branches_vendor_idx" ON "vendor_branches" USING btree ("vendor_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "vendor_branches_region_idx" ON "vendor_branches" USING btree ("region_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "vendor_branches_city_idx" ON "vendor_branches" USING btree ("city_id");--> statement-breakpoint
@@ -1561,6 +1626,8 @@ CREATE INDEX IF NOT EXISTS "rfq_items_rfq_idx" ON "rfq_items" USING btree ("rfq_
 CREATE INDEX IF NOT EXISTS "rfq_items_tenant_status_idx" ON "rfq_items" USING btree ("tenant_id","status_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "rfq_items_brand_class_idx" ON "rfq_items" USING btree ("brand_class_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "rfq_items_part_category_idx" ON "rfq_items" USING btree ("part_category_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rfq_items_winning_quote_idx" ON "rfq_items" USING btree ("winning_vendor_quote_item_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "rfq_items_extracted_by_idx" ON "rfq_items" USING btree ("extracted_by");--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "rfq_vendor_items_vendor_item_uq" ON "rfq_vendor_items" USING btree ("rfq_vendor_id","rfq_item_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "rfq_vendor_items_tenant_idx" ON "rfq_vendor_items" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "rfq_vendor_items_rfq_item_idx" ON "rfq_vendor_items" USING btree ("rfq_item_id");--> statement-breakpoint
@@ -1593,6 +1660,7 @@ CREATE INDEX IF NOT EXISTS "pickup_items_purchase_item_idx" ON "pickup_items" US
 CREATE INDEX IF NOT EXISTS "pickups_tenant_idx" ON "pickups" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "pickups_po_idx" ON "pickups" USING btree ("purchase_order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "pickups_agent_idx" ON "pickups" USING btree ("delivery_agent_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "pickups_status_idx" ON "pickups" USING btree ("status_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "purchase_items_tenant_idx" ON "purchase_items" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "purchase_items_po_idx" ON "purchase_items" USING btree ("purchase_order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "purchase_items_order_item_idx" ON "purchase_items" USING btree ("order_item_id");--> statement-breakpoint
@@ -1603,9 +1671,19 @@ CREATE INDEX IF NOT EXISTS "purchase_orders_order_idx" ON "purchase_orders" USIN
 CREATE INDEX IF NOT EXISTS "purchase_orders_vendor_idx" ON "purchase_orders" USING btree ("vendor_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "purchase_orders_payment_account_idx" ON "purchase_orders" USING btree ("payment_account_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "purchase_orders_status_idx" ON "purchase_orders" USING btree ("status_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "purchase_orders_uploaded_by_idx" ON "purchase_orders" USING btree ("uploaded_by");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_note_items_tenant_idx" ON "vendor_credit_note_items" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_note_items_vcn_idx" ON "vendor_credit_note_items" USING btree ("vendor_credit_note_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_note_items_purchase_item_idx" ON "vendor_credit_note_items" USING btree ("purchase_item_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_note_items_reason_idx" ON "vendor_credit_note_items" USING btree ("return_reason_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_notes_tenant_idx" ON "vendor_credit_notes" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_notes_po_idx" ON "vendor_credit_notes" USING btree ("purchase_order_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "vendor_credit_notes_status_idx" ON "vendor_credit_notes" USING btree ("status_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "deliveries_tenant_idx" ON "deliveries" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "deliveries_order_idx" ON "deliveries" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "deliveries_status_idx" ON "deliveries" USING btree ("status_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deliveries_signature_idx" ON "deliveries" USING btree ("signature_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "deliveries_signed_by_idx" ON "deliveries" USING btree ("signed_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "delivery_items_tenant_idx" ON "delivery_items" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "delivery_items_delivery_idx" ON "delivery_items" USING btree ("delivery_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "delivery_items_order_item_idx" ON "delivery_items" USING btree ("order_item_id");--> statement-breakpoint
@@ -1623,10 +1701,13 @@ CREATE INDEX IF NOT EXISTS "return_items_credit_note_idx" ON "return_items" USIN
 CREATE INDEX IF NOT EXISTS "returns_tenant_idx" ON "returns" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "returns_order_idx" ON "returns" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "returns_status_idx" ON "returns" USING btree ("status_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "returns_signature_idx" ON "returns" USING btree ("signature_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "returns_signed_by_idx" ON "returns" USING btree ("signed_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "signatures_tenant_idx" ON "signatures" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_note_items_tenant_idx" ON "credit_note_items" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_note_items_cn_idx" ON "credit_note_items" USING btree ("credit_note_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_note_items_order_item_idx" ON "credit_note_items" USING btree ("order_item_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "credit_note_items_reason_idx" ON "credit_note_items" USING btree ("return_reason_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_notes_tenant_idx" ON "credit_notes" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_notes_order_idx" ON "credit_notes" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "credit_notes_status_idx" ON "credit_notes" USING btree ("status_id");--> statement-breakpoint
@@ -1639,18 +1720,22 @@ CREATE INDEX IF NOT EXISTS "invoices_status_idx" ON "invoices" USING btree ("sta
 CREATE INDEX IF NOT EXISTS "cost_logs_tenant_idx" ON "cost_logs" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cost_logs_rfq_item_idx" ON "cost_logs" USING btree ("rfq_item_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "cost_logs_vendor_idx" ON "cost_logs" USING btree ("vendor_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "cost_logs_created_by_idx" ON "cost_logs" USING btree ("created_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "pricing_logs_tenant_idx" ON "pricing_logs" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "pricing_logs_rfq_item_idx" ON "pricing_logs" USING btree ("rfq_item_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "pricing_logs_created_by_idx" ON "pricing_logs" USING btree ("created_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_categories_tenant_idx" ON "profit_categories" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_categories_part_cat_idx" ON "profit_categories" USING btree ("part_category_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_categories_brand_class_idx" ON "profit_categories" USING btree ("brand_class_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margin_audit_tenant_idx" ON "profit_margin_audit" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "profit_margin_audit_changed_by_idx" ON "profit_margin_audit" USING btree ("changed_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_tenant_idx" ON "profit_margins" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_category_idx" ON "profit_margins" USING btree ("profit_category_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_cost_range_idx" ON "profit_margins" USING btree ("cost_range_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_branch_tenant_idx" ON "profit_margins_branch" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_branch_branch_idx" ON "profit_margins_branch" USING btree ("workshop_branch_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "profit_margins_branch_category_idx" ON "profit_margins_branch" USING btree ("profit_category_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "profit_margins_branch_cost_range_idx" ON "profit_margins_branch" USING btree ("cost_range_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "stock_files_tenant_idx" ON "stock_files" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "stock_files_part_number_idx" ON "stock_files" USING btree ("tenant_id","part_number");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "stock_files_vendor_idx" ON "stock_files" USING btree ("vendor_id");--> statement-breakpoint
@@ -1658,10 +1743,11 @@ CREATE INDEX IF NOT EXISTS "stock_files_brand_class_idx" ON "stock_files" USING 
 CREATE INDEX IF NOT EXISTS "stock_files_car_brand_idx" ON "stock_files" USING btree ("car_brand_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "attachments_tenant_idx" ON "attachments" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "attachments_entity_idx" ON "attachments" USING btree ("tenant_id","entity_type","entity_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "attachments_uploaded_by_idx" ON "attachments" USING btree ("uploaded_by");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "notes_tenant_idx" ON "notes" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "notes_entity_idx" ON "notes" USING btree ("tenant_id","entity_type","entity_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "order_number_counters_tenant_idx" ON "order_number_counters" USING btree ("tenant_id");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "order_number_counters_region_idx" ON "order_number_counters" USING btree ("region_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "status_logs_tenant_idx" ON "status_logs" USING btree ("tenant_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "status_logs_entity_idx" ON "status_logs" USING btree ("tenant_id","entity_type","entity_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "status_logs_from_idx" ON "status_logs" USING btree ("from_status_id");--> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "status_logs_to_idx" ON "status_logs" USING btree ("to_status_id");
+CREATE INDEX IF NOT EXISTS "status_logs_changed_by_idx" ON "status_logs" USING btree ("changed_by");

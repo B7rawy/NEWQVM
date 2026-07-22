@@ -1,6 +1,6 @@
 import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { vendorType } from "./enums";
+import { tenantVendorStatus, vendorType } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { cities, regions } from "./reference";
@@ -85,7 +85,7 @@ export const tenantVendors = pgTable(
     vendorId: uuid("vendor_id")
       .notNull()
       .references(() => vendors.id),
-    status: text("status").notNull().default("active"), // active | suspended | archived
+    status: tenantVendorStatus("status").notNull().default("active"),
     paymentTerms: text("payment_terms"),
     classification: text("classification"),
     agreement: jsonb("agreement").notNull().default({}),
@@ -96,5 +96,6 @@ export const tenantVendors = pgTable(
     uniqueIndex("tenant_vendors_tenant_vendor_uq").on(t.tenantId, t.vendorId),
     index("tenant_vendors_tenant_idx").on(t.tenantId),
     index("tenant_vendors_vendor_idx").on(t.vendorId),
+    index("tenant_vendors_linked_by_idx").on(t.linkedBy),
   ],
 );

@@ -106,5 +106,6 @@ export const creditNoteItems = pgTable(
     index("credit_note_items_tenant_idx").on(t.tenantId),
     index("credit_note_items_cn_idx").on(t.creditNoteId),
     index("credit_note_items_order_item_idx").on(t.orderItemId),
+    index("credit_note_items_reason_idx").on(t.returnReasonId),
   ],
 );

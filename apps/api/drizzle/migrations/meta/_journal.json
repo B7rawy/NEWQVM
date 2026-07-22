@@ -5,29 +5,22 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1784683953992,
+      "when": 1784685083868,
       "tag": "0000_full_schema",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1784684208837,
-      "tag": "0001_counter_key",
+      "when": 1784685084467,
+      "tag": "0001_security_functions",
       "breakpoints": true
     },
     {
       "idx": 2,
       "version": "7",
-      "when": 1784684209301,
-      "tag": "0002_security_functions",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1784684384714,
-      "tag": "0003_app_role",
+      "when": 1784685085067,
+      "tag": "0002_app_role",
       "breakpoints": true
     }
   ]

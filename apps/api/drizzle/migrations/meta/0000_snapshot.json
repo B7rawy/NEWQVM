@@ -1,67 +1,9 @@
 {
-  "id": "41ef8695-f1de-4199-8f3d-d21178b1c849",
+  "id": "d063077a-6242-485a-8114-e806dd9e07a6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.bonus_tiers": {
-      "name": "bonus_tiers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label_en": {
-          "name": "label_en",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "label_ar": {
-          "name": "label_ar",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sort_order": {
-          "name": "sort_order",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
-        "legacy_id": {
-          "name": "legacy_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.brand_classes": {
       "name": "brand_classes",
       "schema": "",
@@ -359,6 +301,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "lower_bound": {
+          "name": "lower_bound",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "upper_bound": {
+          "name": "upper_bound",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sort_order": {
           "name": "sort_order",
           "type": "integer",
@@ -646,6 +600,14 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "side": {
+          "name": "side",
+          "type": "return_reason_side",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'client'"
         },
         "code": {
           "name": "code",
@@ -935,6 +897,21 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "tenants_plan_idx": {
+          "name": "tenants_plan_idx",
+          "columns": [
+            {
+              "expression": "plan_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1566,7 +1543,8 @@
         },
         "status": {
           "name": "status",
-          "type": "text",
+          "type": "tenant_vendor_status",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
@@ -1665,6 +1643,21 @@
           "columns": [
             {
               "expression": "vendor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "tenant_vendors_linked_by_idx": {
+          "name": "tenant_vendors_linked_by_idx",
+          "columns": [
+            {
+              "expression": "linked_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2159,12 +2152,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "alternative_part_number": {
+          "name": "alternative_part_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "quantity": {
           "name": "quantity",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
           "default": 1
+        },
+        "car_year": {
+          "name": "car_year",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
         },
         "brand_class_id": {
           "name": "brand_class_id",
@@ -2338,6 +2343,36 @@
           "columns": [
             {
               "expression": "part_category_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "rfq_items_winning_quote_idx": {
+          "name": "rfq_items_winning_quote_idx",
+          "columns": [
+            {
+              "expression": "winning_vendor_quote_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "rfq_items_extracted_by_idx": {
+          "name": "rfq_items_extracted_by_idx",
+          "columns": [
+            {
+              "expression": "extracted_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3028,6 +3063,18 @@
         "status_id": {
           "name": "status_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "shipping_price": {
+          "name": "shipping_price",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "shipping_type": {
+          "name": "shipping_type",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -3957,6 +4004,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "pickups_status_idx": {
+          "name": "pickups_status_idx",
+          "columns": [
+            {
+              "expression": "status_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -4398,6 +4460,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "purchase_orders_uploaded_by_idx": {
+          "name": "purchase_orders_uploaded_by_idx",
+          "columns": [
+            {
+              "expression": "uploaded_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -4486,6 +4563,365 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.vendor_credit_note_items": {
+      "name": "vendor_credit_note_items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vendor_credit_note_id": {
+          "name": "vendor_credit_note_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purchase_item_id": {
+          "name": "purchase_item_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "return_qty": {
+          "name": "return_qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "return_reason_id": {
+          "name": "return_reason_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "responsibility": {
+          "name": "responsibility",
+          "type": "return_responsibility",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "vendor_credit_note_items_tenant_idx": {
+          "name": "vendor_credit_note_items_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vendor_credit_note_items_vcn_idx": {
+          "name": "vendor_credit_note_items_vcn_idx",
+          "columns": [
+            {
+              "expression": "vendor_credit_note_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vendor_credit_note_items_purchase_item_idx": {
+          "name": "vendor_credit_note_items_purchase_item_idx",
+          "columns": [
+            {
+              "expression": "purchase_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vendor_credit_note_items_reason_idx": {
+          "name": "vendor_credit_note_items_reason_idx",
+          "columns": [
+            {
+              "expression": "return_reason_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "vendor_credit_note_items_tenant_id_tenants_id_fk": {
+          "name": "vendor_credit_note_items_tenant_id_tenants_id_fk",
+          "tableFrom": "vendor_credit_note_items",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_credit_note_items_vendor_credit_note_id_vendor_credit_notes_id_fk": {
+          "name": "vendor_credit_note_items_vendor_credit_note_id_vendor_credit_notes_id_fk",
+          "tableFrom": "vendor_credit_note_items",
+          "tableTo": "vendor_credit_notes",
+          "columnsFrom": [
+            "vendor_credit_note_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_credit_note_items_purchase_item_id_purchase_items_id_fk": {
+          "name": "vendor_credit_note_items_purchase_item_id_purchase_items_id_fk",
+          "tableFrom": "vendor_credit_note_items",
+          "tableTo": "purchase_items",
+          "columnsFrom": [
+            "purchase_item_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_credit_note_items_return_reason_id_return_reasons_id_fk": {
+          "name": "vendor_credit_note_items_return_reason_id_return_reasons_id_fk",
+          "tableFrom": "vendor_credit_note_items",
+          "tableTo": "return_reasons",
+          "columnsFrom": [
+            "return_reason_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.vendor_credit_notes": {
+      "name": "vendor_credit_notes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "purchase_order_id": {
+          "name": "purchase_order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "credit_note_number": {
+          "name": "credit_note_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "total": {
+          "name": "total",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status_id": {
+          "name": "status_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "vendor_credit_notes_tenant_idx": {
+          "name": "vendor_credit_notes_tenant_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vendor_credit_notes_po_idx": {
+          "name": "vendor_credit_notes_po_idx",
+          "columns": [
+            {
+              "expression": "purchase_order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "vendor_credit_notes_status_idx": {
+          "name": "vendor_credit_notes_status_idx",
+          "columns": [
+            {
+              "expression": "status_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "vendor_credit_notes_tenant_id_tenants_id_fk": {
+          "name": "vendor_credit_notes_tenant_id_tenants_id_fk",
+          "tableFrom": "vendor_credit_notes",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_credit_notes_purchase_order_id_purchase_orders_id_fk": {
+          "name": "vendor_credit_notes_purchase_order_id_purchase_orders_id_fk",
+          "tableFrom": "vendor_credit_notes",
+          "tableTo": "purchase_orders",
+          "columnsFrom": [
+            "purchase_order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "vendor_credit_notes_status_id_vendor_statuses_id_fk": {
+          "name": "vendor_credit_notes_status_id_vendor_statuses_id_fk",
+          "tableFrom": "vendor_credit_notes",
+          "tableTo": "vendor_statuses",
+          "columnsFrom": [
+            "status_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.deliveries": {
       "name": "deliveries",
       "schema": "",
@@ -4518,6 +4954,24 @@
         "client_po": {
           "name": "client_po",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "delivery_company": {
+          "name": "delivery_company",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "shipping_price": {
+          "name": "shipping_price",
+          "type": "numeric(14, 2)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "shipping_cost": {
+          "name": "shipping_cost",
+          "type": "numeric(14, 2)",
           "primaryKey": false,
           "notNull": false
         },
@@ -4608,6 +5062,36 @@
           "columns": [
             {
               "expression": "status_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "deliveries_signature_idx": {
+          "name": "deliveries_signature_idx",
+          "columns": [
+            {
+              "expression": "signature_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "deliveries_signed_by_idx": {
+          "name": "deliveries_signed_by_idx",
+          "columns": [
+            {
+              "expression": "signed_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4723,6 +5207,12 @@
         },
         "qty": {
           "name": "qty",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "received_qty": {
+          "name": "received_qty",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -4914,7 +5404,8 @@
         },
         "issue_type": {
           "name": "issue_type",
-          "type": "text",
+          "type": "return_issue_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": false
         },
@@ -5481,6 +5972,36 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "returns_signature_idx": {
+          "name": "returns_signature_idx",
+          "columns": [
+            {
+              "expression": "signature_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "returns_signed_by_idx": {
+          "name": "returns_signed_by_idx",
+          "columns": [
+            {
+              "expression": "signed_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -5754,6 +6275,21 @@
           "columns": [
             {
               "expression": "order_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "credit_note_items_reason_idx": {
+          "name": "credit_note_items_reason_idx",
+          "columns": [
+            {
+              "expression": "return_reason_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -6467,6 +7003,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "cost_logs_created_by_idx": {
+          "name": "cost_logs_created_by_idx",
+          "columns": [
+            {
+              "expression": "created_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -6607,6 +7158,21 @@
           "columns": [
             {
               "expression": "rfq_item_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "pricing_logs_created_by_idx": {
+          "name": "pricing_logs_created_by_idx",
+          "columns": [
+            {
+              "expression": "created_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -6883,6 +7449,21 @@
           "columns": [
             {
               "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "profit_margin_audit_changed_by_idx": {
+          "name": "profit_margin_audit_changed_by_idx",
+          "columns": [
+            {
+              "expression": "changed_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -7188,6 +7769,21 @@
           "columns": [
             {
               "expression": "profit_category_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "profit_margins_branch_cost_range_idx": {
+          "name": "profit_margins_branch_cost_range_idx",
+          "columns": [
+            {
+              "expression": "cost_range_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -7612,6 +8208,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "attachments_uploaded_by_idx": {
+          "name": "attachments_uploaded_by_idx",
+          "columns": [
+            {
+              "expression": "uploaded_by",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -7849,6 +8460,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "order_number_counters_region_idx": {
+          "name": "order_number_counters_region_idx",
+          "columns": [
+            {
+              "expression": "region_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -7886,7 +8512,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "tenant_id",
-            "region_id",
             "prefix"
           ]
         }
@@ -7924,6 +8549,14 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "status_domain": {
+          "name": "status_domain",
+          "type": "status_domain",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'item'"
         },
         "from_status_id": {
           "name": "from_status_id",
@@ -8001,26 +8634,11 @@
           "method": "btree",
           "with": {}
         },
-        "status_logs_from_idx": {
-          "name": "status_logs_from_idx",
+        "status_logs_changed_by_idx": {
+          "name": "status_logs_changed_by_idx",
           "columns": [
             {
-              "expression": "from_status_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "status_logs_to_idx": {
-          "name": "status_logs_to_idx",
-          "columns": [
-            {
-              "expression": "to_status_id",
+              "expression": "changed_by",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -8039,32 +8657,6 @@
           "tableTo": "tenants",
           "columnsFrom": [
             "tenant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "status_logs_from_status_id_item_statuses_id_fk": {
-          "name": "status_logs_from_status_id_item_statuses_id_fk",
-          "tableFrom": "status_logs",
-          "tableTo": "item_statuses",
-          "columnsFrom": [
-            "from_status_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "status_logs_to_status_id_item_statuses_id_fk": {
-          "name": "status_logs_to_status_id_item_statuses_id_fk",
-          "tableFrom": "status_logs",
-          "tableTo": "item_statuses",
-          "columnsFrom": [
-            "to_status_id"
           ],
           "columnsTo": [
             "id"
@@ -8171,6 +8763,26 @@
         "agency_catalog"
       ]
     },
+    "public.return_issue_type": {
+      "name": "return_issue_type",
+      "schema": "public",
+      "values": [
+        "wrong_part",
+        "wrong_price",
+        "defective",
+        "damaged",
+        "delay",
+        "other"
+      ]
+    },
+    "public.return_reason_side": {
+      "name": "return_reason_side",
+      "schema": "public",
+      "values": [
+        "client",
+        "internal"
+      ]
+    },
     "public.return_responsibility": {
       "name": "return_responsibility",
       "schema": "public",
@@ -8179,6 +8791,23 @@
         "vendor",
         "client",
         "delivery_agent"
+      ]
+    },
+    "public.status_domain": {
+      "name": "status_domain",
+      "schema": "public",
+      "values": [
+        "item",
+        "vendor"
+      ]
+    },
+    "public.tenant_vendor_status": {
+      "name": "tenant_vendor_status",
+      "schema": "public",
+      "values": [
+        "active",
+        "suspended",
+        "archived"
       ]
     },
     "public.vendor_type": {

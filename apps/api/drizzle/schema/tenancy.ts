@@ -1,4 +1,4 @@
-import { boolean, jsonb, pgTable, text, uuid, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
 
 /**
@@ -32,5 +32,8 @@ export const tenants = pgTable(
     isActive: isActive(),
     ...audit,
   },
-  (t) => [uniqueIndex("tenants_slug_uq").on(t.slug)],
+  (t) => [
+    uniqueIndex("tenants_slug_uq").on(t.slug),
+    index("tenants_plan_idx").on(t.planId),
+  ],
 );

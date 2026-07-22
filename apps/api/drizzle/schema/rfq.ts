@@ -1,4 +1,13 @@
-import { integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import {
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+  index,
+  uniqueIndex,
+  type AnyPgColumn,
+} from "drizzle-orm/pg-core";
 import { audit, money, pct, pk } from "./_shared";
 import { deliveryType, extractionStatus, orderType } from "./enums";
 import { tenants } from "./tenancy";
@@ -34,6 +43,8 @@ export const rfqs = pgTable(
     serviceAdvisorId: uuid("service_advisor_id").references(() => users.id),
     accountManagerId: uuid("account_manager_id").references(() => users.id),
     statusId: uuid("status_id").references(() => itemStatuses.id),
+    shippingPrice: money("shipping_price"),
+    shippingType: text("shipping_type"),
     ...audit,
   },
   (t) => [
@@ -60,7 +71,9 @@ export const rfqItems = pgTable(
       .references(() => rfqs.id),
     partNumber: text("part_number"),
     partDescription: text("part_description"),
+    alternativePartNumber: text("alternative_part_number"),
     quantity: integer("quantity").notNull().default(1),
+    carYear: integer("car_year"),
     brandClassId: uuid("brand_class_id").references(() => brandClasses.id),
     partCategoryId: uuid("part_category_id").references(() => partCategories.id),
     partPhotoKey: text("part_photo_key"),
@@ -69,9 +82,9 @@ export const rfqItems = pgTable(
     sellingPrice: money("selling_price"),
     discountPct: pct("discount_pct"),
     agencyPrice: money("agency_price"),
-    /** The winning vendor quote (old cost_id). Thunk ref works for the same-file forward decl. */
+    /** The winning vendor quote (old cost_id). AnyPgColumn types the same-file forward ref. */
     winningVendorQuoteItemId: uuid("winning_vendor_quote_item_id").references(
-      (): any => rfqVendorItems.id,
+      (): AnyPgColumn => rfqVendorItems.id,
     ),
     extractionStatus: extractionStatus("extraction_status"),
     extractedBy: uuid("extracted_by").references(() => users.id),
@@ -84,6 +97,8 @@ export const rfqItems = pgTable(
     index("rfq_items_tenant_status_idx").on(t.tenantId, t.statusId),
     index("rfq_items_brand_class_idx").on(t.brandClassId),
     index("rfq_items_part_category_idx").on(t.partCategoryId),
+    index("rfq_items_winning_quote_idx").on(t.winningVendorQuoteItemId),
+    index("rfq_items_extracted_by_idx").on(t.extractedBy),
   ],
 );
 

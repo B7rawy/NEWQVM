@@ -28,7 +28,7 @@ async function main() {
       order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
       regions, cities, cancellation_reasons, return_reasons, payment_accounts,
-      bonus_tiers, cost_ranges
+      cost_ranges
     restart identity cascade`;
 
   // ---- reference vocabulary (statuses preserved exactly as old system) ----
@@ -60,6 +60,15 @@ async function main() {
   await sql`insert into cities (region_id,code,label_en,label_ar) values
     (${central.id},'riyadh','Riyadh','الرياض')`;
   await sql`insert into payment_accounts (code,label_en,label_ar) values ('cash','Cash','نقدي')`;
+  await sql`insert into cost_ranges (code,label_en,label_ar,lower_bound,upper_bound) values
+    ('r0_500','0–500','٠–٥٠٠',0,500),
+    ('r500_2000','500–2000','٥٠٠–٢٠٠٠',500,2000),
+    ('r2000_plus','2000+','٢٠٠٠+',2000,null)`;
+  await sql`insert into return_reasons (side,code,label_en,label_ar) values
+    ('client','wrong_part','Wrong Part','قطعة خاطئة'),
+    ('client','defective','Defective','معيبة'),
+    ('internal','wrong_pricing','Wrong Pricing','تسعير خاطئ'),
+    ('internal','delay','Delay','تأخير')`;
 
   // ---- plans ----
   const [pro] =

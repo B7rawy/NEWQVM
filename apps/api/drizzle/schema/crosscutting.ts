@@ -1,9 +1,9 @@
 import { bigint, boolean, integer, pgTable, text, uuid, index, unique } from "drizzle-orm/pg-core";
 import { audit, pk, timestamps } from "./_shared";
-import { entityType } from "./enums";
+import { entityType, statusDomain } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
-import { itemStatuses, regions } from "./reference";
+import { regions } from "./reference";
 
 /**
  * Cross-cutting tables — ONE mechanism each, replacing the old duplicates:
@@ -33,6 +33,7 @@ export const attachments = pgTable(
   (t) => [
     index("attachments_tenant_idx").on(t.tenantId),
     index("attachments_entity_idx").on(t.tenantId, t.entityType, t.entityId),
+    index("attachments_uploaded_by_idx").on(t.uploadedBy),
   ],
 );
 
@@ -46,16 +47,21 @@ export const statusLogs = pgTable(
       .references(() => tenants.id),
     entityType: entityType("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
-    fromStatusId: uuid("from_status_id").references(() => itemStatuses.id),
-    toStatusId: uuid("to_status_id").references(() => itemStatuses.id),
+    /**
+     * status_domain says which vocabulary from/to point at (item_statuses vs vendor_statuses),
+     * so vendor-side transitions log correctly. No hard FK (the target table varies) — the app
+     * validates against the right table by domain.
+     */
+    statusDomain: statusDomain("status_domain").notNull().default("item"),
+    fromStatusId: uuid("from_status_id"),
+    toStatusId: uuid("to_status_id"),
     changedBy: uuid("changed_by").references(() => users.id),
     ...timestamps,
   },
   (t) => [
     index("status_logs_tenant_idx").on(t.tenantId),
     index("status_logs_entity_idx").on(t.tenantId, t.entityType, t.entityId),
-    index("status_logs_from_idx").on(t.fromStatusId),
-    index("status_logs_to_idx").on(t.toStatusId),
+    index("status_logs_changed_by_idx").on(t.changedBy),
   ],
 );
 
@@ -101,5 +107,6 @@ export const orderNumberCounters = pgTable(
     // ON CONFLICT working (region_id is nullable and NULLs break a unique conflict target).
     unique("order_number_counters_scope_uq").on(t.tenantId, t.prefix),
     index("order_number_counters_tenant_idx").on(t.tenantId),
+    index("order_number_counters_region_idx").on(t.regionId),
   ],
 );

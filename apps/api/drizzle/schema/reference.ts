@@ -1,5 +1,6 @@
 import { integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
-import { isActive, pk } from "./_shared";
+import { isActive, money, pk } from "./_shared";
+import { returnReasonSide } from "./enums";
 
 /**
  * Reference / lookup tables — the clean replacement for the old generic `lists`/`list_data`.
@@ -65,14 +66,32 @@ export const cities = pgTable(
 /** Cancellation reasons (cleaned — no status values mixed in, unlike old list 23). */
 export const cancellationReasons = pgTable("cancellation_reasons", { id: pk(), ...refColumns });
 
-/** Client-side return reasons (old list 23 — cleaned of polluted status rows). */
-export const returnReasons = pgTable("return_reasons", { id: pk(), ...refColumns });
+/**
+ * Return reasons — both sides in one table (old list 23 client + list 13 internal/vendor),
+ * discriminated by `side`. The 4 responsibility buckets stay on return_item.responsibility;
+ * this holds the specific reason vocabulary (Wrong Part Number, Wrong Pricing, Defective…).
+ */
+export const returnReasons = pgTable("return_reasons", {
+  id: pk(),
+  side: returnReasonSide("side").notNull().default("client"),
+  ...refColumns,
+});
 
 /** Payment accounts. */
 export const paymentAccounts = pgTable("payment_accounts", { id: pk(), ...refColumns });
 
-/** Incentive / bonus tiers. */
-export const bonusTiers = pgTable("bonus_tiers", { id: pk(), ...refColumns });
-
-/** Cost ranges used by the profit-margin matrix. */
-export const costRanges = pgTable("cost_ranges", { id: pk(), ...refColumns });
+/**
+ * Cost ranges for the profit-margin matrix — WITH numeric boundaries so an actual cost maps to a
+ * range (old stored this as jsonb text, flagged as a bug). upper_bound NULL = open-ended top range.
+ */
+export const costRanges = pgTable("cost_ranges", {
+  id: pk(),
+  code: text("code").notNull(),
+  labelEn: text("label_en").notNull(),
+  labelAr: text("label_ar").notNull(),
+  lowerBound: money("lower_bound").notNull(),
+  upperBound: money("upper_bound"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  isActive: isActive(),
+  legacyId: integer("legacy_id"),
+});
