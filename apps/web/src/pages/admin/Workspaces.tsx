@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { Plus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
 import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../../components/ui";
 
@@ -15,6 +16,7 @@ interface Ws {
 }
 
 export default function Workspaces() {
+  const nav = useNavigate();
   const [rows, setRows] = useState<Ws[] | null>(null);
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
@@ -108,7 +110,7 @@ export default function Workspaces() {
             </thead>
             <tbody>
               {rows.map((w) => (
-                <tr key={w.id} className="trow">
+                <tr key={w.id} className="trow cursor-pointer" onClick={() => nav(`/admin/workspaces/${w.id}`)}>
                   <td className="td font-medium text-ink">
                     {w.name} {w.is_sandbox && <Badge tone="amber">sandbox</Badge>}
                   </td>

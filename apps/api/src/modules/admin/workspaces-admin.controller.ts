@@ -32,6 +32,11 @@ export class WorkspacesAdminController {
     return this.svc.get(id);
   }
 
+  @Get(":id/detail")
+  detail(@Param("id") id: string) {
+    return this.svc.detail(id);
+  }
+
   @Patch(":id")
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.update(getContext(req).userId!, id, updateWorkspaceSchema.parse(body));

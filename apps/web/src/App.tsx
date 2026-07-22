@@ -11,6 +11,7 @@ import Vendors from "./pages/Vendors";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
+import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
 import { platformNav, workspaceNav, vendorNav } from "./nav";
 
@@ -59,6 +60,7 @@ export default function App() {
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/admin/users" element={<Users />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
+        <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />
         {placeholders.map((p) => (
           <Route key={p.path} path={p.path} element={<Placeholder />} />

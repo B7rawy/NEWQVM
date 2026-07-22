@@ -63,6 +63,40 @@ export class WorkspacesAdminService {
     return row;
   }
 
+  /** Everything about ONE workspace (super-admin drill-in): info, members, workshops, vendors. */
+  async detail(id: string) {
+    return this.dbService.withContext(INTERNAL, async (tx) => {
+      const workspace = (
+        (await tx.execute(sql`
+          select id, slug, name, is_sandbox, is_active, settings, created_at from tenants where id = ${id}::uuid limit 1`)) as Array<Record<string, unknown>>
+      )[0];
+      if (!workspace) throw new NotFoundException("workspace not found");
+
+      const users = await tx.execute(sql`
+        select u.id, u.full_name, u.email, u.phone, u.is_active, m.role, m.id as membership_id,
+               wb.name as branch, m.workshop_branch_id
+        from tenant_memberships m
+        join users u on u.id = m.user_id
+        left join workshop_branches wb on wb.id = m.workshop_branch_id
+        where m.tenant_id = ${id}::uuid and m.is_active = true
+        order by (m.role = 'company_admin') desc, u.full_name`);
+
+      const workshops = await tx.execute(sql`
+        select w.id, w.name, w.tax_number,
+          (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches
+        from tenant_workshops tw join workshops w on w.id = tw.workshop_id
+        where tw.tenant_id = ${id}::uuid and tw.status <> 'archived' order by w.name`);
+
+      const vendors = await tx.execute(sql`
+        select v.id, v.legal_name, v.vendor_type, tv.status, tv.classification,
+          (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id
+        from tenant_vendors tv join vendors v on v.id = tv.vendor_id
+        where tv.tenant_id = ${id}::uuid and tv.status <> 'archived' order by v.legal_name`);
+
+      return { workspace, users, workshops, vendors };
+    });
+  }
+
   async update(actorUserId: string, id: string, dto: z.infer<typeof updateWorkspaceSchema>) {
     if (dto.name === undefined && dto.isActive === undefined && dto.settings === undefined) {
       throw new BadRequestException("nothing to update");
