@@ -1,0 +1,25 @@
+{
+  "name": "@qvm/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "QVM Platform backend — data layer (Drizzle) now; NestJS app generated in Phase 2.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:seed": "tsx drizzle/seed/index.ts"
+  },
+  "dependencies": {
+    "@qvm/shared": "workspace:*",
+    "drizzle-orm": "^0.36.4",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.1"
+  }
+}

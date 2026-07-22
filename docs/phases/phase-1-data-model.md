@@ -28,6 +28,23 @@
    الهدف: عدم فقدان أي منطق بيزنس (سلسلة الطلب، الحالات، مفردات القوائم).
    ⚠️ مرجع للتصميم فقط — السكيما الجديدة **ليست نسخة** من القديمة.
 
+### 2026-07-22 — القرارات النهائية + الشريحة الأولى من السكيما (Phase 1a)
+**قرارات كريم:** الحالات = **نفس مفردات القديم** (محفوظة بالكامل) · المفتاح uuid · profit_categories tenant-scoped
+· regions/cities جداول مرجعية · الباقي "اعمل الصح".
+
+**اتنفّذ (Phase 1a — الأساس):**
+- أدوات `apps/api`: package.json (drizzle-orm/drizzle-kit/postgres/tsx)، tsconfig، drizzle.config.ts.
+- `drizzle/schema/`: `_shared` (helpers: pk/audit/money/pct)، `enums` (10 enums)، `reference`
+  (13 جدول مرجعي)، `tenancy` (plans/tenants + is_sandbox)، `identity` (users عالمي + tenant_memberships)،
+  `org` (workshops/workshop_branches — العميل صعد للرأس).
+- `drizzle/seed/reference-data.ts`: **مفردات الحالات كاملة زي القديم** (item_status 24 قيمة، vendor_status 14)
+  مع `legacyId` للترحيل؛ دمج `Canceled/Cancelled` في `cancelled` واحد يحمل الـ id القديمين [18,268].
+- **ميجريشن مولّدة ومتحقَّق منها:** `0000_foundation.sql` — 18 جدول، 10 enums، unique indexes صحيحة، typecheck نضيف.
+
+**متبقّي (Phase 1b — الشريحة التالية):** vendors (عالمي + tenant_vendors)، سلسلة الطلب
+(rfq→orders→purchasing→fulfillment→billing)، pricing، crosscutting (attachments/status_logs/notes/sequences)،
+ثم **RLS policies + الفهارس على كل FK + sequences** في SQL يدوي مُلحق، ثم seed كامل + sandbox tenant.
+
 ## المشاكل القديمة التي تُعالَج هنا صراحةً
 | مشكلة النظام القديم | المعالجة في التصميم الجديد |
 |---|---|
