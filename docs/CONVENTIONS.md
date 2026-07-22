@@ -7,6 +7,10 @@
 
 1. **كل جدول أساسي يحمل `tenant_id`** (FK → `tenants`) + composite index يبدأ بـ `(tenant_id, …)`.
 2. **RLS مفعّل على كل جدول** مع policy العزل — بدون استثناء، ومن أول ميجريشن للجدول.
+   - الجداول tenant-scoped: `enable` + **`force`** + policy `tenant_id = current_tenant_id() OR app_is_internal()`.
+   - **التطبيق يتّصل بدور `qvm_app` (غير superuser)** المخضِع للـ RLS — **ممنوع** التشغيل بدور الـ owner/superuser
+     (يتخطّى الـ RLS ويُبطِل العزل). الميجريشن والـ seed فقط يستخدمان دور الـ owner. كل request يضبط
+     `SET LOCAL app.tenant_id / app.user_id / app.is_internal`.
 3. **كل FK له index يغطّيه.** (القديم: 123 FK بدون index.)
 4. **أرقام متسلسلة = PostgreSQL sequence** — ممنوع نمط `MAX()+1`. (القديم: قنبلة توليد أرقام الطلبات.)
 5. **schema واحد** (`app` أو `public` الجديد النظيف) — ممنوع ازدواج الدوال/الجداول بين schemas.

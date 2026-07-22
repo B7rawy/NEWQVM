@@ -1,0 +1,2 @@
+ALTER TABLE "order_number_counters" DROP CONSTRAINT "order_number_counters_scope_uq";--> statement-breakpoint
+ALTER TABLE "order_number_counters" ADD CONSTRAINT "order_number_counters_scope_uq" UNIQUE("tenant_id","prefix");

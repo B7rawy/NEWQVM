@@ -97,7 +97,9 @@ export const orderNumberCounters = pgTable(
     ...timestamps,
   },
   (t) => [
-    unique("order_number_counters_scope_uq").on(t.tenantId, t.regionId, t.prefix),
+    // Key on (tenant, prefix): prefix already encodes the region/scope, and this keeps
+    // ON CONFLICT working (region_id is nullable and NULLs break a unique conflict target).
+    unique("order_number_counters_scope_uq").on(t.tenantId, t.prefix),
     index("order_number_counters_tenant_idx").on(t.tenantId),
   ],
 );

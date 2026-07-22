@@ -67,6 +67,27 @@
 **متبقّي (Phase 1c):** RLS policies على كل جدول tenant-scoped + trigger التدقيق (created_by/updated_by) +
 دالة توليد رقم الطلب الذرّية + seed كامل (شركات/موردين/طلبات وهمية) + **sandbox tenant**.
 
+### 2026-07-22 — RLS + الدوال + seed (Phase 1c) ✅ المرحلة 1 مكتملة
+**اتنفّذ (ميجريشنز 0002 + 0003، hand-authored):**
+- **دوال الجلسة:** `current_tenant_id()`, `app_user_id()`, `app_is_internal()` (كلها `search_path=''`).
+- **RLS:** enable+**force**+policy عزل على كل الجداول tenant-scoped (loop على أعمدة tenant_id)؛
+  الجداول العالمية: قراءة للجميع + كتابة للـ internal فقط. **71 policy على 53 جدول.**
+- **trigger التدقيق:** `set_row_audit` (كامل) + `set_created_by` (append-only) — **37 trigger**؛
+  created_by/updated_by من الجلسة لا من جسم الطلب.
+- **دالة رقم الطلب الذرّية:** `next_order_number(tenant,prefix,region)` — upsert على عدّاد
+  `(tenant_id, prefix)` بدل `MAX()+1`.
+- **دور التشغيل `qvm_app`** (غير superuser) — التطبيق يتّصل به؛ الـ owner للميجريشن/الـ seed فقط.
+- **seed:** مفردات الحالات كاملة (24+14) + brand_classes/brands/regions/cities + خطة + مستخدم أدمن +
+  **مستأجرين (منهم sandbox)** + ورشة/فرع + مورّد عالمي مربوط + سلسلة RFQ كاملة (`RYD-1` من الدالة).
+
+**التحقق الفعلي على Postgres (كدور qvm_app الخاضع للـ RLS):**
+- داخلي يرى الكل · مستأجر t1 يرى صفّه فقط · **مستأجر آخر = صفر** · بلا سياق = صفر ·
+  **كتابة عابرة للمستأجرين مرفوضة بـ RLS policy** · created_by/updated_by مضبوطان تلقائياً ·
+  `next_order_number` متسلسل ذرّي (TST-1/2/3).
+
+> **درس حرج التقطه الاختبار:** الـ superuser/owner يتخطّى الـ RLS حتى مع FORCE — لذلك التطبيق
+> **يجب** أن يتصل بدور `qvm_app` غير الـ superuser. أُضيف كقاعدة ملزمة في CONVENTIONS §DB-2.
+
 ## المشاكل القديمة التي تُعالَج هنا صراحةً
 | مشكلة النظام القديم | المعالجة في التصميم الجديد |
 |---|---|

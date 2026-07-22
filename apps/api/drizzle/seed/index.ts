@@ -1,0 +1,113 @@
+/**
+ * Seed — realistic fake data for local dev + the sandbox tenant (ADR-0007 / ADR-0004).
+ * Runs as internal staff (app.is_internal = true) so RLS lets it write across tenants.
+ * Idempotent-ish: truncates app data first (dev only), then re-seeds.
+ *
+ * This is a FOUNDATION seed (Phase 1c): reference vocabulary + plans + tenants (incl. a sandbox)
+ * + org + a global vendor with links + one full RFQ→order chain, enough to prove the schema,
+ * RLS isolation, and the atomic order-number function end to end. It grows in later phases.
+ */
+import postgres from "postgres";
+import { ITEM_STATUSES, VENDOR_STATUSES } from "./reference-data";
+
+const sql = postgres(
+  process.env.DATABASE_URL ??
+    "postgresql://qvm:change_me_in_local_env@localhost:5434/qvm_platform",
+  { max: 1 },
+);
+
+async function main() {
+  await sql`select set_config('app.is_internal','true',false)`;
+
+  // ---- clean (dev only) ----
+  await sql`
+    truncate table
+      order_items, orders, rfq_vendor_items, rfq_vendors, rfq_items, rfqs,
+      tenant_vendors, vendor_users, vendor_branches, vendors,
+      workshop_branches, workshops, tenant_memberships, tenants, plans, users,
+      order_number_counters,
+      item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
+      regions, cities, cancellation_reasons, return_reasons, payment_accounts,
+      bonus_tiers, cost_ranges
+    restart identity cascade`;
+
+  // ---- reference vocabulary (statuses preserved exactly as old system) ----
+  for (const s of ITEM_STATUSES) {
+    await sql`insert into item_statuses (code,label_en,label_ar,sort_order,legacy_id)
+      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0]})`;
+  }
+  for (const s of VENDOR_STATUSES) {
+    await sql`insert into vendor_statuses (code,label_en,label_ar,sort_order,legacy_id)
+      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0]})`;
+  }
+  const brandClasses = [
+    ["genuine", "Genuine", "أصلي"],
+    ["oem", "OEM", "أو إي إم"],
+    ["aftermarket", "Aftermarket", "تجاري"],
+    ["used", "Used", "مستعمل"],
+  ];
+  for (const [code, en, ar] of brandClasses) {
+    await sql`insert into brand_classes (code,label_en,label_ar) values (${code},${en},${ar})`;
+  }
+  await sql`insert into car_brands (code,label_en,label_ar) values
+    ('toyota','Toyota','تويوتا'),('nissan','Nissan','نيسان'),('hyundai','Hyundai','هيونداي')`;
+  await sql`insert into part_categories (code,label_en,label_ar) values
+    ('engine','Engine','محرك'),('body','Body','هيكل'),('electrical','Electrical','كهرباء')`;
+  const [central] =
+    await sql`insert into regions (code,label_en,label_ar) values ('central','Central','الوسطى') returning id`;
+  await sql`insert into regions (code,label_en,label_ar) values
+    ('western','Western','الغربية'),('eastern','Eastern','الشرقية')`;
+  await sql`insert into cities (region_id,code,label_en,label_ar) values
+    (${central.id},'riyadh','Riyadh','الرياض')`;
+  await sql`insert into payment_accounts (code,label_en,label_ar) values ('cash','Cash','نقدي')`;
+
+  // ---- plans ----
+  const [pro] =
+    await sql`insert into plans (code,name) values ('pro','Professional') returning id`;
+
+  // ---- platform admin user ----
+  const [admin] = await sql`insert into users (email,full_name,password_hash)
+    values ('admin@qvm.local','Platform Admin','!seed-no-login') returning id`;
+  await sql`select set_config('app.user_id', ${admin.id}, false)`;
+
+  // ---- tenants: one real workspace + one sandbox ----
+  const [t1] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
+    values ('Qparts Riyadh','riyadh',${pro.id},false) returning id`;
+  const [tSandbox] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
+    values ('Sandbox Workspace','sandbox',${pro.id},true) returning id`;
+
+  // ---- org for t1: a workshop + branch ----
+  const [ws] = await sql`insert into workshops (tenant_id,name) values (${t1.id},'Al Faisal Motors') returning id`;
+  const [branch] = await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
+    values (${t1.id},${ws.id},'Riyadh Main',${central.id}) returning id`;
+
+  // ---- global vendor linked to t1 ----
+  const [vendor] = await sql`insert into vendors (legal_name,vendor_type)
+    values ('Gulf Auto Parts Co.','commercial') returning id`;
+  await sql`insert into vendor_branches (vendor_id,name,region_id) values (${vendor.id},'Riyadh Depot',${central.id})`;
+  await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${t1.id},${vendor.id},'active')`;
+
+  // ---- one RFQ chain in t1, using the atomic order-number function ----
+  const [num] = await sql`select public.next_order_number(${t1.id},'RYD-',${central.id}) as n`;
+  const [newStatus] = await sql`select id from item_statuses where code='new_rfq'`;
+  const [rfq] = await sql`insert into rfqs (tenant_id,order_number,workshop_branch_id,plate_number,status_id)
+    values (${t1.id},${num.n},${branch.id},'ABC-1234',${newStatus.id}) returning id`;
+  await sql`insert into rfq_items (tenant_id,rfq_id,part_number,part_description,quantity)
+    values (${t1.id},${rfq.id},'12345-67890','Brake Pad Set',2)`;
+
+  // ---- report ----
+  const counts = await sql`select
+    (select count(*) from item_statuses) item_statuses,
+    (select count(*) from tenants) tenants,
+    (select count(*) from rfqs) rfqs,
+    (select order_number from rfqs limit 1) sample_order_number`;
+  console.log("seed complete:", counts[0]);
+  console.log("tenant t1:", t1.id, "sandbox:", tSandbox.id);
+  await sql.end();
+}
+
+main().catch(async (e) => {
+  console.error(e);
+  await sql.end();
+  process.exit(1);
+});
