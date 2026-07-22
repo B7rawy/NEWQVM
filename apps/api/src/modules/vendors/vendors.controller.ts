@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, 
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
-import { PlatformOnly } from "../../common/roles.decorator.js";
+import { Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
   createVendorBranchSchema,
@@ -30,31 +30,31 @@ export class VendorsController {
   }
 
   @Get("available")
-  @PlatformOnly()
+  @Roles("company_admin")
   available(@Req() req: Request, @Query("tenantId") tenantId?: string) {
     return this.svc.available(this.ctx(req), tenantId);
   }
 
   @Post()
-  @PlatformOnly()
+  @Roles("company_admin")
   create(@Req() req: Request, @Body() body: unknown) {
     return this.svc.create(this.ctx(req), createVendorSchema.parse(body));
   }
 
   @Patch(":id")
-  @PlatformOnly()
+  @Roles("company_admin")
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.update(this.ctx(req), id, updateVendorSchema.parse(body));
   }
 
   @Post(":id/status")
-  @PlatformOnly()
+  @Roles("company_admin")
   setStatus(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.setStatus(this.ctx(req), id, vendorStatusSchema.parse(body));
   }
 
   @Post(":id/link")
-  @PlatformOnly()
+  @Roles("company_admin")
   link(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.link(this.ctx(req), id, linkVendorSchema.parse(body));
   }
@@ -65,7 +65,7 @@ export class VendorsController {
   }
 
   @Post("branches")
-  @PlatformOnly()
+  @Roles("company_admin")
   createBranch(@Req() req: Request, @Body() body: unknown) {
     return this.svc.createBranch(this.ctx(req), createVendorBranchSchema.parse(body));
   }

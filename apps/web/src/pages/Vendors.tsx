@@ -25,7 +25,8 @@ interface Ws {
 export default function Vendors() {
   const { activeSlug, me, impersonate } = useAuth();
   const isPlatform = me?.persona === "platform";
-  const canViewAs = isPlatform || me?.role === "company_admin";
+  const canManage = isPlatform || me?.role === "company_admin"; // manage vendors in this workspace
+  const canViewAs = canManage;
   const [rows, setRows] = useState<Vendor[] | null>(null);
   const [show, setShow] = useState(false);
   const [workspaces, setWorkspaces] = useState<Ws[]>([]);
@@ -86,7 +87,7 @@ export default function Vendors() {
         title="Vendors"
         subtitle="Suppliers linked to this workspace"
         actions={
-          me?.isInternal ? (
+          canManage ? (
             <button className="btn-primary rounded-md" onClick={() => setShow((v) => !v)}>
               <Plus className="h-4 w-4" /> New vendor
             </button>
