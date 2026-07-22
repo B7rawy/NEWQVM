@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "qvm-web",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@qvm/web", "dev"],
+      "port": 5200
+    }
+  ]
+}

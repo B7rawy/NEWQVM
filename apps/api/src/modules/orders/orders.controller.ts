@@ -27,6 +27,7 @@ export class OrdersController {
   list(@Req() req: Request) {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.orders.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal });
+    // scope to the active workspace even for platform staff (see rfq.controller note)
+    return this.orders.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false });
   }
 }

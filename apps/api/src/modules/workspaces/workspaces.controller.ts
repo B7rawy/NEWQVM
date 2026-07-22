@@ -18,6 +18,22 @@ import { DbService } from "../../db/db.service.js";
 export class WorkspacesController {
   constructor(private readonly dbService: DbService) {}
 
+  /** Workshop branches of the active workspace — for RFQ create dropdowns etc. */
+  @Get("branches")
+  async branches(@Req() req: Request) {
+    const ctx = getContext(req);
+    // scope to the active workspace even for platform staff
+    const rows = await this.dbService.withContext(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false },
+      (tx) =>
+        tx.execute(sql`
+          select wb.id, wb.name, w.name as workshop
+          from workshop_branches wb join workshops w on w.id = wb.workshop_id
+          where wb.is_active = true order by w.name, wb.name`),
+    );
+    return { branches: rows };
+  }
+
   @Get()
   async list(@Req() req: Request) {
     const ctx = getContext(req);

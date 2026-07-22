@@ -35,7 +35,9 @@ export class RfqController {
   list(@Req() req: Request) {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal });
+    // scope the list to the ACTIVE workspace even for platform staff (isInternal:false) — the
+    // "see all workspaces" privilege is the switcher, not a merged single-workspace view.
+    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false });
   }
 
   @Post()

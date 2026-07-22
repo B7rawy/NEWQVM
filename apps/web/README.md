@@ -1,23 +1,28 @@
 # @qvm/web — Frontend (React + Vite)
 
-الواجهة. **تعيد استخدام مكوّنات الـ UI والتصميم من المشروع الحالي**، مبنية نظيفة فوق الـ API الجديد.
+واجهة المنصّة، تتكلم الـ API الجديد. RLS-scoped per workspace عبر رأس X-Tenant.
 
-## البداية (المرحلة 3)
+## التشغيل
+```bash
+corepack pnpm --filter @qvm/api dev   # API على :4000 (SWC)
+corepack pnpm --filter @qvm/web dev   # الواجهة على :5200
+```
+(أو من الجذر: launch config `qvm-web`.)
 
-1. توليد قاعدة Vite + React + TS نظيفة هنا.
-2. **نسخ** مكوّنات الـ design-system القابلة لإعادة الاستخدام من المشروع القديم
-   (`/Users/wael/qvm-new-production/components/ui/*`, `layout/*`) — **بدون** طبقة الداتا القديمة.
-3. استبدال `supabase-js` بعميل API يكلّم `@qvm/api` (REST/tRPC).
-4. استيراد الأنواع والأدوار من `@qvm/shared` (لا إعادة تعريف).
+## البنية (Phase 4a — منفَّذة)
+- `src/lib/api.ts` — fetch client واحد (JWT + X-Tenant للـ workspace النشط).
+- `src/lib/auth.tsx` — سياق المصادقة (توكن في localStorage) + workspaces + تبديل نشط.
+- `src/pages/Login.tsx` — تسجيل دخول.
+- `src/components/AppShell.tsx` — هيدر + **سويتشر workspaces** + تنقّل.
+- `src/pages/Rfqs.tsx` — قائمة + إنشاء RFQ (موصولة بالـ API).
+- `src/pages/Orders.tsx` — قائمة الطلبات.
+- هوية بصرية navy/red من الديزاين القديم (styles.css).
 
-## قرارات إلزامية (إصلاح مشاكل القديم)
-- **code-splitting + lazy routes من أول يوم** (القديم = chunk واحد 3MB).
-- **i18n في مكانه**: موديول top-level مشترك، لا مدفون تحت `internal-dashboard/`.
-- **subdomain routing**: الـ host يحدّد الـ tenant/workspace.
-- **صفر نسخ v2/v3** — جيل واحد فقط لكل شاشة.
-- **مصدر واحد** لتنسيق العملة/التاريخ وخرائط ألوان الحالة (لا تكرار في 50 ملف).
+## مُتحقَّق (متصفح)
+دخول argon2 → سويتشر يعرض 3 workspaces (platform staff) → إنشاء RFQ (RFQ-1 في Jeddah) →
+**التبديل لـ Riyadh يعرض RYD-1 المعزول** والفرع الصحيح. القوائم مقيَّدة بالـ workspace النشط
+(is_internal لا يسرّب داتا عبر الـ workspaces في العرض).
 
-## ما يُعاد استخدامه من القديم
-- مكوّنات `components/ui/` (Button, Table, Modal, Drawer, Badge, …).
-- تخطيط `components/layout/` (AppShell, Sidebar, Header) — مع تعديله ليكون tenant-aware.
-- الـ `qvm-superadmin` prototype الموجود → يصبح أساس داشبورد السوبر أدمن (المرحلة 5).
+## التالي
+باقي شاشات دورة الطلب (إرسال/تسعير/تأكيد/شراء/تسليم/فاتورة/مرتجع) + شاشات الرودماب +
+داشبورد السوبر أدمن + إعادة استخدام مكوّنات UI أوسع من القديم.

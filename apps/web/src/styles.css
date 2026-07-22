@@ -1,0 +1,87 @@
+/* QVM Platform — brand tokens (navy/red, from the old design system) + clean B2B layout. */
+:root {
+  --navy: #0d4151;
+  --navy-2: #123b48;
+  --red: #e21a1a;
+  --bg: #f4f6f8;
+  --card: #ffffff;
+  --line: #e3e8ee;
+  --text: #16232a;
+  --muted: #6b7a86;
+  --ok: #178a52;
+  --radius: 10px;
+  --shadow: 0 1px 2px rgba(16, 35, 42, 0.06), 0 4px 16px rgba(16, 35, 42, 0.05);
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Cairo, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+a { color: var(--navy); }
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 8px 14px;
+}
+button.primary { background: var(--navy); color: #fff; border-color: var(--navy); }
+button.primary:hover { background: var(--navy-2); }
+button.danger { color: var(--red); border-color: var(--red); }
+button:disabled { opacity: 0.5; cursor: default; }
+input, select {
+  font: inherit;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  width: 100%;
+}
+label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+.field { margin-bottom: 12px; }
+
+/* login */
+.login-wrap { display: grid; place-items: center; height: 100%; }
+.login-card {
+  width: 360px; background: var(--card); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 28px;
+}
+.brand { font-weight: 800; letter-spacing: -0.5px; color: var(--navy); font-size: 22px; }
+.brand span { color: var(--red); }
+.err { color: var(--red); font-size: 13px; margin: 8px 0; }
+
+/* shell */
+.shell { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--navy); color: #fff; padding: 0 18px; height: 56px;
+}
+.topbar .brand { color: #fff; }
+.topbar .brand span { color: #ff8a8a; }
+.topbar nav { display: flex; gap: 4px; margin-left: 12px; }
+.topbar nav a {
+  color: #cfe0e6; text-decoration: none; padding: 8px 12px; border-radius: 8px; font-size: 13px;
+}
+.topbar nav a.active, .topbar nav a:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.spacer { flex: 1; }
+.ws-switch { display: flex; align-items: center; gap: 8px; }
+.ws-switch select { width: auto; background: rgba(255,255,255,0.12); color: #fff; border-color: transparent; }
+.ws-switch select option { color: #16232a; }
+.who { font-size: 12px; color: #cfe0e6; }
+.content { padding: 24px; overflow: auto; }
+
+/* cards + tables */
+.card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; }
+.page-head { display: flex; align-items: center; margin-bottom: 18px; }
+.page-head h1 { font-size: 20px; margin: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 340px; gap: 20px; align-items: start; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.3px; }
+.badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; background: #eef3f6; color: var(--navy); }
+.muted { color: var(--muted); }
+.empty { color: var(--muted); text-align: center; padding: 40px; }
