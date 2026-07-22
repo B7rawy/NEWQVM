@@ -5,8 +5,8 @@
 مع seed وهمي واقعي يشمل sandbox tenant.
 
 ## المخرجات المستهدفة
-- [ ] `docs/reference/old-system-schema.md` — مرجع السكيما القديمة (قراءة فقط، لا نسخ)
-- [ ] تصميم السكيما الجديدة (ERD + جداول) — يُراجَع قبل كتابة الميجريشن
+- [x] `docs/reference/old-system-schema.md` — مرجع السكيما القديمة (قراءة فقط، لا نسخ) ✅
+- [x] تصميم السكيما الجديدة — `docs/design/new-schema-design.md` (بانتظار مراجعة كريم) ✅
 - [ ] `apps/api/src/db/schema/*.ts` — تعريفات Drizzle
 - [ ] الميجريشن الأولى: الجداول + RLS + الفهارس + الـ sequences
 - [ ] `apps/api/drizzle/seed/` — بيانات وهمية + sandbox tenant
