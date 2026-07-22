@@ -15,6 +15,8 @@ import { DeliveryController } from "./modules/delivery/delivery.controller.js";
 import { DeliveryService } from "./modules/delivery/delivery.service.js";
 import { InvoiceController } from "./modules/invoicing/invoice.controller.js";
 import { InvoiceService } from "./modules/invoicing/invoice.service.js";
+import { ReturnsController } from "./modules/returns/returns.controller.js";
+import { ReturnsService } from "./modules/returns/returns.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -32,6 +34,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     PurchasingController,
     DeliveryController,
     InvoiceController,
+    ReturnsController,
   ],
   providers: [
     RfqService,
@@ -40,6 +43,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     PurchasingService,
     DeliveryService,
     InvoiceService,
+    ReturnsService,
   ],
 })
 export class AppModule {}

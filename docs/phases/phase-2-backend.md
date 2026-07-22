@@ -97,5 +97,18 @@ this workspace").
 **مُتحقَّق HTTP:** تسليم جزئي 3/5 (البند يظل confirmed) → تسليم 2 (يكتمل → delivered) → تجاوز 6>5
 مرفوض → فاتورة (500 + 75 ضريبة = 575) → فاتورة مكررة مرفوضة → الورشة 403.
 
-## التالي (Phase 2h+)
-المرتجعات (returns + return_items + credit_notes) — إغلاق دورة الحياة. ثم موديولات الرودماب. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
+### Phase 2h — المرتجعات + إشعارات الخصم ✅ (هذا الكومِت) — دورة الطلب مكتملة
+- `ReturnsService.create` (أدوار الورش): إرجاع بنود مُسلَّمة بكمية+سبب+مسؤولية؛ يمنع الإرجاع الزائد
+  (المُرجَع+المطلوب ≤ المُسلَّم)؛ ينقل البنود لـ 'return'. POST/GET /orders/:id/returns.
+- `ReturnsService.issueCreditNote` (@PlatformOnly — مالية): إشعار خصم للمرتجع، سعر الوحدة من
+  invoice_items وإلا selling_price/التكلفة؛ رقم CN- ؛ idempotent عبر حالة المرتجع؛ ينقل لـ
+  'credit_note_issued'. POST /returns/:returnId/credit-note.
+
+**مُتحقَّق HTTP:** إرجاع 2/5 → إرجاع زائد 6>5 مرفوض → إشعار خصم (200) → مكرر مرفوض → الورشة 403 →
+الحالة النهائية credit_note_issued.
+
+**🏁 دورة حياة الطلب الأساسية مكتملة:** RFQ → إرسال → تسعير → مقارنة → اختيار → تأكيد → شراء →
+تسليم(مجزّأ) → فاتورة → مرتجع → إشعار خصم. كلها معزولة بالـ RLS، مؤمّنة بالأدوار، ومُختبَرة end-to-end.
+
+## التالي
+موديولات الرودماب الكبيرة: Master Data (parts_master) · محرك التسعير (QNEW-30) · التوزيع الآلي للموردين (QNEW-29) · التأمين/الدافعين (QNEW-31) · محرك الموافقات (QNEW-53) · الشحن (QNEW-54). ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
