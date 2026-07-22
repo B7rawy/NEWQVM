@@ -9,6 +9,8 @@ import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
 import { QuoteAccessController } from "./modules/rfq/quote-access.controller.js";
 import { OrdersController } from "./modules/orders/orders.controller.js";
 import { OrdersService } from "./modules/orders/orders.service.js";
+import { PurchasingController } from "./modules/purchasing/purchasing.controller.js";
+import { PurchasingService } from "./modules/purchasing/purchasing.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 
 /**
@@ -23,7 +25,8 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     WorkspacesController,
     QuoteAccessController,
     OrdersController,
+    PurchasingController,
   ],
-  providers: [RfqService, VendorRfqService, OrdersService],
+  providers: [RfqService, VendorRfqService, OrdersService, PurchasingService],
 })
 export class AppModule {}

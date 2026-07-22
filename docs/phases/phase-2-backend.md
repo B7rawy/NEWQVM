@@ -76,5 +76,15 @@ this workspace").
 **مُتحقَّق HTTP (11/11):** السلسلة الكاملة لسه شغّالة (regression) · advisor على send/quotes = 403 ·
 **لا توكن في notification_log** · select-winner و re-quote بعد التأكيد مرفوضان · القيود الفريدة موجودة.
 
-## التالي (Phase 2f+)
-الشراء (purchase_orders/items) → التسليم → الفوترة → المرتجعات. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
+### Phase 2f — الشراء (Purchase Orders) ✅ (هذا الكومِت)
+- `PurchasingService.createForOrder`: من طلب مؤكّد، كل بند تسعيرته الفائزة تحدّد مورّده
+  (order_item → rfq_vendor_item → rfq_vendor → vendor)؛ البنود تُجمَّع حسب المورّد → أمر شراء
+  لكل مورّد + purchase_items تربط البند بالتسعيرة الفائزة (التكلفة على التسعيرة — صفر تكرار).
+  Idempotent (يرفض لو الأوامر موجودة). `listForOrder` يعرض المورّد + عدد البنود + التكلفة الإجمالية.
+- Endpoints: POST/GET /orders/:id/purchase-orders (**@PlatformOnly** — مشتريات داخلية).
+
+**مُتحقَّق HTTP:** طلب ببندين من موردين مختلفين → **أمرا شراء منفصلان** (بند لكل) بتكلفة صحيحة من
+التسعيرات الفائزة (600 / 180) · إنشاء مكرر مرفوض · الورشة (advisor) → 403.
+
+## التالي (Phase 2g+)
+التسليم (deliveries — تسليم مجزّأ) → الفوترة (invoices) → المرتجعات (returns + credit notes). ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).
