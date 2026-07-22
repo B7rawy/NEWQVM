@@ -4,6 +4,7 @@ import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import * as schema from "../../drizzle/schema/index.js";
 
+export { schema };
 export type Tx = PostgresJsDatabase<typeof schema>;
 
 /** The RLS session context set on every request-scoped transaction. */

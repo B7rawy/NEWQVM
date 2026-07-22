@@ -1,35 +1,36 @@
-import { BadRequestException, Controller, Get, Req, UseGuards } from "@nestjs/common";
-import { sql } from "drizzle-orm";
+import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
+import { RolesGuard } from "../../common/roles.guard.js";
+import { Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
-import { DbService } from "../../db/db.service.js";
+import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
 
 /**
- * First tenant-scoped domain endpoint — proves the full chain end-to-end:
- * JWT → subdomain→tenant → RLS SET LOCAL → only this tenant's rows come back.
+ * RFQ domain — the entry point of the order chain. All tenant-scoped by RLS.
+ * Create is limited to workshop roles (+ platform staff); vendors cannot create RFQs.
  */
 @Controller("rfqs")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RolesGuard)
 export class RfqController {
-  constructor(private readonly dbService: DbService) {}
+  constructor(private readonly rfq: RfqService) {}
 
   @Get()
-  async list(@Req() req: Request) {
+  list(@Req() req: Request) {
     const ctx = getContext(req);
-    if (!ctx.tenantSlug) throw new BadRequestException("no tenant resolved (subdomain / X-Tenant)");
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal });
+  }
 
-    // NOTE: no manual tenant_id filter — RLS enforces isolation. This is the point.
-    const rows = await this.dbService.withContext(
+  @Post()
+  @Roles("company_admin", "branch_manager", "service_advisor")
+  create(@Req() req: Request, @Body() body: unknown) {
+    const ctx = getContext(req);
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    const dto: CreateRfqDto = createRfqSchema.parse(body);
+    return this.rfq.create(
       { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
-      (tx) =>
-        tx.execute(sql`
-          select r.id, r.order_number, r.plate_number, s.label_en as status
-          from rfqs r
-          left join item_statuses s on s.id = r.status_id
-          order by r.created_at desc
-          limit 50`),
+      dto,
     );
-    return { tenant: ctx.tenantSlug, count: rows.length, rfqs: rows };
   }
 }
