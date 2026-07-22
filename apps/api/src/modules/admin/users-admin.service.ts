@@ -1,0 +1,77 @@
+import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
+import { sql } from "drizzle-orm";
+import argon2 from "argon2";
+import { z } from "zod";
+import { DbService, type RlsContext } from "../../db/db.service.js";
+
+/** Company-side membership roles that can be granted through the workspace Users screen. */
+export const COMPANY_ROLES = ["company_admin", "branch_manager", "service_advisor"] as const;
+
+export const addUserSchema = z.object({
+  email: z.string().email(),
+  fullName: z.string().min(2),
+  phone: z.string().optional(),
+  role: z.enum(COMPANY_ROLES),
+  workshopBranchId: z.string().uuid().optional(),
+  password: z.string().min(8).optional(), // optional: set now, else pending invite (null hash)
+});
+
+@Injectable()
+export class UsersAdminService {
+  constructor(private readonly dbService: DbService) {}
+
+  /** Members of the active workspace (tenant_memberships → users), RLS-scoped. */
+  async list(ctx: RlsContext) {
+    const rows = await this.dbService.withContext(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false },
+      (tx) =>
+        tx.execute(sql`
+          select u.id, u.email, u.full_name, u.phone, u.is_active, m.role,
+            wb.name as branch, m.workshop_branch_id
+          from tenant_memberships m
+          join users u on u.id = m.user_id
+          left join workshop_branches wb on wb.id = m.workshop_branch_id
+          where m.is_active = true
+          order by u.full_name`),
+    );
+    return { count: rows.length, users: rows };
+  }
+
+  /** Add a user to the active workspace with a role. Creates the global user if the email is new
+   *  (users + tenant_memberships are is_internal / active-tenant writes — both satisfied here). */
+  async add(ctx: RlsContext, dto: z.infer<typeof addUserSchema>) {
+    if (!ctx.tenantId) throw new BadRequestException("no active workspace");
+    const email = dto.email.trim().toLowerCase();
+    const hash = dto.password ? await argon2.hash(dto.password) : null;
+
+    return this.dbService.withContext(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true },
+      async (tx) => {
+        const existing = (
+          (await tx.execute(sql`select id from users where email = ${email} limit 1`)) as Array<{ id: string }>
+        )[0];
+        let userId = existing?.id;
+        if (!userId) {
+          const [u] = (await tx.execute(sql`
+            insert into users (email, full_name, phone, password_hash, created_by, updated_by)
+            values (${email}, ${dto.fullName}, ${dto.phone ?? null}, ${hash}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+            returning id`)) as Array<{ id: string }>;
+          userId = u.id;
+        }
+
+        const clash = (
+          (await tx.execute(sql`
+            select 1 from tenant_memberships
+            where tenant_id = ${ctx.tenantId}::uuid and user_id = ${userId}::uuid and role = ${dto.role} limit 1`)) as Array<unknown>
+        )[0];
+        if (clash) throw new ConflictException("user already has this role in the workspace");
+
+        await tx.execute(sql`
+          insert into tenant_memberships (tenant_id, user_id, role, workshop_branch_id, created_by, updated_by)
+          values (${ctx.tenantId}::uuid, ${userId}::uuid, ${dto.role}, ${dto.workshopBranchId ?? null}::uuid,
+            ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);
+        return { userId, invited: !dto.password && !existing };
+      },
+    );
+  }
+}

@@ -9,6 +9,8 @@ import { OrgController } from "./modules/org/org.controller.js";
 import { OrgService } from "./modules/org/org.service.js";
 import { VendorsController } from "./modules/vendors/vendors.controller.js";
 import { VendorsService } from "./modules/vendors/vendors.service.js";
+import { UsersAdminController } from "./modules/admin/users-admin.controller.js";
+import { UsersAdminService } from "./modules/admin/users-admin.service.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
 import { RfqService } from "./modules/rfq/rfq.service.js";
 import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
@@ -71,6 +73,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     WorkspacesAdminController,
     OrgController,
     VendorsController,
+    UsersAdminController,
   ],
   providers: [
     RfqService,
@@ -93,6 +96,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     WorkspacesAdminService,
     OrgService,
     VendorsService,
+    UsersAdminService,
   ],
 })
 export class AppModule {}
