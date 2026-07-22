@@ -1,10 +1,23 @@
-import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
+import { sendRfqSchema, VendorRfqService } from "./vendor-rfq.service.js";
+
+// platform-tier roles only (company/vendor users don't have these → blocked; platform bypasses)
+const INTERNAL = ["purchasing", "account_manager", "super_admin", "staff"];
 
 /**
  * RFQ domain — the entry point of the order chain. All tenant-scoped by RLS.
@@ -13,7 +26,10 @@ import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
 @Controller("rfqs")
 @UseGuards(AuthGuard, RolesGuard)
 export class RfqController {
-  constructor(private readonly rfq: RfqService) {}
+  constructor(
+    private readonly rfq: RfqService,
+    private readonly vendorRfq: VendorRfqService,
+  ) {}
 
   @Get()
   list(@Req() req: Request) {
@@ -31,6 +47,19 @@ export class RfqController {
     return this.rfq.create(
       { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
       dto,
+    );
+  }
+
+  /** Send the RFQ to vendors — internal (purchasing) action; each send is a guarded notification. */
+  @Post(":id/send")
+  @Roles(...INTERNAL)
+  send(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
+    const ctx = getContext(req);
+    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
+    return this.vendorRfq.send(
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      id,
+      sendRfqSchema.parse(body),
     );
   }
 }

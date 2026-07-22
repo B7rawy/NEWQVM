@@ -36,6 +36,20 @@
       "when": 1784692028357,
       "tag": "0004_platform_members_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784693650745,
+      "tag": "0005_notification_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784693651363,
+      "tag": "0006_notification_log_rls",
+      "breakpoints": true
     }
   ]
 }

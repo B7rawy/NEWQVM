@@ -1,4 +1,4 @@
-import { bigint, boolean, integer, pgTable, text, uuid, index, unique } from "drizzle-orm/pg-core";
+import { bigint, boolean, integer, jsonb, pgTable, text, uuid, index, unique } from "drizzle-orm/pg-core";
 import { audit, pk, timestamps } from "./_shared";
 import { entityType, statusDomain } from "./enums";
 import { tenants } from "./tenancy";
@@ -82,6 +82,33 @@ export const notes = pgTable(
   (t) => [
     index("notes_tenant_idx").on(t.tenantId),
     index("notes_entity_idx").on(t.tenantId, t.entityType, t.entityId),
+  ],
+);
+
+/**
+ * Notification outbox — EVERY outbound side-effect (email/whatsapp/webhook) is recorded here.
+ * `status` = 'sent' | 'suppressed' | 'failed'. In a sandbox tenant the NotificationsService writes
+ * a 'suppressed' row and never touches a real provider (ADR-0004) — this table is the audit trail
+ * and the proof that sandbox isolation held.
+ */
+export const notificationLog = pgTable(
+  "notification_log",
+  {
+    id: pk(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    channel: text("channel").notNull(), // email | whatsapp | webhook
+    recipient: text("recipient"),
+    template: text("template"),
+    payload: jsonb("payload").notNull().default({}),
+    status: text("status").notNull(), // sent | suppressed | failed
+    createdBy: uuid("created_by").references(() => users.id),
+    ...timestamps,
+  },
+  (t) => [
+    index("notification_log_tenant_idx").on(t.tenantId),
+    index("notification_log_created_by_idx").on(t.createdBy),
   ],
 );
 

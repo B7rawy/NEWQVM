@@ -33,7 +33,20 @@ ADR-0010 (قاعدة واحدة، رفض القاعدة-المنفصلة). `plat
 عضو غير مصرّح له بالـ workspace = 403 · **فرع من workspace آخر مرفوض بالـ RLS** ("not found in
 this workspace").
 
-## التالي (Phase 2d+)
-إرسال RFQ للموردين (rfq_vendors + توكن مُهاش) → استقبال تسعيرات المورّد (rfq_vendor_items) →
-اختيار التسعيرة الفائزة → تأكيد الطلب (orders/order_items). ثم طبقة notifications (side-effects
-خلف sandbox guard) قبل أي إرسال حقيقي.
+### Phase 2d — إرسال RFQ للموردين + بوابة التسعيرة + طبقة الإشعارات ✅ (هذا الكومِت)
+- **`NotificationsService`** = حدّ الآثار الجانبية الوحيد (ADR-0004 / CONVENTIONS §BE-3). لا شيء
+  يبعت email/whatsapp/webhook إلا عبره. في tenant sandbox (أو provider مقفول/non-prod) يسجّل
+  الرسالة `suppressed` ولا يلمس أي provider حقيقي. كل محاولة تُكتب في **`notification_log`**
+  (جدول جديد، tenant-scoped + RLS، 0005/0006) = السجل والبرهان.
+- **`POST /api/rfqs/:id/send`** (داخلي فقط): ينشئ `rfq_vendors` بتوكن **مُهاش** (sha256، صلاحية 7 أيام)
+  + إشعار مضبوط لكل مورّد؛ يتحقق أن المورّد مرتبط بالـ workspace.
+- **`POST /api/quote-access/:token/quote`** (عام، بدون تسجيل دخول): التوكن هو الصلاحية — يُحلّ كـ internal
+  ثم الكتابة تُقيَّد بـ tenant التوكن (RLS يطبَّق)؛ يتحقق أن البنود تخص الـ RFQ؛ ينشئ `rfq_vendor_items`.
+
+**مُتحقَّق HTTP:** إرسال على riyadh(prod) → `sent`؛ المورّد يسعّر بالتوكن بلا دخول → مخزَّن (150.50)؛
+**إرسال على sandbox → `suppressed`**؛ **notification_log: riyadh=sent, sandbox=suppressed** (برهان
+عزل الـ sandbox)؛ توكن غلط → 404.
+
+## التالي (Phase 2e+)
+اختيار التسعيرة الفائزة (rfq_items.winning_vendor_quote_item_id) → تأكيد الطلب (orders/order_items)
+→ الشراء والتسليم والفوترة. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).

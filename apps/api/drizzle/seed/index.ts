@@ -117,11 +117,17 @@ async function main() {
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
     values (${t2.id},${multi.id},'service_advisor',${branch2.id})`;
 
-  // ---- global vendor linked to t1 ----
-  const [vendor] = await sql`insert into vendors (legal_name,vendor_type)
-    values ('Gulf Auto Parts Co.','commercial') returning id`;
+  // ---- global vendor linked to t1 AND the sandbox (same global identity, per ADR-0008) ----
+  const [vendor] = await sql`insert into vendors (legal_name,vendor_type,primary_email)
+    values ('Gulf Auto Parts Co.','commercial','vendor@gulf.example') returning id`;
   await sql`insert into vendor_branches (vendor_id,name,region_id) values (${vendor.id},'Riyadh Depot',${central.id})`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${t1.id},${vendor.id},'active')`;
+  await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${tSandbox.id},${vendor.id},'active')`;
+
+  // ---- sandbox org so the sandbox guard can be exercised end-to-end ----
+  const [sbWs] = await sql`insert into workshops (tenant_id,name) values (${tSandbox.id},'Sandbox Motors') returning id`;
+  await sql`insert into workshop_branches (tenant_id,workshop_id,name,region_id)
+    values (${tSandbox.id},${sbWs.id},'Sandbox Branch',${central.id})`;
 
   // ---- one RFQ chain in t1, using the atomic order-number function ----
   const [num] = await sql`select public.next_order_number(${t1.id},'RYD-',${central.id}) as n`;
