@@ -19,6 +19,8 @@ import {
   Banknote,
   Wallet,
   PackageSearch,
+  Building2,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -27,6 +29,7 @@ export interface NavItem {
   path: string;
   icon: LucideIcon;
   soon?: boolean;
+  platformOnly?: boolean;
 }
 export interface NavGroup {
   heading: string;
@@ -61,21 +64,22 @@ export const internalNav: NavGroup[] = [
     ],
   },
   {
-    heading: "Operations",
+    heading: "Setup",
     items: [
+      { label: "Workspaces", path: "/admin/workspaces", icon: Building2, platformOnly: true },
+      { label: "Workshops & Branches", path: "/org/workshops", icon: Wrench },
       { label: "Vendors", path: "/vendors", icon: Store },
-      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
-      { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true },
-      { label: "Delivery & Return Notes", path: "/notes", icon: ScrollText, soon: true },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
     ],
   },
   {
-    heading: "Admin",
+    heading: "Operations",
     items: [
-      { label: "Users & Permissions", path: "/admin/users", icon: Users, soon: true },
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
+      { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true },
+      { label: "Delivery & Return Notes", path: "/notes", icon: ScrollText, soon: true },
       { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
       { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
-      { label: "My Profile", path: "/profile", icon: UserCircle, soon: true },
     ],
   },
 ];

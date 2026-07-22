@@ -10,7 +10,11 @@ export default function AppShell() {
   const { me, workspaces, activeSlug, switchWorkspace, logout } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
-  const items = internalNav.flatMap((g, i) => g.items.map((it) => ({ ...it, groupStart: i > 0 && g.items[0] === it })));
+  const items = internalNav.flatMap((g, i) =>
+    g.items
+      .filter((it) => !it.platformOnly || me?.isInternal)
+      .map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })),
+  );
 
   return (
     <div className="grid h-full grid-cols-[248px_1fr] bg-white">
