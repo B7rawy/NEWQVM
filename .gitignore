@@ -1,0 +1,34 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# builds
+dist/
+build/
+.next/
+*.tsbuildinfo
+
+# env — never commit secrets
+.env
+.env.*
+!.env.example
+
+# db / infra local state
+infra/data/
+*.dump
+*.sql.gz
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / os
+.DS_Store
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# test / coverage
+coverage/
