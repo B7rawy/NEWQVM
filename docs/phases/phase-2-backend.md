@@ -59,5 +59,22 @@ this workspace").
 **مُتحقَّق HTTP (السلسلة الكاملة):** RFQ ببندين → إرسال → تسعير المورّد → مقارنة → اختيار الفائز
 → تأكيد (CEN-1 نفس الرقم، بندين) → قائمة الطلبات (Confirmed) → تأكيد مكرر مرفوض → 1:1 مؤكَّد.
 
+### Phase 2-review — تصليب بعد المراجعة النقدية ✅ (هذا الكومِت)
+مراجعة نقدية مستقلة أكّدت نواة العزل سليمة (صفر ثغرة حرجة). عولجت كل الملاحظات:
+- **#1 تصادم أسماء الأدوار (High):** الـ endpoints الداخلية كانت تُبوَّب على نص دور يتصادم مع
+  membership_role. أُضيف `@PlatformOnly()` → تتطلب `ctx.isInternal` (platform staff فقط)، فمستحيل
+  يمرّ مستخدم ورشة (يحمي أسعار الموردين السرّية getQuotes/select-winner). طُبِّق على send/quotes/select-winner.
+- **#2 التوكن الخام (High):** كان يُكتب في notification_log.payload ويُرجَع بالـ HTTP. الآن: السجل
+  يحمل metadata غير سرّية فقط؛ الرابط بالتوكن يُمرَّر للـ provider عبر وسيط `secret` لا يُخزَّن؛ التوكن
+  يُرجَع في الـ response فقط في non-prod.
+- **#3 المستخدم المعطَّل (High):** الحارس يتحقق الآن من `users.is_active` (كان يتخطّاه حتى انتهاء الـ JWT).
+- **#4/#5 أقفال بعد التأكيد (Medium):** select-winner و submit-quote يُرفضان بعد تأكيد الطلب.
+- **#6 + فهرس (Medium/NTH):** `orders.rfq_id` unique (طلب واحد لكل RFQ) + unique index على
+  `rfq_vendors.token_hash` (بحث البوابة السريع + منع تكرار التوكن). + money zod `.finite().max()`.
+- ميجريشن 0007.
+
+**مُتحقَّق HTTP (11/11):** السلسلة الكاملة لسه شغّالة (regression) · advisor على send/quotes = 403 ·
+**لا توكن في notification_log** · select-winner و re-quote بعد التأكيد مرفوضان · القيود الفريدة موجودة.
+
 ## التالي (Phase 2f+)
 الشراء (purchase_orders/items) → التسليم → الفوترة → المرتجعات. ثم موديولات الرودماب (master data, pricing engine, auto-assignment…).

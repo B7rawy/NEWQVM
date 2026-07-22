@@ -50,6 +50,13 @@
       "when": 1784693651363,
       "tag": "0006_notification_log_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784694851682,
+      "tag": "0007_review_hardening",
+      "breakpoints": true
     }
   ]
 }

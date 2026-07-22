@@ -11,16 +11,13 @@ import {
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
-import { Roles } from "../../common/roles.decorator.js";
+import { PlatformOnly, Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import { z } from "zod";
 import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
 import { sendRfqSchema, VendorRfqService } from "./vendor-rfq.service.js";
 
 const selectWinnerSchema = z.object({ quoteItemId: z.string().uuid() });
-
-// platform-tier roles only (company/vendor users don't have these → blocked; platform bypasses)
-const INTERNAL = ["purchasing", "account_manager", "super_admin", "staff"];
 
 /**
  * RFQ domain — the entry point of the order chain. All tenant-scoped by RLS.
@@ -55,7 +52,7 @@ export class RfqController {
 
   /** Send the RFQ to vendors — internal (purchasing) action; each send is a guarded notification. */
   @Post(":id/send")
-  @Roles(...INTERNAL)
+  @PlatformOnly()
   send(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
@@ -68,7 +65,7 @@ export class RfqController {
 
   /** Vendor-quote comparison view (purchasing). */
   @Get(":id/quotes")
-  @Roles(...INTERNAL)
+  @PlatformOnly()
   quotes(@Req() req: Request, @Param("id") id: string) {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
@@ -80,7 +77,7 @@ export class RfqController {
 
   /** Pick the winning quote for an item (old cost_id) — purchasing. */
   @Post(":id/items/:itemId/winning-quote")
-  @Roles(...INTERNAL)
+  @PlatformOnly()
   selectWinner(
     @Req() req: Request,
     @Param("id") id: string,

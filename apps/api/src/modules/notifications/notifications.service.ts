@@ -25,7 +25,16 @@ export interface NotifyInput {
 export class NotificationsService {
   private readonly logger = new Logger("Notifications");
 
-  async send(tx: Tx, input: NotifyInput): Promise<{ status: "sent" | "suppressed" }> {
+  /**
+   * @param input   logged metadata (payload MUST NOT contain secrets — it is persisted).
+   * @param secret  transient dispatch-only data (e.g. a tokenized link). Passed to the provider,
+   *                NEVER written to notification_log.
+   */
+  async send(
+    tx: Tx,
+    input: NotifyInput,
+    secret?: Record<string, unknown>,
+  ): Promise<{ status: "sent" | "suppressed" }> {
     const providerLive =
       !input.isSandbox &&
       process.env.NODE_ENV === "production" &&
@@ -38,12 +47,13 @@ export class NotificationsService {
       channel: input.channel,
       recipient: input.recipient,
       template: input.template,
-      payload: input.payload ?? {},
+      payload: input.payload ?? {}, // non-secret only
       status,
     });
 
     if (status === "sent") {
-      // real provider dispatch goes here (SMTP/WhatsApp/webhook). Console for now.
+      // real provider dispatch goes here (SMTP/WhatsApp/webhook), using `secret` for the link.
+      void secret;
       this.logger.log(`SEND ${input.channel} → ${input.recipient} [${input.template}]`);
     } else {
       this.logger.log(

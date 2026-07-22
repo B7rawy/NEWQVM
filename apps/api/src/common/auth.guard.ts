@@ -46,6 +46,13 @@ export class AuthGuard implements CanActivate {
     const info = await this.dbService.withContext(
       { tenantId: null, userId, isInternal: true },
       async (tx) => {
+        // reject a deactivated user even if their token is still within TTL (review #3)
+        const user = (await tx.execute(sql`
+          select is_active from users where id = ${userId}::uuid limit 1`))[0] as
+          | { is_active?: boolean }
+          | undefined;
+        if (!user?.is_active) return { inactive: true } as const;
+
         const platform = (await tx.execute(sql`
           select role from platform_members where user_id = ${userId}::uuid and is_active = true limit 1`))[0] as
           | { role?: string }
@@ -61,23 +68,25 @@ export class AuthGuard implements CanActivate {
             where t.slug = ${tenantSlug} and t.is_active = true
             limit 1`))[0] as { tenant_id?: string; role?: string } | undefined;
         }
-        return { platformRole: platform?.role ?? null, tenant };
+        return { inactive: false as const, platformRole: platform?.role ?? null, tenant };
       },
     );
 
-    const isInternal = info.platformRole != null;
+    if ("inactive" in info && info.inactive) throw new UnauthorizedException("user is deactivated");
+    const active = info as { platformRole: string | null; tenant?: { tenant_id?: string; role?: string } };
+    const isInternal = active.platformRole != null;
     const ctx: RequestContext = {
       userId,
       tenantSlug,
-      tenantId: info.tenant?.tenant_id ?? null,
-      role: info.tenant?.role ?? info.platformRole,
+      tenantId: active.tenant?.tenant_id ?? null,
+      role: active.tenant?.role ?? active.platformRole,
       isInternal,
     };
 
     // If a workspace was requested, require access to it (member or platform staff).
     if (tenantSlug) {
-      if (!info.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
-      if (!isInternal && !info.tenant.role) {
+      if (!active.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
+      if (!isInternal && !active.tenant.role) {
         throw new ForbiddenException("no access to this workspace");
       }
     }

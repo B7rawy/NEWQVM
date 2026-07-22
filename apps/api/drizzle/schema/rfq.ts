@@ -124,6 +124,7 @@ export const rfqVendors = pgTable(
     ...audit,
   },
   (t) => [
+    uniqueIndex("rfq_vendors_token_hash_uq").on(t.tokenHash), // hot public lookup + no dup tokens
     index("rfq_vendors_tenant_idx").on(t.tenantId),
     index("rfq_vendors_rfq_idx").on(t.rfqId),
     index("rfq_vendors_vendor_idx").on(t.vendorId),

@@ -15,7 +15,7 @@ export const submitQuoteSchema = z.object({
     .array(
       z.object({
         rfqItemId: z.string().uuid(),
-        offeredCost: z.number().nonnegative(),
+        offeredCost: z.number().finite().nonnegative().max(100_000_000),
         slaHours: z.number().int().positive().optional(),
         availableQty: z.number().int().nonnegative().optional(),
         alternativePartNumber: z.string().max(64).optional(),
@@ -57,7 +57,7 @@ export class VendorRfqService {
         )) as Array<{ id: string }>
       )[0].id;
 
-      const results: Array<{ vendorId: string; token: string; notify: string }> = [];
+      const results: Array<{ vendorId: string; notify: string; token?: string }> = [];
       for (const vendorId of dto.vendorIds) {
         // vendor must be linked to THIS workspace
         const link = (
@@ -82,16 +82,29 @@ export class VendorRfqService {
           sentAt: new Date(),
         });
 
-        const notify = await this.notifications.send(tx, {
-          tenantId: ctx.tenantId!,
-          isSandbox,
-          channel: "email",
-          recipient: link.primary_email ?? undefined,
-          template: "vendor_rfq_invite",
-          payload: { rfqId, quoteUrl: `/quote-access/${rawToken}` },
-        });
+        // The real quote link (with the raw token) is handed to the provider for dispatch but is
+        // NEVER persisted — notification_log stores only non-secret metadata (review #2).
+        const notify = await this.notifications.send(
+          tx,
+          {
+            tenantId: ctx.tenantId!,
+            isSandbox,
+            channel: "email",
+            recipient: link.primary_email ?? undefined,
+            template: "vendor_rfq_invite",
+            payload: { rfqId, vendorId },
+          },
+          { quoteUrl: `/quote-access/${rawToken}` },
+        );
 
-        results.push({ vendorId, token: rawToken, notify: notify.status });
+        // Raw token is returned only in non-prod (test/dev convenience); in prod it lives only in
+        // the outbound email, never in an API response or a log.
+        const exposeToken = process.env.NODE_ENV !== "production";
+        results.push({
+          vendorId,
+          notify: notify.status,
+          ...(exposeToken ? { token: rawToken } : {}),
+        });
       }
       return { rfqId, sent: results.length, isSandbox, results };
     });
@@ -126,6 +139,14 @@ export class VendorRfqService {
     return this.dbService.withContext(
       { tenantId: rv.tenant_id, userId: null, isInternal: false },
       async (tx) => {
+        // reject quoting on an RFQ that's already confirmed/closed (review #5)
+        const confirmed = (
+          (await tx.execute(
+            sql`select id from orders where rfq_id = ${rv.rfq_id}::uuid limit 1`,
+          )) as Array<{ id: string }>
+        )[0];
+        if (confirmed) throw new BadRequestException("this RFQ is already confirmed");
+
         const pricedStatusId = (
           (await tx.execute(
             sql`select id from vendor_statuses where code = 'priced' limit 1`,
@@ -187,6 +208,14 @@ export class VendorRfqService {
   /** Pick the winning quote for an item (old cost_id). Validates the quote belongs to this RFQ+item. */
   async selectWinner(ctx: RlsContext, rfqId: string, itemId: string, quoteItemId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // can't change winners after the RFQ is confirmed (order_items already snapshotted — review #4)
+      const confirmed = (
+        (await tx.execute(
+          sql`select id from orders where rfq_id = ${rfqId}::uuid limit 1`,
+        )) as Array<{ id: string }>
+      )[0];
+      if (confirmed) throw new BadRequestException("RFQ already confirmed — winners are locked");
+
       const ok = (
         (await tx.execute(sql`
           select vi.id from rfq_vendor_items vi

@@ -2,25 +2,32 @@ import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from "@
 import { Reflector } from "@nestjs/core";
 import type { Request } from "express";
 import { getContext } from "./request-context.js";
-import { ROLES_KEY } from "./roles.decorator.js";
+import { PLATFORM_ONLY_KEY, ROLES_KEY } from "./roles.decorator.js";
 
 /**
- * Role gate. Runs AFTER AuthGuard (which populates req.ctx). Platform staff pass everything;
- * company/vendor users pass only if their resolved workspace role is allowed. No @Roles = open
- * to any authenticated user (still tenant-scoped by RLS).
+ * Role gate. Runs AFTER AuthGuard (which populates req.ctx).
+ *  - @PlatformOnly(): requires ctx.isInternal (Qparts platform staff). A membership role can never
+ *    satisfy it — fixes the role-namespace collision (review #1 / ADR-0010).
+ *  - @Roles(...company roles): platform staff pass; company/vendor pass only if their workspace
+ *    role is listed.
+ *  - neither: open to any authenticated user (still tenant-scoped by RLS).
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const allowed = this.reflector.getAllAndOverride<string[] | undefined>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-    if (!allowed || allowed.length === 0) return true;
-
+    const targets = [context.getHandler(), context.getClass()];
     const ctx = getContext(context.switchToHttp().getRequest<Request>());
+
+    const platformOnly = this.reflector.getAllAndOverride<boolean>(PLATFORM_ONLY_KEY, targets);
+    if (platformOnly) {
+      if (ctx.isInternal) return true;
+      throw new ForbiddenException("this action is restricted to platform staff");
+    }
+
+    const allowed = this.reflector.getAllAndOverride<string[] | undefined>(ROLES_KEY, targets);
+    if (!allowed || allowed.length === 0) return true;
     if (ctx.isInternal) return true;
     if (ctx.role && allowed.includes(ctx.role)) return true;
     throw new ForbiddenException("insufficient role for this action");
