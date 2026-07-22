@@ -25,10 +25,11 @@ export default function Login() {
   return (
     <div className="grid h-full place-items-center bg-surface">
       <form onSubmit={submit} className="w-[360px] rounded-xl2 border border-line bg-white p-7 shadow-card">
-        <div className="text-[22px] font-bold tracking-tight text-navy">
-          QVM<span className="text-accent"> Platform</span>
+        <div className="flex items-center gap-2">
+          <img src="/qvm-logo.png" alt="QParts" className="h-8 w-auto" />
+          <span className="text-[22px] font-bold uppercase tracking-tight text-navy">Parts</span>
         </div>
-        <p className="mb-4 mt-0.5 text-[13px] text-muted">Sign in to your workspace</p>
+        <p className="mb-4 mt-1.5 text-[13px] text-muted">Sign in to your workspace</p>
         <Field label="Email">
           <input className="input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" />
         </Field>

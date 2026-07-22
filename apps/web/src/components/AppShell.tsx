@@ -15,8 +15,13 @@ export default function AppShell() {
   return (
     <div className="grid h-full grid-cols-[248px_1fr] bg-white">
       <aside className="flex flex-col border-r border-line bg-[#fbfcfd]">
+        {/* brand */}
+        <div className="flex items-center gap-2 px-3.5 pb-1 pt-4">
+          <img src="/qvm-logo.png" alt="QParts" className="h-6 w-auto" />
+          <span className="text-[17px] font-bold uppercase tracking-tight text-navy">Parts</span>
+        </div>
         {/* workspace switcher */}
-        <div className="relative px-2.5 pb-1.5 pt-3">
+        <div className="relative px-2.5 pb-1.5 pt-2">
           <button
             onClick={() => setWsOpen((v) => !v)}
             className="flex w-full items-center gap-2.5 rounded-md border border-line bg-white px-2.5 py-2 text-left shadow-cardsm"
@@ -84,9 +89,6 @@ export default function AppShell() {
 
       <div className="flex min-w-0 flex-col">
         <header className="flex items-center gap-3 border-b border-line px-6 py-3">
-          <span className="text-[15px] font-bold tracking-tight text-navy">
-            QVM<span className="text-accent">·</span>
-          </span>
           <div className="ml-auto flex items-center gap-3">
             <span className="text-[12px] text-muted">
               {me?.user?.full_name}
