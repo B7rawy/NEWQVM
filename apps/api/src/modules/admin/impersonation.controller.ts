@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
@@ -13,8 +13,9 @@ export class ImpersonationController {
   @Post()
   start(@Req() req: Request, @Body() body: unknown) {
     const ctx = getContext(req);
-    // the REAL actor is the impersonator if already impersonating, else the current user — but you
-    // can only start an impersonation as your true self, so use the effective actor here.
+    // No chaining: you must return to your real identity before viewing as someone else. This keeps
+    // the actor unambiguous and prevents an impersonated (lower-privilege) identity from re-scoping.
+    if (ctx.impersonatorId) throw new ForbiddenException("stop the current 'view as' before starting another");
     const { userId } = impersonateSchema.parse(body);
     return this.svc.start(ctx.userId!, ctx.isInternal, userId);
   }

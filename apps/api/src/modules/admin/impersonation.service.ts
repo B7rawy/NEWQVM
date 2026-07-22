@@ -58,8 +58,11 @@ export class ImpersonationService {
           )[0];
       if (!allowed) throw new ForbiddenException("not allowed to view as this user");
 
-      // Impersonation spans workspaces (audit_log is tenant-scoped); record at platform level.
-      // TODO: dedicated platform_audit table. For now a structured log line is the trail.
+      // Platform-level audit trail (spans workspaces).
+      await tx.execute(sql`
+        insert into platform_audit (actor_user_id, action, entity_type, entity_id, metadata)
+        values (${actorId}::uuid, 'impersonate.start', 'user', ${targetUserId}::uuid,
+                ${JSON.stringify({ target: target.full_name })}::jsonb)`);
       this.logger.warn(`impersonate.start actor=${actorId} target=${targetUserId} (${target.full_name})`);
 
       const token = await this.jwt.signAsync({ sub: target.id, imp: actorId });
