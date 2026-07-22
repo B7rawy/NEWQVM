@@ -37,11 +37,11 @@ async function main() {
   // ---- reference vocabulary (statuses preserved exactly as old system) ----
   for (const s of ITEM_STATUSES) {
     await sql`insert into item_statuses (code,label_en,label_ar,sort_order,legacy_id)
-      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0]})`;
+      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0] ?? null})`;
   }
   for (const s of VENDOR_STATUSES) {
     await sql`insert into vendor_statuses (code,label_en,label_ar,sort_order,legacy_id)
-      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0]})`;
+      values (${s.code},${s.labelEn},${s.labelAr},${s.sortOrder},${s.legacyIds[0] ?? null})`;
   }
   const brandClasses = [
     ["genuine", "Genuine", "أصلي"],

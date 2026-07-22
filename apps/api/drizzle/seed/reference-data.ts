@@ -46,6 +46,9 @@ export const ITEM_STATUSES: RefRow[] = [
   { code: "pending_credit_note", labelEn: "Pending Credit Note", labelAr: "بانتظار إشعار الخصم", sortOrder: 160, legacyIds: [215] },
   { code: "credit_note_issued", labelEn: "Credit Note Issued", labelAr: "تم إصدار إشعار الخصم", sortOrder: 170, legacyIds: [30] },
   { code: "settled", labelEn: "Settled", labelAr: "تمت التسوية", sortOrder: 180, legacyIds: [31] },
+  // insurance flow (QNEW-45) — new statuses between Priced and Confirmed
+  { code: "sent_insurance_approval", labelEn: "Sent for Insurance Approval", labelAr: "أُرسل لموافقة التأمين", sortOrder: 56, legacyIds: [] },
+  { code: "insurance_approved", labelEn: "Approved by Insurance", labelAr: "موافقة التأمين", sortOrder: 58, legacyIds: [] },
 ];
 
 /** vendor_status — old list 15 (Arabic vocabulary, preserved). */
