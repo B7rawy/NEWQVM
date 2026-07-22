@@ -28,7 +28,7 @@ body {
     @apply bg-surface;
   }
   .btn-primary {
-    @apply bg-accent px-3.5 py-2 text-[13px] font-medium text-white;
+    @apply inline-flex items-center justify-center gap-2 bg-accent px-3.5 py-2 text-[13px] font-medium text-white;
     box-shadow: 0 1px 1px rgba(0, 0, 0, 0.06), 0 2px 5px rgba(50, 50, 93, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.14);
   }
   .btn-primary:hover {
