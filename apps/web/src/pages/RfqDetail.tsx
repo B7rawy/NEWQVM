@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Send } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Card, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
@@ -34,12 +34,21 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+interface VendorOpt {
+  id: string;
+  legal_name: string;
+}
+
 export default function RfqDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { activeSlug, environment } = useAuth();
+  const { activeSlug, environment, me } = useAuth();
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState("");
+  const [vendorList, setVendorList] = useState<VendorOpt[]>([]);
+  const [picking, setPicking] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sending, setSending] = useState(false);
 
   const load = useCallback(async () => {
     setD(await api.get<Detail>(`/rfqs/${id}`));
@@ -47,8 +56,32 @@ export default function RfqDetail() {
   useEffect(() => {
     setD(null);
     setErr("");
+    setPicking(false);
+    setSelected(new Set());
     load().catch((e) => setErr((e as Error).message));
   }, [id, activeSlug, environment, load]);
+
+  async function openPicker() {
+    setPicking(true);
+    if (!vendorList.length) {
+      const r = await api.get<{ vendors: VendorOpt[] }>("/vendors").catch(() => ({ vendors: [] }));
+      setVendorList(r.vendors);
+    }
+  }
+  async function send() {
+    setSending(true);
+    setErr("");
+    try {
+      await api.post(`/rfqs/${id}/send`, { vendorIds: [...selected] });
+      setPicking(false);
+      setSelected(new Set());
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
 
   if (err) return <EmptyState title="Couldn't load RFQ" hint={err} />;
   if (!d) return <Spinner />;
@@ -98,9 +131,49 @@ export default function RfqDetail() {
           </Card>
 
           <Card pad={false}>
-            <div className="border-b border-line-2 px-5 py-3 text-[14px] font-semibold text-ink">Vendors invited</div>
+            <div className="flex items-center border-b border-line-2 px-5 py-3">
+              <span className="text-[14px] font-semibold text-ink">Vendors invited</span>
+              {me?.persona === "platform" && !picking && (
+                <button className="btn-primary btn-sm ml-auto rounded-md" onClick={openPicker}>
+                  <Send className="h-3.5 w-3.5" /> Send to vendors
+                </button>
+              )}
+            </div>
+            {picking && (
+              <div className="border-b border-line-2 bg-surface px-5 py-4">
+                <div className="mb-2 text-[13px] font-medium text-ink">Select vendors to invite</div>
+                {vendorList.length === 0 ? (
+                  <div className="text-[13px] text-muted">No vendors linked to this workspace. Add vendors first.</div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {vendorList.map((v) => (
+                      <label key={v.id} className="flex items-center gap-2 text-[13px] text-ink">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(v.id)}
+                          onChange={(e) => {
+                            const next = new Set(selected);
+                            e.target.checked ? next.add(v.id) : next.delete(v.id);
+                            setSelected(next);
+                          }}
+                        />
+                        {v.legal_name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-3 flex gap-2">
+                  <button className="btn-primary btn-sm rounded-md" disabled={sending || selected.size === 0} onClick={send}>
+                    {sending ? "Sending…" : `Send to ${selected.size || ""}`}
+                  </button>
+                  <button className="btn btn-sm rounded-md" onClick={() => setPicking(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
             {vendors.length === 0 ? (
-              <EmptyState title="Not sent to vendors yet" hint="Purchasing sends this RFQ out to selected vendors to collect quotes." />
+              !picking && <EmptyState title="Not sent to vendors yet" hint="Purchasing sends this RFQ out to selected vendors to collect quotes." />
             ) : (
               <table className="w-full">
                 <thead>
