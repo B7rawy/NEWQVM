@@ -1,12 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { PricingService } from "../pricing/pricing.service.js";
 
 const VAT_RATE = 0.15; // KSA VAT
 
 @Injectable()
 export class InvoiceService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly pricing: PricingService,
+  ) {}
 
   /**
    * Issue the client invoice for an order. One invoice per order (idempotent). Line unit price =
@@ -29,18 +33,47 @@ export class InvoiceService {
       )[0];
       if (existing) throw new BadRequestException("invoice already issued for this order");
 
-      const lines = (await tx.execute(sql`
+      // pull cost + classification per line so the pricing engine can derive the selling price
+      const raw = (await tx.execute(sql`
         select oi.id as order_item_id, coalesce(oi.approved_qty,1) as qty,
-               coalesce(ri.selling_price, vi.offered_cost, 0) as unit_price
+               ri.selling_price, ri.part_number, ri.part_category_id, ri.brand_class_id,
+               r.payer_type, r.insurance_company_id,
+               coalesce(vi.offered_cost, 0) as cost
         from order_items oi
         join rfq_items ri on ri.id = oi.rfq_item_id
+        join orders o on o.id = oi.order_id
+        join rfqs r on r.id = o.rfq_id
         left join rfq_vendor_items vi on vi.id = oi.winning_vendor_quote_item_id
         where oi.order_id = ${orderId}::uuid`)) as Array<{
         order_item_id: string;
         qty: number;
-        unit_price: string;
+        selling_price: string | null;
+        part_number: string | null;
+        part_category_id: string | null;
+        brand_class_id: string | null;
+        payer_type: "cash_client" | "credit_client" | "insurance";
+        insurance_company_id: string | null;
+        cost: string;
       }>;
-      if (lines.length === 0) throw new BadRequestException("order has no items to invoice");
+      if (raw.length === 0) throw new BadRequestException("order has no items to invoice");
+
+      // unit price: explicit selling_price if set, else compute via the pricing engine (QNEW-41)
+      const lines: Array<{ order_item_id: string; qty: number; unit_price: string }> = [];
+      for (const l of raw) {
+        let unit = l.selling_price ? Number(l.selling_price) : null;
+        if (unit == null) {
+          const computed = await this.pricing.computeIn(tx, ctx.tenantId!, {
+            cost: Number(l.cost),
+            partNumber: l.part_number,
+            partCategoryId: l.part_category_id,
+            brandClassId: l.brand_class_id,
+            payerScenario: l.payer_type,
+            insuranceCompanyId: l.insurance_company_id,
+          });
+          unit = computed.sellingPrice;
+        }
+        lines.push({ order_item_id: l.order_item_id, qty: Number(l.qty), unit_price: unit.toFixed(2) });
+      }
 
       const before = lines.reduce((s, l) => s + Number(l.unit_price) * Number(l.qty), 0);
       const vat = before * VAT_RATE;

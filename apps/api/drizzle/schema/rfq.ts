@@ -9,11 +9,12 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { audit, money, pct, pk } from "./_shared";
-import { deliveryType, extractionStatus, orderType } from "./enums";
+import { deliveryType, extractionStatus, orderType, payerType } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { workshopBranches } from "./org";
 import { vendors, vendorBranches } from "./vendors";
+import { insuranceCompanies } from "./insurance";
 import { brandClasses, carBrands, itemStatuses, partCategories, vendorStatuses } from "./reference";
 
 /**
@@ -43,6 +44,9 @@ export const rfqs = pgTable(
     serviceAdvisorId: uuid("service_advisor_id").references(() => users.id),
     accountManagerId: uuid("account_manager_id").references(() => users.id),
     statusId: uuid("status_id").references(() => itemStatuses.id),
+    // payer flow (QNEW-43) — internal-only; distinct from order_type
+    payerType: payerType("payer_type").notNull().default("cash_client"),
+    insuranceCompanyId: uuid("insurance_company_id").references(() => insuranceCompanies.id),
     shippingPrice: money("shipping_price"),
     shippingType: text("shipping_type"),
     ...audit,
@@ -55,6 +59,7 @@ export const rfqs = pgTable(
     index("rfqs_service_advisor_idx").on(t.serviceAdvisorId),
     index("rfqs_account_manager_idx").on(t.accountManagerId),
     index("rfqs_car_brand_idx").on(t.carBrandId),
+    index("rfqs_insurance_company_idx").on(t.insuranceCompanyId),
   ],
 );
 

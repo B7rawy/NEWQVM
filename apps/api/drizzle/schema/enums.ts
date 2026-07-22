@@ -48,6 +48,15 @@ export const partSource = pgEnum("part_source", [
   "dictionary_migration",
 ]);
 
+/** Who ultimately pays (QNEW-43) — distinct from order_type. */
+export const payerType = pgEnum("payer_type", ["cash_client", "credit_client", "insurance"]);
+
+/** How a selling price is derived (QNEW-39). */
+export const priceBasis = pgEnum("price_basis", ["agency_price", "vendor_price", "calculated_margin"]);
+
+/** Price adjustment direction (QNEW-39/51). */
+export const adjustmentType = pgEnum("adjustment_type", ["discount", "markup"]);
+
 /** RFQ / order commercial type. */
 export const orderType = pgEnum("order_type", ["regular", "bulk"]);
 

@@ -29,7 +29,9 @@ async function main() {
       tenants, plans, users, order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
       regions, cities, cancellation_reasons, return_reasons, payment_accounts,
-      cost_ranges, parts_master, part_synonyms, part_category_mapping
+      cost_ranges, parts_master, part_synonyms, part_category_mapping,
+      profit_categories, profit_margins, pricing_basis_settings, agency_price_reference,
+      insurance_companies
     restart identity cascade`;
 
   // ---- reference vocabulary (statuses preserved exactly as old system) ----
@@ -148,6 +150,16 @@ async function main() {
     values (${t1.id},${num.n},${branch.id},'ABC-1234',${newStatus.id}) returning id`;
   await sql`insert into rfq_items (tenant_id,rfq_id,part_number,part_description,quantity)
     values (${t1.id},${rfq.id},'12345-67890','Brake Pad Set',2)`;
+
+  // ---- pricing engine (QNEW-30): a margin matrix + a basis setting for t1 ----
+  const [pcat] = await sql`insert into profit_categories (tenant_id,name,part_category_id,brand_class_id)
+    select ${t1.id},'brake-genuine',(select id from part_categories where code='brake'),
+           (select id from brand_classes where code='genuine') returning id`;
+  const [cr] = await sql`select id from cost_ranges where code='r0_500'`;
+  await sql`insert into profit_margins (tenant_id,profit_category_id,cost_range_id,margin_pct)
+    values (${t1.id},${pcat.id},${cr.id},25)`;
+  await sql`insert into pricing_basis_settings (tenant_id,payer_scenario,price_basis,adjustment_type,adjustment_pct)
+    values (${t1.id},'cash_client','calculated_margin','markup',0)`;
 
   // ---- report ----
   const counts = await sql`select
