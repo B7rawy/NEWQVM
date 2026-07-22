@@ -60,6 +60,11 @@ export const adjustmentType = pgEnum("adjustment_type", ["discount", "markup"]);
 /** Vendor-assignment automation (QNEW-35): suggest in the modal vs auto-send. */
 export const automationMode = pgEnum("automation_mode", ["suggest", "auto"]);
 
+/** Approval engine (QNEW-53). */
+export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected"]);
+export const approvalActionType = pgEnum("approval_action_type", ["approve", "reject", "reassign"]);
+export const approvalLevelMode = pgEnum("approval_level_mode", ["sequential", "parallel"]);
+
 /** RFQ / order commercial type. */
 export const orderType = pgEnum("order_type", ["regular", "bulk"]);
 

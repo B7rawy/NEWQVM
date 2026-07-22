@@ -24,3 +24,4 @@ export * from "./insurance"; // QNEW-31 Insurance/Payer
 export * from "./pricing_engine"; // QNEW-30 Unified Pricing Engine
 export * from "./vendor_assignment"; // QNEW-29 Auto Vendor Assignment
 export * from "./infra"; // QNEW-47 audit_log + business_calendar
+export * from "./approvals"; // QNEW-53 Approval Engine
