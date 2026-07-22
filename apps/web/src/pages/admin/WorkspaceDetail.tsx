@@ -7,9 +7,13 @@ import { Card, Badge, statusTone, Spinner, EmptyState } from "../../components/u
 
 interface WsDetail {
   workspace: { id: string; slug: string; name: string; is_sandbox: boolean; is_active: boolean; created_at: string };
+  environment: "live" | "sandbox";
   users: Array<{ id: string; full_name: string; email: string; role: string; branch: string | null; is_active: boolean }>;
   workshops: Array<{ id: string; name: string; tax_number: string | null; branches: number }>;
   vendors: Array<{ id: string; legal_name: string; vendor_type: string; status: string; classification: string | null; user_id: string | null }>;
+  rfqs: Array<{ id: string; order_number: string; plate_number: string | null; status: string | null; items: number }>;
+  orders: Array<{ id: string; order_number: string; status: string | null; items: number }>;
+  invoices: Array<{ id: string; invoice_number: string | null; total_incl_vat: string | null; status: string | null; order_number: string }>;
 }
 
 const roleLabel: Record<string, string> = {
@@ -17,12 +21,12 @@ const roleLabel: Record<string, string> = {
   branch_manager: "Branch manager",
   service_advisor: "Service advisor",
 };
-type Tab = "overview" | "users" | "vendors" | "workshops";
+type Tab = "overview" | "users" | "vendors" | "workshops" | "rfqs" | "orders" | "invoices";
 
 export default function WorkspaceDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { impersonate } = useAuth();
+  const { impersonate, environment } = useAuth();
   const [d, setD] = useState<WsDetail | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
@@ -30,14 +34,15 @@ export default function WorkspaceDetail() {
   const load = useCallback(async () => {
     setD(await api.get<WsDetail>(`/admin/workspaces/${id}/detail`));
   }, [id]);
+  // re-fetch when the workspace OR the Live/Sandbox environment changes (operational data switches)
   useEffect(() => {
     setD(null);
     load().catch((e) => setErr((e as Error).message));
-  }, [id, load]);
+  }, [id, environment, load]);
 
   if (err) return <EmptyState title="Couldn't load workspace" hint={err} />;
   if (!d) return <Spinner />;
-  const { workspace: w, users, workshops, vendors } = d;
+  const { workspace: w, users, workshops, vendors, rfqs, orders, invoices } = d;
   const admins = users.filter((u) => u.role === "company_admin");
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -45,6 +50,9 @@ export default function WorkspaceDetail() {
     { key: "users", label: "Users", count: users.length },
     { key: "vendors", label: "Vendors", count: vendors.length },
     { key: "workshops", label: "Workshops", count: workshops.length },
+    { key: "rfqs", label: "RFQs", count: rfqs.length },
+    { key: "orders", label: "Orders", count: orders.length },
+    { key: "invoices", label: "Invoices", count: invoices.length },
   ];
 
   return (
@@ -170,6 +178,79 @@ export default function WorkspaceDetail() {
                     <td className="td font-medium text-ink">{wk.name}</td>
                     <td className="td text-muted tnum">{wk.tax_number ?? "—"}</td>
                     <td className="td tnum">{wk.branches}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+
+      {(tab === "rfqs" || tab === "orders" || tab === "invoices") && (
+        <div className="mb-3 flex items-center gap-2 text-[12.5px] text-muted">
+          Showing
+          <Badge tone={d.environment === "sandbox" ? "amber" : "green"}>{d.environment}</Badge>
+          data — switch Live/Sandbox at the top to change.
+        </div>
+      )}
+
+      {tab === "rfqs" && (
+        <Card pad={false}>
+          {rfqs.length === 0 ? (
+            <EmptyState title={`No RFQs in ${d.environment}`} />
+          ) : (
+            <table className="w-full">
+              <thead><tr><th className="th">Order</th><th className="th">Plate</th><th className="th">Items</th><th className="th">Status</th></tr></thead>
+              <tbody>
+                {rfqs.map((r) => (
+                  <tr key={r.id} className="trow cursor-pointer" onClick={() => nav(`/rfqs/${r.id}`)}>
+                    <td className="td font-semibold text-accent tnum">{r.order_number}</td>
+                    <td className="td tnum">{r.plate_number ?? "—"}</td>
+                    <td className="td tnum">{r.items}</td>
+                    <td className="td"><Badge tone={statusTone(r.status)}>{r.status ?? "—"}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+
+      {tab === "orders" && (
+        <Card pad={false}>
+          {orders.length === 0 ? (
+            <EmptyState title={`No orders in ${d.environment}`} />
+          ) : (
+            <table className="w-full">
+              <thead><tr><th className="th">Order</th><th className="th">Items</th><th className="th">Status</th></tr></thead>
+              <tbody>
+                {orders.map((o) => (
+                  <tr key={o.id} className="trow">
+                    <td className="td font-semibold text-accent tnum">{o.order_number}</td>
+                    <td className="td tnum">{o.items}</td>
+                    <td className="td"><Badge tone={statusTone(o.status)}>{o.status ?? "—"}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
+
+      {tab === "invoices" && (
+        <Card pad={false}>
+          {invoices.length === 0 ? (
+            <EmptyState title={`No invoices in ${d.environment}`} />
+          ) : (
+            <table className="w-full">
+              <thead><tr><th className="th">Invoice</th><th className="th">Order</th><th className="th">Total (SAR)</th><th className="th">Status</th></tr></thead>
+              <tbody>
+                {invoices.map((iv) => (
+                  <tr key={iv.id} className="trow">
+                    <td className="td font-medium text-ink tnum">{iv.invoice_number ?? "—"}</td>
+                    <td className="td tnum text-muted">{iv.order_number}</td>
+                    <td className="td tnum">{iv.total_incl_vat ?? "—"}</td>
+                    <td className="td"><Badge tone={statusTone(iv.status)}>{iv.status ?? "—"}</Badge></td>
                   </tr>
                 ))}
               </tbody>

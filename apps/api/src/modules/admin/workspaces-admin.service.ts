@@ -63,8 +63,12 @@ export class WorkspacesAdminService {
     return row;
   }
 
-  /** Everything about ONE workspace (super-admin drill-in): info, members, workshops, vendors. */
-  async detail(id: string) {
+  /**
+   * Everything about ONE workspace (super-admin drill-in). Config (users/workshops/vendors) is the
+   * same in both environments; the OPERATIONAL sections (rfqs/orders/invoices) are scoped to the
+   * active environment so the Live/Sandbox toggle switches them.
+   */
+  async detail(id: string, environment: "live" | "sandbox" = "live") {
     return this.dbService.withContext(INTERNAL, async (tx) => {
       const workspace = (
         (await tx.execute(sql`
@@ -93,7 +97,30 @@ export class WorkspacesAdminService {
         from tenant_vendors tv join vendors v on v.id = tv.vendor_id
         where tv.tenant_id = ${id}::uuid and tv.status <> 'archived' order by v.legal_name`);
 
-      return { workspace, users, workshops, vendors };
+      // ---- operational sections (environment-scoped) ----
+      const rfqs = await tx.execute(sql`
+        select r.id, r.order_number, r.plate_number, s.label_en as status,
+               (select count(*) from rfq_items i where i.rfq_id = r.id) as items
+        from rfqs r left join item_statuses s on s.id = r.status_id
+        where r.tenant_id = ${id}::uuid and r.environment = ${environment}
+        order by r.created_at desc limit 25`);
+
+      const orders = await tx.execute(sql`
+        select o.id, o.order_number, s.label_en as status,
+               (select count(*) from order_items oi where oi.order_id = o.id) as items
+        from orders o left join item_statuses s on s.id = o.status_id
+        where o.tenant_id = ${id}::uuid and o.environment = ${environment}
+        order by o.created_at desc limit 25`);
+
+      const invoices = await tx.execute(sql`
+        select i.id, i.invoice_number, i.total_incl_vat, i.issued_at, s.label_en as status, o.order_number
+        from invoices i
+        join orders o on o.id = i.order_id and o.environment = ${environment}
+        left join item_statuses s on s.id = i.status_id
+        where i.tenant_id = ${id}::uuid
+        order by i.created_at desc limit 25`);
+
+      return { workspace, environment, users, workshops, vendors, rfqs, orders, invoices };
     });
   }
 

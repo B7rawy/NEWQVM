@@ -37,8 +37,8 @@ export class WorkspacesAdminController {
   }
 
   @Get(":id/detail")
-  detail(@Param("id") id: string) {
-    return this.svc.detail(id);
+  detail(@Req() req: Request, @Param("id") id: string) {
+    return this.svc.detail(id, getContext(req).environment);
   }
 
   @Patch(":id")
