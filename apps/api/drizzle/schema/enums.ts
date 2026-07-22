@@ -57,6 +57,9 @@ export const priceBasis = pgEnum("price_basis", ["agency_price", "vendor_price",
 /** Price adjustment direction (QNEW-39/51). */
 export const adjustmentType = pgEnum("adjustment_type", ["discount", "markup"]);
 
+/** Scope of a vendor pricing policy (QNEW-51) — most-specific wins. */
+export const pricingScopeType = pgEnum("pricing_scope_type", ["global", "region", "client_branch"]);
+
 /** Vendor-assignment automation (QNEW-35): suggest in the modal vs auto-send. */
 export const automationMode = pgEnum("automation_mode", ["suggest", "auto"]);
 

@@ -25,3 +25,4 @@ export * from "./pricing_engine"; // QNEW-30 Unified Pricing Engine
 export * from "./vendor_assignment"; // QNEW-29 Auto Vendor Assignment
 export * from "./infra"; // QNEW-47 audit_log + business_calendar
 export * from "./approvals"; // QNEW-53 Approval Engine
+export * from "./vendor_selfservice"; // QNEW-49/51 Vendor stock + pricing policy

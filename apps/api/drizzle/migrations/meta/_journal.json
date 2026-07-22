@@ -134,6 +134,20 @@
       "when": 1784697043250,
       "tag": "0018_approvals_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784697209372,
+      "tag": "0019_vendor_selfservice",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784697209854,
+      "tag": "0020_vendor_selfservice_rls",
+      "breakpoints": true
     }
   ]
 }
