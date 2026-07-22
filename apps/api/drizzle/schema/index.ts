@@ -23,3 +23,4 @@ export * from "./parts"; // QNEW-28 Master Data Foundation
 export * from "./insurance"; // QNEW-31 Insurance/Payer
 export * from "./pricing_engine"; // QNEW-30 Unified Pricing Engine
 export * from "./vendor_assignment"; // QNEW-29 Auto Vendor Assignment
+export * from "./infra"; // QNEW-47 audit_log + business_calendar
