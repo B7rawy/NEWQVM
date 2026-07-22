@@ -149,6 +149,9 @@ export const tenantWorkshopStatus = pgEnum("tenant_workshop_status", [
   "archived",
 ]);
 
+/** Data environment within a workspace — sandbox data never triggers real side-effects (ADR-0012). */
+export const environmentType = pgEnum("environment_type", ["live", "sandbox"]);
+
 /** Which side a return reason belongs to (old lists 13 internal + 23 client). */
 export const returnReasonSide = pgEnum("return_reason_side", ["client", "internal"]);
 

@@ -3,6 +3,7 @@ const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
 const TOKEN_KEY = "qvm_token";
 const WS_KEY = "qvm_ws";
+const ENV_KEY = "qvm_env";
 
 export const auth = {
   token: () => localStorage.getItem(TOKEN_KEY),
@@ -10,6 +11,8 @@ export const auth = {
   workspace: () => localStorage.getItem(WS_KEY),
   setWorkspace: (slug: string | null) =>
     slug ? localStorage.setItem(WS_KEY, slug) : localStorage.removeItem(WS_KEY),
+  environment: (): "live" | "sandbox" => (localStorage.getItem(ENV_KEY) === "sandbox" ? "sandbox" : "live"),
+  setEnvironment: (e: "live" | "sandbox") => localStorage.setItem(ENV_KEY, e),
 };
 
 export class ApiError extends Error {
@@ -24,6 +27,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (token) headers.authorization = `Bearer ${token}`;
   const ws = auth.workspace();
   if (ws) headers["x-tenant"] = ws;
+  headers["x-environment"] = auth.environment();
 
   const res = await fetch(`${BASE}/api${path}`, {
     method,

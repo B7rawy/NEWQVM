@@ -8,6 +8,13 @@ export interface RequestContext {
   tenantId: string | null;
   role: string | null;
   isInternal: boolean;
+  /** Active data environment within the workspace (X-Environment header; default 'live'). */
+  environment: "live" | "sandbox";
+}
+
+/** Read the requested data environment from the X-Environment header (default 'live'). */
+export function resolveEnvironment(req: Request): "live" | "sandbox" {
+  return (req.header("x-environment") ?? "").trim().toLowerCase() === "sandbox" ? "sandbox" : "live";
 }
 
 const PLATFORM_ROLES = new Set<string>(Object.values(PlatformRole));
@@ -35,5 +42,6 @@ export function getContext(req: Request): RequestContext {
     tenantId: null,
     role: null,
     isInternal: false,
+    environment: "live",
   };
 }

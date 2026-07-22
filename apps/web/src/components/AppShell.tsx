@@ -7,7 +7,7 @@ import { navForPersona } from "../nav";
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
  *  settings pinned at the bottom. QVM red is the accent. */
 export default function AppShell() {
-  const { me, workspaces, activeSlug, switchWorkspace, logout } = useAuth();
+  const { me, workspaces, activeSlug, environment, switchWorkspace, setEnvironment, logout } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
   const persona = me?.persona ?? "workspace";
@@ -99,6 +99,29 @@ export default function AppShell() {
 
       <div className="flex min-w-0 flex-col">
         <header className="flex items-center gap-3 border-b border-line px-6 py-3">
+          {/* Live ⇄ Sandbox environment toggle */}
+          <div className="flex items-center overflow-hidden rounded-md border border-line text-[12px] font-semibold">
+            {(["live", "sandbox"] as const).map((e) => (
+              <button
+                key={e}
+                onClick={() => {
+                  if (environment !== e) {
+                    setEnvironment(e);
+                    window.location.reload();
+                  }
+                }}
+                className={
+                  environment === e
+                    ? e === "sandbox"
+                      ? "bg-amber-400 px-3 py-1.5 text-[#5a4300]"
+                      : "bg-accent px-3 py-1.5 text-white"
+                    : "bg-white px-3 py-1.5 text-muted hover:bg-surface"
+                }
+              >
+                {e === "live" ? "Live" : "Sandbox"}
+              </button>
+            ))}
+          </div>
           <div className="ml-auto flex items-center gap-3">
             <span className="text-[12px] text-muted">
               {me?.user?.full_name}

@@ -71,6 +71,7 @@ export class RfqService {
         .insert(schema.rfqs)
         .values({
           tenantId: ctx.tenantId!,
+          environment: ctx.environment ?? "live",
           orderNumber,
           workshopBranchId: dto.workshopBranchId,
           plateNumber: dto.plateNumber,
@@ -107,6 +108,7 @@ export class RfqService {
                (select count(*) from rfq_items i where i.rfq_id = r.id) as items
         from rfqs r
         left join item_statuses s on s.id = r.status_id
+        where r.environment = ${ctx.environment ?? "live"}
         order by r.created_at desc
         limit 50`),
     );

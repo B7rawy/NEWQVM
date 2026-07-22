@@ -15,8 +15,8 @@ export class OrdersService {
     return this.dbService.withContext(ctx, async (tx) => {
       const rfq = (
         (await tx.execute(
-          sql`select id, order_number from rfqs where id = ${rfqId}::uuid limit 1`,
-        )) as Array<{ id: string; order_number: string }>
+          sql`select id, order_number, environment from rfqs where id = ${rfqId}::uuid limit 1`,
+        )) as Array<{ id: string; order_number: string; environment: "live" | "sandbox" }>
       )[0];
       if (!rfq) throw new NotFoundException("RFQ not found in this workspace");
 
@@ -50,6 +50,7 @@ export class OrdersService {
         .insert(schema.orders)
         .values({
           tenantId: ctx.tenantId!,
+          environment: rfq.environment, // order inherits the RFQ's environment
           rfqId,
           orderNumber: rfq.order_number, // persists from the RFQ
           statusId: confirmedStatusId,
@@ -86,6 +87,7 @@ export class OrdersService {
                (select count(*) from order_items oi where oi.order_id = o.id) as items
         from orders o
         left join item_statuses s on s.id = o.status_id
+        where o.environment = ${ctx.environment ?? "live"}
         order by o.created_at desc limit 50`),
     );
     return { count: rows.length, orders: rows };

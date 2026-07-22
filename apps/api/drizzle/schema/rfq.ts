@@ -9,7 +9,7 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { audit, money, pct, pk } from "./_shared";
-import { deliveryType, extractionStatus, orderType, payerType } from "./enums";
+import { deliveryType, environmentType, extractionStatus, orderType, payerType } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { workshopBranches } from "./org";
@@ -31,6 +31,7 @@ export const rfqs = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderNumber: text("order_number").notNull(),
     workshopBranchId: uuid("workshop_branch_id")
       .notNull() // customer at the header — fixes old §6.2

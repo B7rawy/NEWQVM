@@ -24,9 +24,11 @@ interface AuthState {
   me: Me | null;
   workspaces: Workspace[];
   activeSlug: string | null;
+  environment: "live" | "sandbox";
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   switchWorkspace: (slug: string) => Promise<void>;
+  setEnvironment: (e: "live" | "sandbox") => void;
 }
 
 const Ctx = createContext<AuthState | null>(null);
@@ -41,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [activeSlug, setActiveSlug] = useState<string | null>(auth.workspace());
+  const [environment, setEnvironmentState] = useState<"live" | "sandbox">(auth.environment());
 
   async function loadWorkspaces() {
     const res = await api.get<{ workspaces: Workspace[] }>("/workspaces");
@@ -85,9 +88,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveSlug(slug);
     await loadMe();
   }
+  function setEnvironment(e: "live" | "sandbox") {
+    auth.setEnvironment(e);
+    setEnvironmentState(e);
+  }
 
   return (
-    <Ctx.Provider value={{ authed, me, workspaces, activeSlug, login, logout, switchWorkspace }}>
+    <Ctx.Provider
+      value={{ authed, me, workspaces, activeSlug, environment, login, logout, switchWorkspace, setEnvironment }}
+    >
       {children}
     </Ctx.Provider>
   );

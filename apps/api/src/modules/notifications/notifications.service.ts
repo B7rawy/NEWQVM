@@ -6,6 +6,8 @@ export type Channel = "email" | "whatsapp" | "webhook";
 export interface NotifyInput {
   tenantId: string;
   isSandbox: boolean;
+  /** Sandbox DATA environment within a live workspace also suppresses real dispatch (ADR-0012). */
+  environment?: "live" | "sandbox";
   channel: Channel;
   recipient?: string;
   template?: string;
@@ -37,6 +39,7 @@ export class NotificationsService {
   ): Promise<{ status: "sent" | "suppressed" }> {
     const providerLive =
       !input.isSandbox &&
+      input.environment !== "sandbox" &&
       process.env.NODE_ENV === "production" &&
       this.providerEnabled(input.channel);
 

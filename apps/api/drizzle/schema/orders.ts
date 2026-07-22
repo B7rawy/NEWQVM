@@ -1,5 +1,6 @@
 import { integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, pk } from "./_shared";
+import { environmentType } from "./enums";
 import { tenants } from "./tenancy";
 import { itemStatuses } from "./reference";
 import { rfqs, rfqItems, rfqVendorItems } from "./rfq";
@@ -17,6 +18,7 @@ export const orders = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqId: uuid("rfq_id")
       .notNull()
       .references(() => rfqs.id),

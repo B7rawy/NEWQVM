@@ -9,7 +9,7 @@ import { JwtService } from "@nestjs/jwt";
 import { sql } from "drizzle-orm";
 import type { Request } from "express";
 import { DbService } from "../db/db.service.js";
-import { resolveTenantSlug, type RequestContext } from "./request-context.js";
+import { resolveEnvironment, resolveTenantSlug, type RequestContext } from "./request-context.js";
 
 const ROOT_DOMAIN = process.env.APP_ROOT_DOMAIN ?? "qvm.localhost";
 
@@ -81,6 +81,7 @@ export class AuthGuard implements CanActivate {
       tenantId: active.tenant?.tenant_id ?? null,
       role: active.tenant?.role ?? active.platformRole,
       isInternal,
+      environment: resolveEnvironment(req),
     };
 
     // If a workspace was requested, require access to it (member or platform staff).

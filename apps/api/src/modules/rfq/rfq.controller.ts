@@ -37,7 +37,7 @@ export class RfqController {
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     // scope the list to the ACTIVE workspace even for platform staff (isInternal:false) — the
     // "see all workspaces" privilege is the switcher, not a merged single-workspace view.
-    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false });
+    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment });
   }
 
   @Post()
@@ -47,7 +47,7 @@ export class RfqController {
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     const dto: CreateRfqDto = createRfqSchema.parse(body);
     return this.rfq.create(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
       dto,
     );
   }
@@ -59,7 +59,7 @@ export class RfqController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.vendorRfq.send(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
       id,
       sendRfqSchema.parse(body),
     );
@@ -72,7 +72,7 @@ export class RfqController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.vendorRfq.getQuotes(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
       id,
     );
   }
@@ -90,7 +90,7 @@ export class RfqController {
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     const { quoteItemId } = selectWinnerSchema.parse(body);
     return this.vendorRfq.selectWinner(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
       id,
       itemId,
       quoteItemId,

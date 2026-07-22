@@ -12,6 +12,8 @@ export interface RlsContext {
   tenantId: string | null;
   userId: string | null;
   isInternal: boolean;
+  /** Data environment within the workspace — 'live' (default) or 'sandbox'. */
+  environment?: "live" | "sandbox";
 }
 
 /**
@@ -39,7 +41,8 @@ export class DbService implements OnModuleDestroy {
       await tx.execute(sql`select
         set_config('app.tenant_id', ${ctx.tenantId ?? ""}, true),
         set_config('app.user_id', ${ctx.userId ?? ""}, true),
-        set_config('app.is_internal', ${ctx.isInternal ? "true" : "false"}, true)`);
+        set_config('app.is_internal', ${ctx.isInternal ? "true" : "false"}, true),
+        set_config('app.environment', ${ctx.environment ?? "live"}, true)`);
       return work(tx as unknown as Tx);
     });
   }

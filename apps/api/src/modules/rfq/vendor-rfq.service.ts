@@ -89,6 +89,7 @@ export class VendorRfqService {
           {
             tenantId: ctx.tenantId!,
             isSandbox,
+            environment: ctx.environment,
             channel: "email",
             recipient: link.primary_email ?? undefined,
             template: "vendor_rfq_invite",
