@@ -2,6 +2,7 @@ import { pgTable, text, uuid, index, unique, uniqueIndex } from "drizzle-orm/pg-
 import { audit, isActive, pk } from "./_shared";
 import { membershipRole } from "./enums";
 import { tenants } from "./tenancy";
+import { workshopBranches } from "./org";
 
 /**
  * Identity. Users are GLOBAL (no tenant_id) so one person can belong to multiple workspaces,
@@ -39,8 +40,7 @@ export const tenantMemberships = pgTable(
       .notNull()
       .references(() => users.id),
     role: membershipRole("role").notNull(),
-    // FK added in a later migration once org tables exist (avoids cross-file cycle at gen time).
-    workshopBranchId: uuid("workshop_branch_id"),
+    workshopBranchId: uuid("workshop_branch_id").references(() => workshopBranches.id),
     isActive: isActive(),
     ...audit,
   },

@@ -10,7 +10,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_local_env}
       POSTGRES_DB: ${POSTGRES_DB:-qvm_platform}
     ports:
-      - "5432:5432"
+      # Host port is configurable (default 5433) to avoid clashing with a local Postgres on 5432.
+      - "${POSTGRES_PORT:-5433}:5432"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:

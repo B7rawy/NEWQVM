@@ -25,8 +25,11 @@ corepack pnpm install
 ## 3. تشغيل البنية التحتية المحلية
 
 ```bash
-corepack pnpm db:up         # postgres :5432 + minio :9000 (console :9001)
+corepack pnpm db:up         # postgres (host port $POSTGRES_PORT, default 5433) + minio :9000
 ```
+
+> **تعارض بورت:** لو 5432/5433 مشغولين بمشاريع أخرى، عيّن `POSTGRES_PORT` في `.env` لبورت فاضٍ
+> (بيئة التطوير الحالية تستخدم **5434**) وحدّث `DATABASE_URL` وفقاً له.
 
 بيانات Docker المحلية تُخزَّن في `infra/data/` (خارج git).
 

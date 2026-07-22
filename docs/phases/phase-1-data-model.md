@@ -45,6 +45,28 @@
 (rfq→orders→purchasing→fulfillment→billing)، pricing، crosscutting (attachments/status_logs/notes/sequences)،
 ثم **RLS policies + الفهارس على كل FK + sequences** في SQL يدوي مُلحق، ثم seed كامل + sandbox tenant.
 
+### 2026-07-22 — سلسلة الطلب الكاملة (Phase 1b)
+**اتنفّذ:**
+- `vendors` (عالمي) + `vendor_branches` + `vendor_users` + **`tenant_vendors`** (الربط، يحمل tenant_id).
+- سلسلة الطلب: `rfq` (rfqs/rfq_items/rfq_vendors/rfq_vendor_items) · `orders` (orders/order_items — المحور) ·
+  `purchasing` (purchase_orders/items + pickups) · `fulfillment` (deliveries/items + returns/items + return_issues + signatures) ·
+  `billing` (invoices/items + credit_notes/items).
+- `pricing` (cost_logs/pricing_logs append-only + profit_categories/margins/branch/audit + stock_files).
+- `crosscutting`: `attachments` (موحّد) · `status_logs` (append-only) · `notes` · `order_number_counters`.
+- أُغلقت الـ 4 علاقات المؤجلة (winning_vendor_quote_item_id, workshop_branch_id, invoice_id, credit_note_id).
+
+**التحقق الفعلي (لا مجرد كود):**
+- `tsc --noEmit` نضيف · `drizzle-kit generate` → `0000_full_schema.sql`.
+- طُبِّقت على **Postgres 16 حقيقي** (docker) على قاعدة جديدة: **53 جدول · 137 FK · 185 index · 9 enums**.
+
+**ملاحظات تشغيل:**
+- بورت Postgres المحلي = **5434** (5432/5433 مشغولان بـ ghini/ingeneral) عبر `POSTGRES_PORT` في `.env`.
+- تحذير تجميلي: أسماء بعض قيود الـ FK تتجاوز 63 حرفاً فيقصّرها Postgres — لا تعارض حدث (137 FK)؛ تُهذَّب لاحقاً.
+- الميجريشن الأولى تبقى قابلة لإعادة التوليد **حتى أول إصدار/staging**، بعدها تصبح ثابتة (اتجاه واحد).
+
+**متبقّي (Phase 1c):** RLS policies على كل جدول tenant-scoped + trigger التدقيق (created_by/updated_by) +
+دالة توليد رقم الطلب الذرّية + seed كامل (شركات/موردين/طلبات وهمية) + **sandbox tenant**.
+
 ## المشاكل القديمة التي تُعالَج هنا صراحةً
 | مشكلة النظام القديم | المعالجة في التصميم الجديد |
 |---|---|

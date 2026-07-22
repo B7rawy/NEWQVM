@@ -8,12 +8,12 @@ export * from "./tenancy";
 export * from "./identity";
 export * from "./org";
 
-// Order chain, vendors, pricing, billing, cross-cutting (Phase 1b — next commit):
-// export * from "./vendors";
-// export * from "./rfq";
-// export * from "./orders";
-// export * from "./purchasing";
-// export * from "./fulfillment";
-// export * from "./billing";
-// export * from "./pricing";
-// export * from "./crosscutting";
+// Order chain, vendors, pricing, billing, cross-cutting (Phase 1b — this commit):
+export * from "./vendors";
+export * from "./rfq";
+export * from "./orders";
+export * from "./purchasing";
+export * from "./fulfillment";
+export * from "./billing";
+export * from "./pricing";
+export * from "./crosscutting";
