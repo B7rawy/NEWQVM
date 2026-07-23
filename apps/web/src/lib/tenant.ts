@@ -42,6 +42,20 @@ export function workspaceUrl(slug: string, path = "/"): string {
   return `${window.location.protocol}//${slug}.${root}${path}`;
 }
 
+/**
+ * Is a workspace subdomain actually reachable? Used to gate the post-login redirect so nothing
+ * breaks before the wildcard DNS (`*.easycarty.store`) is live — if the subdomain doesn't resolve
+ * yet, we simply stay on the apex (header mode). Self-heals the moment the DNS record exists.
+ */
+export async function subdomainReachable(slug: string): Promise<boolean> {
+  try {
+    await fetch(workspaceUrl(slug, "/"), { mode: "no-cors", signal: AbortSignal.timeout(2500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Cookie domain (".easycarty.store") so the token is shared across every workspace subdomain. */
 function cookieDomain(): string | null {
   const root = rootDomain();

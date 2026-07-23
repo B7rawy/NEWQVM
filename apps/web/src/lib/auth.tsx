@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, auth } from "./api";
-import { subdomainMode, currentSubdomain, workspaceUrl } from "./tenant";
+import { subdomainMode, currentSubdomain, workspaceUrl, subdomainReachable } from "./tenant";
 
 export interface Workspace {
   id: string;
@@ -86,10 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const slug = await loadWorkspaces();
     const meData = slug ? await api.get<Me>("/me") : null;
     if (meData) setMe(meData);
-    // A workspace user signing in on the apex is sent to their workspace subdomain.
+    // A workspace user signing in on the apex is sent to their workspace subdomain — but only once
+    // the wildcard DNS is live (otherwise we stay on the apex, which works header-based).
     // (Platform / vendor / workshop are cross-workspace and stay on the apex.)
     if (meData && slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
-      window.location.href = workspaceUrl(slug);
+      if (await subdomainReachable(slug)) window.location.href = workspaceUrl(slug);
     }
   }
   function logout() {
