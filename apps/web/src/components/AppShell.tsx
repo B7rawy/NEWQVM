@@ -127,7 +127,7 @@ export default function AppShell() {
               <>
                 <span className="min-w-0 flex-1 leading-tight">
                   <span className="block truncate text-[12.5px] font-semibold text-ink">
-                    {activeSlug ? active?.name ?? "Workspace" : "All workspaces"}
+                    {activeSlug ? active?.name ?? "Workspace" : "Admin workspace"}
                   </span>
                   <span className="block text-[10.5px] text-faint">
                     {activeSlug ? (active?.is_sandbox ? "Sandbox" : "Workspace") : "Platform · system"}
@@ -155,7 +155,7 @@ export default function AppShell() {
                   className="flex w-full items-center gap-2 border-b border-line-2 px-3 py-2 text-left text-[13px] font-medium text-sub hover:bg-surface"
                 >
                   <Globe className="h-4 w-4 shrink-0 text-muted" />
-                  <span className="flex-1 truncate">All workspaces</span>
+                  <span className="flex-1 truncate">Admin workspace</span>
                   {!activeSlug && <Check className="h-4 w-4 text-accent" />}
                 </button>
               )}
