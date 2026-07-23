@@ -23,10 +23,15 @@ export class VendorsController {
     if (!c.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
   }
+  /** Read-only ctx that allows no active workspace (platform staff → global list). */
+  private ctxOpen(req: Request) {
+    const c = getContext(req);
+    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
+  }
 
   @Get()
   list(@Req() req: Request) {
-    return this.svc.list(this.ctx(req));
+    return this.svc.list(this.ctxOpen(req));
   }
 
   @Get("available")
