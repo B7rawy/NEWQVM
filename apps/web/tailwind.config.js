@@ -1,24 +1,30 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        // Stripe-style neutrals, QVM red as the primary accent (replaces Stripe blurple)
+        // Semantic tokens are driven by CSS variables (see styles.css :root / .dark) so the whole
+        // ERP flips light⇄dark with zero per-component edits. Brand red stays fixed in both modes.
         accent: {
           DEFAULT: "#E21A1A",
           hover: "#c81212",
-          50: "#fdecec",
+          50: "var(--accent-50)", // red tint — flips to a deep red in dark
           100: "#fbdcdc",
         },
-        navy: "#0D4151", // brand wordmark
-        ink: "#0A2540", // primary text (Stripe deep navy)
-        sub: "#3c4257",
-        muted: "#697386",
-        faint: "#8792a2",
-        line: "#e6ebf1",
-        "line-2": "#eef1f6",
-        surface: "#f6f9fc",
+        navy: "var(--navy)", // brand wordmark (dark navy → light in dark mode)
+        ink: "var(--ink)", // primary text
+        sub: "var(--sub)",
+        muted: "var(--muted)",
+        faint: "var(--faint)",
+        line: "var(--line)",
+        "line-2": "var(--line-2)",
+        surface: "var(--surface)", // subtle gray fill (hover states, search)
+        appbg: "var(--appbg)", // page / main canvas
+        sidebar: "var(--sidebar)", // left rail
+        panel: "var(--panel)", // cards, inputs, buttons, popovers
+        "panel-2": "var(--panel-2)", // raised / hover on panels
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "Cairo", "sans-serif"],

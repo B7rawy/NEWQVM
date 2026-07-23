@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { ChevronsUpDown, Search, Settings, Code2, Check, Eye } from "lucide-react";
+import { ChevronsUpDown, Search, Settings, Code2, Check, Eye, Sun, Moon } from "lucide-react";
 import { useAuth } from "../lib/auth";
+import { useTheme } from "../lib/theme";
 import { navForPersona } from "../nav";
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
@@ -10,6 +11,7 @@ export default function AppShell() {
   const { me, workspaces, activeSlug, environment, switchWorkspace, setEnvironment, logout, stopImpersonating } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
+  const [theme, toggleTheme] = useTheme();
   const persona = me?.persona ?? "workspace";
   const groups = navForPersona(persona, {
     isSuperAdmin: me?.platformRole === "super_admin",
@@ -20,8 +22,8 @@ export default function AppShell() {
     persona === "platform" ? "Platform" : persona === "vendor" ? "Vendor" : "Workspace";
 
   return (
-    <div className="grid h-full grid-cols-[248px_1fr] bg-white">
-      <aside className="flex flex-col border-r border-line bg-[#fbfcfd]">
+    <div className="grid h-full grid-cols-[248px_1fr] bg-appbg">
+      <aside className="flex flex-col border-r border-line bg-sidebar">
         {/* brand */}
         <div className="flex items-center gap-2 px-3.5 pb-1 pt-4">
           <img src="/qvm-logo.png" alt="QParts" className="h-6 w-auto" />
@@ -34,7 +36,7 @@ export default function AppShell() {
         <div className="relative px-2.5 pb-1.5 pt-2">
           <button
             onClick={() => setWsOpen((v) => !v)}
-            className="flex w-full items-center gap-2.5 rounded-md border border-line bg-white px-2.5 py-2 text-left shadow-cardsm"
+            className="flex w-full items-center gap-2.5 rounded-md border border-line bg-panel px-2.5 py-2 text-left shadow-cardsm"
           >
             <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[11px] font-semibold text-white">
               {active?.name?.[0] ?? "Q"}
@@ -46,7 +48,7 @@ export default function AppShell() {
             <ChevronsUpDown className="h-3.5 w-3.5 text-faint" />
           </button>
           {wsOpen && (
-            <div className="absolute inset-x-2.5 z-20 mt-1 overflow-hidden rounded-lg border border-line bg-white shadow-pop">
+            <div className="absolute inset-x-2.5 z-20 mt-1 overflow-hidden rounded-lg border border-line bg-panel shadow-pop">
               {workspaces.map((w) => (
                 <button
                   key={w.id}
@@ -68,7 +70,7 @@ export default function AppShell() {
           <div className="flex items-center gap-2 rounded-md border border-line-2 bg-surface px-2.5 py-1.5">
             <Search className="h-3.5 w-3.5 text-faint" />
             <span className="flex-1 text-[12.5px] text-faint">Search</span>
-            <span className="rounded border border-line bg-white px-1.5 text-[10.5px] text-faint">⌘K</span>
+            <span className="rounded border border-line bg-panel px-1.5 text-[10.5px] text-faint">⌘K</span>
           </div>
         </div>
         {/* nav */}
@@ -99,7 +101,7 @@ export default function AppShell() {
 
       <div className="flex min-w-0 flex-col">
         {me?.impersonating && (
-          <div className="flex items-center gap-3 bg-ink px-6 py-2 text-[13px] text-white">
+          <div className="flex items-center gap-3 bg-[#0a2540] px-6 py-2 text-[13px] text-white">
             <Eye className="h-4 w-4" />
             <span>
               Viewing as <b className="font-semibold">{me.user?.full_name}</b>
@@ -130,7 +132,7 @@ export default function AppShell() {
                     ? e === "sandbox"
                       ? "bg-amber-400 px-3 py-1.5 text-[#5a4300]"
                       : "bg-accent px-3 py-1.5 text-white"
-                    : "bg-white px-3 py-1.5 text-muted hover:bg-surface"
+                    : "bg-panel px-3 py-1.5 text-muted hover:bg-surface"
                 }
               >
                 {e === "live" ? "Live" : "Sandbox"}
@@ -138,6 +140,14 @@ export default function AppShell() {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+              title={theme === "dark" ? "Light mode" : "Dark mode"}
+              className="grid h-8 w-8 place-items-center rounded-md border border-line bg-panel text-muted transition hover:bg-surface hover:text-ink"
+            >
+              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </button>
             <span className="text-[12px] text-muted">
               {me?.user?.full_name}
               {me?.isInternal ? " · staff" : me?.role ? ` · ${me.role}` : ""}

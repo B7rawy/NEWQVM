@@ -23,7 +23,7 @@ export function StatCard({ label, value, hint, tone = "ink" }: { label: string; 
   const tones: Record<string, string> = {
     ink: "text-ink",
     accent: "text-accent",
-    green: "text-emerald-600",
+    green: "text-emerald-600 dark:text-emerald-400",
   };
   return (
     <div className="px-4 py-4">
@@ -35,15 +35,15 @@ export function StatCard({ label, value, hint, tone = "ink" }: { label: string; 
 }
 
 export function StatStrip({ children }: { children: ReactNode }) {
-  return <div className="mb-5 grid grid-cols-2 divide-x divide-line-2 overflow-hidden rounded-xl2 border border-line bg-white shadow-card md:grid-cols-4">{children}</div>;
+  return <div className="mb-5 grid grid-cols-2 divide-x divide-line-2 overflow-hidden rounded-xl2 border border-line bg-panel shadow-card md:grid-cols-4">{children}</div>;
 }
 
 const badgeTones: Record<string, string> = {
-  gray: "bg-[#e3e8ee] text-sub",
-  green: "bg-[#cbf4c9] text-[#0e6245]",
-  amber: "bg-[#fcedb9] text-[#8a6d00]",
-  red: "bg-accent-50 text-accent",
-  blue: "bg-[#d6ecff] text-[#3d4eac]",
+  gray: "badge-gray",
+  green: "badge-green",
+  amber: "badge-amber",
+  red: "badge-red",
+  blue: "badge-blue",
 };
 export function Badge({ children, tone = "gray" }: { children: ReactNode; tone?: keyof typeof badgeTones }) {
   return <span className={`badge ${badgeTones[tone]}`}>{children}</span>;

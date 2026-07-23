@@ -4,6 +4,60 @@
 
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap");
 
+/* ── Theme tokens ─────────────────────────────────────────────────────────────
+   Light values keep the existing Stripe look byte-for-byte; .dark (set on <html>)
+   swaps to a professional deep-navy night palette. Everything downstream reads
+   these via Tailwind tokens (bg-panel, text-ink, border-line, …). */
+:root {
+  color-scheme: light;
+  --appbg: #ffffff;
+  --sidebar: #fbfcfd;
+  --panel: #ffffff;
+  --panel-2: #f1f5f9;
+  --surface: #f6f9fc;
+  --ink: #0a2540;
+  --sub: #3c4257;
+  --muted: #697386;
+  --faint: #8792a2;
+  --line: #e6ebf1;
+  --line-2: #eef1f6;
+  --navy: #0d4151;
+  --accent-50: #fdecec;
+  --btn-ring: rgba(50, 50, 93, 0.1);
+  --btn-shadow: rgba(50, 50, 93, 0.08);
+  --card-shadow: 0 2px 5px -1px rgba(50, 50, 93, 0.09), 0 1px 2px -1px rgba(0, 0, 0, 0.07);
+  /* status chips */
+  --chip-gray-bg: #e3e8ee; --chip-gray-fg: #3c4257;
+  --chip-green-bg: #cbf4c9; --chip-green-fg: #0e6245;
+  --chip-amber-bg: #fcedb9; --chip-amber-fg: #8a6d00;
+  --chip-red-bg: #fdecec; --chip-red-fg: #e21a1a;
+  --chip-blue-bg: #d6ecff; --chip-blue-fg: #3d4eac;
+}
+.dark {
+  color-scheme: dark;
+  --appbg: #0b0f1a;
+  --sidebar: #0f131e;
+  --panel: #151b2b;
+  --panel-2: #1e2740;
+  --surface: #1a2133;
+  --ink: #e7ecf5;
+  --sub: #c4ccdb;
+  --muted: #93a0b5;
+  --faint: #6f7c93;
+  --line: #252f45;
+  --line-2: #1d2740;
+  --navy: #e7ecf5;
+  --accent-50: #351519;
+  --btn-ring: rgba(255, 255, 255, 0.1);
+  --btn-shadow: rgba(0, 0, 0, 0.45);
+  --card-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.5), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
+  --chip-gray-bg: #232f45; --chip-gray-fg: #c4ccdb;
+  --chip-green-bg: rgba(16, 185, 129, 0.16); --chip-green-fg: #56d6a0;
+  --chip-amber-bg: rgba(245, 158, 11, 0.16); --chip-amber-fg: #f0b552;
+  --chip-red-bg: rgba(226, 26, 26, 0.18); --chip-red-fg: #ff6b6b;
+  --chip-blue-bg: rgba(59, 130, 246, 0.18); --chip-blue-fg: #8fb6ff;
+}
+
 html,
 body,
 #root {
@@ -13,6 +67,7 @@ body,
 body {
   @apply bg-surface text-ink antialiased;
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Cairo, sans-serif;
+  transition: background-color 0.18s ease, color 0.18s ease;
 }
 .tnum {
   font-variant-numeric: tabular-nums;
@@ -21,8 +76,8 @@ body {
 @layer components {
   /* Buttons — Stripe shape (6px radius), red primary */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border-0 bg-white px-3.5 py-2 text-[13px] font-medium text-sub transition;
-    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02), 0 0 0 1px rgba(50, 50, 93, 0.1), 0 1px 2px rgba(50, 50, 93, 0.08);
+    @apply inline-flex items-center justify-center gap-2 rounded-md border-0 bg-panel px-3.5 py-2 text-[13px] font-medium text-sub transition;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.02), 0 0 0 1px var(--btn-ring), 0 1px 2px var(--btn-shadow);
   }
   .btn:hover {
     @apply bg-surface;
@@ -38,7 +93,7 @@ body {
     @apply px-2.5 py-1.5 text-xs;
   }
   .input {
-    @apply w-full rounded-md border border-line bg-white px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-faint;
+    @apply w-full rounded-md border border-line bg-panel px-3 py-2 text-[13px] text-ink outline-none transition placeholder:text-faint;
   }
   .input:focus {
     @apply border-accent;
@@ -48,11 +103,18 @@ body {
     @apply mb-1 block text-xs font-medium text-muted;
   }
   .card {
-    @apply rounded-xl2 border border-line bg-white shadow-card;
+    @apply rounded-xl2 border border-line bg-panel;
+    box-shadow: var(--card-shadow);
   }
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold;
   }
+  /* Status chips — theme-aware (see --chip-* tokens) */
+  .badge-gray { background: var(--chip-gray-bg); color: var(--chip-gray-fg); }
+  .badge-green { background: var(--chip-green-bg); color: var(--chip-green-fg); }
+  .badge-amber { background: var(--chip-amber-bg); color: var(--chip-amber-fg); }
+  .badge-red { background: var(--chip-red-bg); color: var(--chip-red-fg); }
+  .badge-blue { background: var(--chip-blue-bg); color: var(--chip-blue-fg); }
   /* Table — Stripe: sentence-case gray headers, clickable rows */
   .th {
     @apply px-4 py-3 text-left text-[12px] font-medium text-muted;
@@ -75,5 +137,8 @@ body {
   }
   .nav-item.active {
     @apply bg-accent-50 font-medium text-accent;
+  }
+  .dark .nav-item.active {
+    color: #ff6b6b; /* brighter red for contrast over the deep-red tint */
   }
 }

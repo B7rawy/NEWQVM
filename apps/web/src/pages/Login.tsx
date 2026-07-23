@@ -24,7 +24,7 @@ export default function Login() {
 
   return (
     <div className="grid h-full place-items-center bg-surface">
-      <form onSubmit={submit} className="w-[360px] rounded-xl2 border border-line bg-white p-7 shadow-card">
+      <form onSubmit={submit} className="w-[360px] rounded-xl2 border border-line bg-panel p-7 shadow-card">
         <div className="flex items-center gap-2">
           <img src="/qvm-logo.png" alt="QParts" className="h-8 w-auto" />
           <span className="text-[22px] font-bold uppercase tracking-tight text-navy">Parts</span>
