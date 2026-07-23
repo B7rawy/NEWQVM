@@ -83,6 +83,7 @@ export default function AppShell() {
   const groups = navForPersona(persona, {
     isSuperAdmin: previewing ? true : me?.platformRole === "super_admin",
     isCompanyAdmin: previewing ? true : me?.role === "company_admin",
+    unscoped: persona === "platform" && !activeSlug,
   });
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
   const portalLabel =

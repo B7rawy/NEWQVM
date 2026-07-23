@@ -20,16 +20,26 @@ export const createBranchSchema = z.object({
 export class OrgService {
   constructor(private readonly dbService: DbService) {}
 
-  /** Workshops LINKED to the active workspace (via tenant_workshops) — global entities, scoped. */
+  /** Workshops linked to the active workspace; for unscoped platform staff, EVERY workshop (global). */
   async listWorkshops(ctx: RlsContext) {
-    const rows = await this.dbService.withContext(scoped(ctx), (tx) =>
-      tx.execute(sql`
-        select w.id, w.name, w.tax_number, w.is_active,
-          (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches
-        from tenant_workshops tw
-        join workshops w on w.id = tw.workshop_id
-        where tw.status <> 'archived'
-        order by w.name`),
+    const global = ctx.isInternal && !ctx.tenantId;
+    const rows = await this.dbService.withContext(
+      global ? { tenantId: null, userId: ctx.userId, isInternal: true } : scoped(ctx),
+      (tx) =>
+        global
+          ? tx.execute(sql`
+              select w.id, w.name, w.tax_number, w.is_active,
+                (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches,
+                (select count(*) from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces
+              from workshops w
+              order by w.name`)
+          : tx.execute(sql`
+              select w.id, w.name, w.tax_number, w.is_active,
+                (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches
+              from tenant_workshops tw
+              join workshops w on w.id = tw.workshop_id
+              where tw.status <> 'archived'
+              order by w.name`),
     );
     return { count: rows.length, workshops: rows };
   }

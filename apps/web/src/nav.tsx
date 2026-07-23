@@ -94,6 +94,44 @@ export const platformNav: NavGroup[] = [
 ];
 
 /**
+ * Platform SYSTEM view — what a super admin controls across the WHOLE platform when no workspace is
+ * selected ("All workspaces" / unscoped). Focused on platform administration, not one workspace's
+ * day-to-day. (When a platform user enters a specific workspace subdomain they get `platformNav`.)
+ */
+export const platformSystemNav: NavGroup[] = [
+  {
+    heading: "Platform",
+    items: [
+      { label: "Management Overview", path: "/management-overview", icon: Gauge },
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes },
+    ],
+  },
+  {
+    heading: "Control tower",
+    items: [
+      { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
+    ],
+  },
+  {
+    heading: "Master data",
+    items: [
+      { label: "Vendors", path: "/vendors", icon: Store },
+      { label: "Workshops", path: "/org/workshops", icon: Wrench },
+      { label: "Providers", path: "/providers", icon: Handshake },
+    ],
+  },
+  {
+    heading: "System",
+    items: [
+      { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
+      { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
+      { label: "Settings", path: "/settings", icon: Settings },
+    ],
+  },
+];
+
+/**
  * Workspace portal — the manager (company_admin) runs the whole procurement operation for ONE
  * workspace. Non-admin workspace users (branch managers / service advisors) see the ungated core;
  * the management dashboards, reports/pricing and setup/master-data are `adminOnly` (the manager).
@@ -242,13 +280,15 @@ export const providerNav: NavGroup[] = [
 /** Pick + filter the nav tree for the resolved persona and role. */
 export function navForPersona(
   persona: Persona,
-  opts: { isSuperAdmin?: boolean; isCompanyAdmin?: boolean },
+  opts: { isSuperAdmin?: boolean; isCompanyAdmin?: boolean; unscoped?: boolean },
 ): NavGroup[] {
   if (persona === "vendor") return vendorNav;
   if (persona === "workshop") return workshopNav;
   if (persona === "service_provider") return providerNav;
   if (persona === "platform") {
-    return platformNav
+    // No workspace selected → the system (super-admin) view; inside a workspace → the full nav.
+    const tree = opts.unscoped ? platformSystemNav : platformNav;
+    return tree
       .map((g) => ({ ...g, items: g.items.filter((it) => !it.superAdminOnly || opts.isSuperAdmin) }))
       .filter((g) => g.items.length);
   }
