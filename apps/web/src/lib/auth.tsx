@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, auth } from "./api";
+import { subdomainMode, currentSubdomain, workspaceUrl } from "./tenant";
 
 export interface Workspace {
   id: string;
@@ -52,12 +53,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   async function loadWorkspaces() {
     const res = await api.get<{ workspaces: Workspace[] }>("/workspaces");
     setWorkspaces(res.workspaces);
+    // On a workspace subdomain the URL is the source of truth — never override it.
+    const sub = currentSubdomain();
+    if (sub) {
+      setActiveSlug(sub);
+      return sub;
+    }
     let slug = auth.workspace();
     if (!slug || !res.workspaces.some((w) => w.slug === slug)) {
       slug = res.workspaces[0]?.slug ?? null;
       auth.setWorkspace(slug);
-      setActiveSlug(slug);
     }
+    setActiveSlug(slug);
     return slug;
   }
   async function loadMe() {
@@ -77,7 +84,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     auth.setToken(res.token);
     setAuthed(true);
     const slug = await loadWorkspaces();
-    if (slug) await loadMe();
+    const meData = slug ? await api.get<Me>("/me") : null;
+    if (meData) setMe(meData);
+    // A workspace user signing in on the apex is sent to their workspace subdomain.
+    // (Platform / vendor / workshop are cross-workspace and stay on the apex.)
+    if (meData && slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
+      window.location.href = workspaceUrl(slug);
+    }
   }
   function logout() {
     auth.setToken(null);
@@ -89,6 +102,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setActiveSlug(null);
   }
   async function switchWorkspace(slug: string) {
+    // In subdomain mode, switching workspace = navigating to that workspace's subdomain.
+    if (subdomainMode()) {
+      auth.setWorkspace(slug);
+      window.location.href = workspaceUrl(slug);
+      return;
+    }
     auth.setWorkspace(slug);
     setActiveSlug(slug);
     await loadMe();

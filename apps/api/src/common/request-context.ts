@@ -26,14 +26,21 @@ export function isInternalRole(role: string | null | undefined): boolean {
   return role != null && PLATFORM_ROLES.has(role);
 }
 
-/** Extract the tenant slug from the subdomain, or the X-Tenant header (local/dev convenience). */
+const RESERVED_SUBDOMAINS = new Set(["www", "app", "api", "admin", "static", "assets"]);
+
+/**
+ * Resolve the tenant slug. The SUBDOMAIN is authoritative (`riyadh.easycarty.store` → `riyadh`);
+ * the X-Tenant header is the fallback for the apex domain and local dev (no subdomains). Reserved
+ * subdomains (www/app/api…) are treated as the apex, not a tenant.
+ */
 export function resolveTenantSlug(req: Request, rootDomain: string): string | null {
+  const host = (req.headers.host ?? "").split(":")[0].toLowerCase();
+  if (host && host.endsWith(`.${rootDomain}`)) {
+    const sub = host.slice(0, host.length - rootDomain.length - 1);
+    if (sub && !sub.includes(".") && !RESERVED_SUBDOMAINS.has(sub)) return sub;
+  }
   const header = req.header("x-tenant");
   if (header) return header.trim().toLowerCase();
-  const host = (req.headers.host ?? "").split(":")[0];
-  if (host && host.endsWith(`.${rootDomain}`)) {
-    return host.slice(0, host.length - rootDomain.length - 1).toLowerCase() || null;
-  }
   return null;
 }
 

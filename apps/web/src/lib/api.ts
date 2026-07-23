@@ -1,4 +1,6 @@
 /** Single API client. Adds the JWT and the active-workspace header (X-Tenant) to every call. */
+import { currentSubdomain, getCookie, setSharedCookie } from "./tenant";
+
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
 const TOKEN_KEY = "qvm_token";
@@ -6,9 +8,16 @@ const WS_KEY = "qvm_ws";
 const ENV_KEY = "qvm_env";
 
 export const auth = {
-  token: () => localStorage.getItem(TOKEN_KEY),
-  setToken: (t: string | null) => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)),
-  workspace: () => localStorage.getItem(WS_KEY),
+  // Token lives in localStorage AND a cross-subdomain cookie, so a session started on the apex
+  // (or another workspace subdomain) carries over to <slug>.easycarty.store seamlessly.
+  token: () => localStorage.getItem(TOKEN_KEY) ?? getCookie(TOKEN_KEY),
+  setToken: (t: string | null) => {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+    setSharedCookie(TOKEN_KEY, t);
+  },
+  // On a workspace subdomain the URL is the source of truth; else fall back to the stored choice.
+  workspace: () => currentSubdomain() ?? localStorage.getItem(WS_KEY),
   setWorkspace: (slug: string | null) =>
     slug ? localStorage.setItem(WS_KEY, slug) : localStorage.removeItem(WS_KEY),
   environment: (): "live" | "sandbox" => (localStorage.getItem(ENV_KEY) === "sandbox" ? "sandbox" : "live"),
