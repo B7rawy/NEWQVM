@@ -4,7 +4,7 @@ import { Field } from "../components/ui";
 
 export default function Login() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("admin@qvm.local");
+  const [email, setEmail] = useState("admin@qparts.local");
   const [password, setPassword] = useState("admin1234");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);

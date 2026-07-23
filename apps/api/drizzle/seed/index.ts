@@ -95,19 +95,20 @@ async function main() {
   const multiHash = await argon2.hash("multi1234");
   const managerHash = await argon2.hash("manager1234");
   const vendorHash = await argon2.hash("vendor1234");
+  // Logins are named by ROLE on one domain (@qparts.local) so each persona is obvious.
   const [admin] = await sql`insert into users (email,full_name,password_hash)
-    values ('admin@qvm.local','Platform Admin',${adminHash}) returning id`;
+    values ('admin@qparts.local','Platform Admin',${adminHash}) returning id`;
   const [advisor] = await sql`insert into users (email,full_name,password_hash)
-    values ('advisor@riyadh.local','Riyadh Advisor',${advisorHash}) returning id`;
+    values ('advisor@qparts.local','Riyadh Advisor',${advisorHash}) returning id`;
   // workspace ADMIN (company_admin) — sees Setup + Settings
   const [manager] = await sql`insert into users (email,full_name,password_hash)
-    values ('manager@riyadh.local','Riyadh Manager',${managerHash}) returning id`;
+    values ('manager@qparts.local','Riyadh Manager',${managerHash}) returning id`;
   // VENDOR user — lands on the vendor portal
   const [vendorUser] = await sql`insert into users (email,full_name,password_hash)
-    values ('gulf@vendor.local','Gulf Vendor Admin',${vendorHash}) returning id`;
+    values ('vendor@qparts.local','Gulf Vendor Admin',${vendorHash}) returning id`;
   // a user who works with TWO workspaces — exercises workspace switching (ADR-0010)
   const [multi] = await sql`insert into users (email,full_name,password_hash)
-    values ('multi@qvm.local','Multi Workspace User',${multiHash}) returning id`;
+    values ('multi@qparts.local','Multi Workspace User',${multiHash}) returning id`;
   await sql`select set_config('app.user_id', ${admin.id}, false)`;
 
   // ---- tenants: two real workspaces + one sandbox ----
