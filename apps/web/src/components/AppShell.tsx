@@ -1,54 +1,101 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { NavLink, Outlet } from "react-router-dom";
-import { ChevronsUpDown, Search, Settings, Code2, Check, Eye, Sun, Moon } from "lucide-react";
+import {
+  ChevronsUpDown,
+  Search,
+  Settings,
+  Code2,
+  Check,
+  Eye,
+  Sun,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { navForPersona } from "../nav";
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
- *  settings pinned at the bottom. QVM red is the accent. */
+ *  settings pinned at the bottom. The rail collapses to an icon-only strip (persisted). */
 export default function AppShell() {
   const { me, workspaces, activeSlug, environment, switchWorkspace, setEnvironment, logout, stopImpersonating } = useAuth();
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
   const [theme, toggleTheme] = useTheme();
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("qvm_sidebar") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("qvm_sidebar", collapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [collapsed]);
+
   const persona = me?.persona ?? "workspace";
   const groups = navForPersona(persona, {
     isSuperAdmin: me?.platformRole === "super_admin",
     isCompanyAdmin: me?.role === "company_admin",
   });
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
-  const portalLabel =
-    persona === "platform" ? "Platform" : persona === "vendor" ? "Vendor" : "Workspace";
+  const portalLabel = persona === "platform" ? "Platform" : persona === "vendor" ? "Vendor" : "Workspace";
 
   return (
-    <div className="grid h-full grid-cols-[248px_1fr] bg-appbg">
-      <aside className="flex flex-col border-r border-line bg-sidebar">
+    <div
+      className={`grid h-full ${collapsed ? "grid-cols-[64px_1fr]" : "grid-cols-[248px_1fr]"} bg-appbg transition-[grid-template-columns] duration-200 ease-in-out`}
+    >
+      <aside className="flex min-w-0 flex-col border-r border-line bg-sidebar">
         {/* brand */}
-        <div className="flex items-center gap-2 px-3.5 pb-1 pt-4">
-          <img src="/qvm-logo.png" alt="QParts" className="h-6 w-auto" />
-          <span className="text-[17px] font-bold uppercase tracking-tight text-navy">Parts</span>
-          <span className="ml-auto rounded-full bg-accent-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
-            {portalLabel}
-          </span>
+        <div className={`flex items-center pb-1 pt-4 ${collapsed ? "justify-center px-0" : "gap-2 px-3.5"}`}>
+          <img src="/qvm-logo.png" alt="QParts" className="h-6 w-auto shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="text-[17px] font-bold uppercase tracking-tight text-navy">Parts</span>
+              <span className="ml-auto rounded-full bg-accent-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent">
+                {portalLabel}
+              </span>
+            </>
+          )}
         </div>
+
         {/* workspace switcher */}
-        <div className="relative px-2.5 pb-1.5 pt-2">
+        <div className={`relative pb-1.5 pt-2 ${collapsed ? "px-2" : "px-2.5"}`}>
           <button
             onClick={() => setWsOpen((v) => !v)}
-            className="flex w-full items-center gap-2.5 rounded-md border border-line bg-panel px-2.5 py-2 text-left shadow-cardsm"
+            title={collapsed ? active?.name ?? "Workspace" : undefined}
+            className={
+              collapsed
+                ? "flex w-full items-center justify-center rounded-md border border-line bg-panel py-2 shadow-cardsm"
+                : "flex w-full items-center gap-2.5 rounded-md border border-line bg-panel px-2.5 py-2 text-left shadow-cardsm"
+            }
           >
-            <span className="grid h-6 w-6 place-items-center rounded-md bg-accent text-[11px] font-semibold text-white">
+            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-accent text-[11px] font-semibold text-white">
               {active?.name?.[0] ?? "Q"}
             </span>
-            <span className="min-w-0 flex-1 leading-tight">
-              <span className="block truncate text-[12.5px] font-semibold text-ink">{active?.name ?? "Workspace"}</span>
-              <span className="block text-[10.5px] text-faint">{active?.is_sandbox ? "Sandbox" : "Workspace"}</span>
-            </span>
-            <ChevronsUpDown className="h-3.5 w-3.5 text-faint" />
+            {!collapsed && (
+              <>
+                <span className="min-w-0 flex-1 leading-tight">
+                  <span className="block truncate text-[12.5px] font-semibold text-ink">{active?.name ?? "Workspace"}</span>
+                  <span className="block text-[10.5px] text-faint">{active?.is_sandbox ? "Sandbox" : "Workspace"}</span>
+                </span>
+                <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-faint" />
+              </>
+            )}
           </button>
           {wsOpen && (
-            <div className="absolute inset-x-2.5 z-20 mt-1 overflow-hidden rounded-lg border border-line bg-panel shadow-pop">
+            <div
+              className={
+                collapsed
+                  ? "absolute left-full top-2 z-30 ml-2 w-52 overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
+                  : "absolute inset-x-2.5 z-20 mt-1 overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
+              }
+            >
               {workspaces.map((w) => (
                 <button
                   key={w.id}
@@ -65,36 +112,63 @@ export default function AppShell() {
             </div>
           )}
         </div>
+
         {/* search */}
-        <div className="px-2.5 pb-2">
-          <div className="flex items-center gap-2 rounded-md border border-line-2 bg-surface px-2.5 py-1.5">
-            <Search className="h-3.5 w-3.5 text-faint" />
-            <span className="flex-1 text-[12.5px] text-faint">Search</span>
-            <span className="rounded border border-line bg-panel px-1.5 text-[10.5px] text-faint">⌘K</span>
+        {collapsed ? (
+          <div className="px-2 pb-2">
+            <button
+              onClick={() => setCollapsed(false)}
+              title="Search"
+              className="flex w-full items-center justify-center rounded-md border border-line-2 bg-surface py-1.5 text-faint transition hover:text-ink"
+            >
+              <Search className="h-4 w-4" />
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="px-2.5 pb-2">
+            <div className="flex items-center gap-2 rounded-md border border-line-2 bg-surface px-2.5 py-1.5">
+              <Search className="h-3.5 w-3.5 text-faint" />
+              <span className="flex-1 text-[12.5px] text-faint">Search</span>
+              <span className="rounded border border-line bg-panel px-1.5 text-[10.5px] text-faint">⌘K</span>
+            </div>
+          </div>
+        )}
+
         {/* nav */}
         <nav className="flex flex-col gap-0.5 py-1">
           {items.map((it) => (
             <div key={it.path}>
-              {it.groupStart && <div className="mx-4 my-2 h-px bg-line-2" />}
-              <NavLink to={it.path} className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-                <it.icon className="h-[17px] w-[17px]" />
-                <span className="flex-1">{it.label}</span>
-                {it.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
+              {it.groupStart && <div className={`my-2 h-px bg-line-2 ${collapsed ? "mx-3" : "mx-4"}`} />}
+              <NavLink
+                to={it.path}
+                title={collapsed ? it.label : undefined}
+                className={({ isActive }) => `nav-item ${isActive ? "active" : ""} ${collapsed ? "justify-center" : ""}`}
+              >
+                <it.icon className="h-[17px] w-[17px] shrink-0" />
+                {!collapsed && <span className="flex-1">{it.label}</span>}
+                {!collapsed && it.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
               </NavLink>
             </div>
           ))}
         </nav>
+
         {/* bottom */}
         <div className="mt-auto border-t border-line-2 py-1.5">
-          <NavLink to="/developers" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-            <Code2 className="h-[17px] w-[17px]" />
-            <span>Developers</span>
+          <NavLink
+            to="/developers"
+            title={collapsed ? "Developers" : undefined}
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""} ${collapsed ? "justify-center" : ""}`}
+          >
+            <Code2 className="h-[17px] w-[17px] shrink-0" />
+            {!collapsed && <span>Developers</span>}
           </NavLink>
-          <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
-            <Settings className="h-[17px] w-[17px]" />
-            <span>Settings</span>
+          <NavLink
+            to="/settings"
+            title={collapsed ? "Settings" : undefined}
+            className={({ isActive }) => `nav-item ${isActive ? "active" : ""} ${collapsed ? "justify-center" : ""}`}
+          >
+            <Settings className="h-[17px] w-[17px] shrink-0" />
+            {!collapsed && <span>Settings</span>}
           </NavLink>
         </div>
       </aside>
@@ -116,6 +190,15 @@ export default function AppShell() {
           </div>
         )}
         <header className="flex items-center gap-3 border-b border-line px-6 py-3">
+          {/* collapse / expand the sidebar */}
+          <button
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className="grid h-8 w-8 place-items-center rounded-md border border-line bg-panel text-muted transition hover:bg-surface hover:text-ink"
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
           {/* Live ⇄ Sandbox environment toggle */}
           <div className="flex items-center overflow-hidden rounded-md border border-line text-[12px] font-semibold">
             {(["live", "sandbox"] as const).map((e) => (
