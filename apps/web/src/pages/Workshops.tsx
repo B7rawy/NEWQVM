@@ -45,7 +45,7 @@ export default function Workshops() {
     setRegions(r.regions);
   }, []);
   useEffect(() => {
-    if (!activeSlug) return;
+    // Scoped to the active workspace, or global when platform staff are unscoped.
     setWorkshops(null);
     load().catch((e) => {
       setErr((e as Error).message);

@@ -40,7 +40,7 @@ export default function Vendors() {
     setRows(r.vendors);
   }, []);
   useEffect(() => {
-    if (!activeSlug) return;
+    // Loads scoped to the active workspace, OR globally when platform staff are unscoped.
     setRows(null);
     load().catch((e) => {
       setErr((e as Error).message);
