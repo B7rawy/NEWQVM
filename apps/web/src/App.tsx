@@ -9,6 +9,8 @@ import Orders from "./pages/Orders";
 import Workshops from "./pages/Workshops";
 import Vendors from "./pages/Vendors";
 import Providers from "./pages/Providers";
+import InternalDashboard from "./pages/InternalDashboard";
+import ManagementOverview from "./pages/ManagementOverview";
 import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
@@ -37,6 +39,8 @@ const WIRED = new Set([
   "/org/workshops",
   "/vendors",
   "/providers",
+  "/internal",
+  "/management-overview",
   "/admin/users",
   "/admin/workspaces",
   "/settings",
@@ -61,6 +65,8 @@ export default function App() {
         <Route path="/org/workshops" element={<Workshops />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/providers" element={<Providers />} />
+        <Route path="/internal" element={<InternalDashboard />} />
+        <Route path="/management-overview" element={<ManagementOverview />} />
         <Route path="/admin/users" element={<Users />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />

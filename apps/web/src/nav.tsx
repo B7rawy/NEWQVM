@@ -53,8 +53,8 @@ export const platformNav: NavGroup[] = [
     heading: "Workspace",
     items: [
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
-      { label: "Internal Dashboard", path: "/internal", icon: Boxes, soon: true },
-      { label: "Management Overview", path: "/management", icon: Gauge, soon: true },
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes },
+      { label: "Management Overview", path: "/management-overview", icon: Gauge },
     ],
   },
   {
@@ -103,8 +103,8 @@ export const workspaceNav: NavGroup[] = [
     heading: "Dashboard",
     items: [
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
-      { label: "Management Overview", path: "/management-overview", icon: Gauge, soon: true, adminOnly: true },
-      { label: "Internal Dashboard", path: "/internal", icon: Boxes, soon: true, adminOnly: true },
+      { label: "Management Overview", path: "/management-overview", icon: Gauge, adminOnly: true },
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes, adminOnly: true },
     ],
   },
   {
