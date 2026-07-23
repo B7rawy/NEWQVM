@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -344,7 +344,7 @@ export default function InternalDashboard() {
   return (
     <>
       {/* ── Hero banner ──────────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-xl2 border border-line bg-navy px-6 py-6 text-white shadow-card sm:px-8">
+      <div className="relative overflow-hidden rounded-xl2 border border-line bg-[#0d4151] px-6 py-6 text-white shadow-card sm:px-8">
         <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 right-24 h-56 w-56 rounded-full bg-accent/20 blur-3xl" />
         <div className="relative max-w-2xl">
@@ -367,7 +367,7 @@ export default function InternalDashboard() {
                   key={m}
                   onClick={() => setMode(m)}
                   className={`rounded-full px-3 py-1 capitalize transition ${
-                    mode === m ? "bg-white text-navy" : "text-white/75 hover:text-white"
+                    mode === m ? "bg-white text-[#0d4151]" : "text-white/75 hover:text-white"
                   }`}
                 >
                   {m}
@@ -477,7 +477,7 @@ export default function InternalDashboard() {
               <button onClick={() => setDrawerOpen(true)} className="btn btn-sm rounded-md">
                 <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
                 {activeFilterCount > 0 && (
-                  <span className="ms-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-navy px-1 text-[10px] font-semibold text-white">
+                  <span className="ms-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#0d4151] px-1 text-[10px] font-semibold text-white">
                     {activeFilterCount}
                   </span>
                 )}
@@ -489,7 +489,7 @@ export default function InternalDashboard() {
                       key={g}
                       onClick={() => setGroup(g)}
                       className={`px-2.5 py-1.5 transition ${
-                        group === g ? "bg-navy text-white" : "bg-panel text-muted hover:text-ink"
+                        group === g ? "bg-[#0d4151] text-white" : "bg-panel text-muted hover:text-ink"
                       }`}
                     >
                       By {g === "item" ? "Item" : "Order"}
@@ -587,7 +587,7 @@ export default function InternalDashboard() {
       {/* ── Bulk actions bar ─────────────────────────────────────────────── */}
       {selected.size > 0 && (
         <div className="fixed inset-x-0 bottom-5 z-30 flex justify-center px-4">
-          <div className="flex items-center gap-2 rounded-full bg-navy px-3 py-2 text-[13px] text-white shadow-pop">
+          <div className="flex items-center gap-2 rounded-full bg-[#0d4151] px-3 py-2 text-[13px] text-white shadow-pop">
             <span className="ps-1 font-medium">{selected.size} order(s) selected</span>
             <span className="mx-1 h-4 w-px bg-white/20" />
             <button onClick={() => flash("Exported CSV")} className="rounded-full px-2.5 py-1 hover:bg-white/10">
@@ -818,8 +818,8 @@ function ByOrderTable({
           const open = expanded.has(order.orderId);
           const distinct = Array.from(new Set(order.items.map((i) => i.statusId)));
           return (
-            <>
-              <tr key={order.orderId} className="trow cursor-pointer" onClick={() => onExpand(order.orderId)}>
+            <Fragment key={order.orderId}>
+              <tr className="trow cursor-pointer" onClick={() => onExpand(order.orderId)}>
                 <td className="td">
                   <ChevronDown className={`h-4 w-4 text-muted transition ${open ? "" : "-rotate-90 rtl:rotate-90"}`} />
                 </td>
@@ -909,7 +909,7 @@ function ByOrderTable({
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           );
         })}
       </tbody>
@@ -1198,7 +1198,7 @@ function MultiSelect({
       <div className="mb-1 flex items-center gap-2">
         <label className="label mb-0">{label}</label>
         {selected.length > 0 && (
-          <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-navy px-1 text-[10px] font-semibold text-white">
+          <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[#0d4151] px-1 text-[10px] font-semibold text-white">
             {selected.length}
           </span>
         )}
@@ -1249,7 +1249,7 @@ function FilterDrawer({
         <div className="flex items-center gap-2 border-b border-line-2 px-5 py-3.5">
           <h3 className="text-[15px] font-semibold text-ink">Advanced Filters</h3>
           {activeCount > 0 && (
-            <span className="inline-flex items-center rounded-full bg-navy px-2 py-0.5 text-[11px] font-semibold text-white">
+            <span className="inline-flex items-center rounded-full bg-[#0d4151] px-2 py-0.5 text-[11px] font-semibold text-white">
               {activeCount} active
             </span>
           )}

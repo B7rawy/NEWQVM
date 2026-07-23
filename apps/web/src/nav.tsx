@@ -68,7 +68,7 @@ export const platformNav: NavGroup[] = [
   {
     heading: "Services",
     items: [
-      { label: "Pricing Engine", path: "/pricing", icon: Percent },
+      { label: "Pricing Engine", path: "/pricing", icon: Percent, soon: true },
       { label: "Profit Percentages", path: "/profit", icon: BarChart3, soon: true },
       { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },

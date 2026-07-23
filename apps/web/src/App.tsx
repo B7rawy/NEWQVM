@@ -16,14 +16,25 @@ import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
-import { platformNav, workspaceNav, vendorNav, workshopNav, providerNav } from "./nav";
+import { platformNav, workspaceNav, vendorNav, workshopNav, providerNav, navForPersona } from "./nav";
 
 const ALL_ITEMS = [...platformNav, ...workspaceNav, ...vendorNav, ...workshopNav, ...providerNav].flatMap((g) => g.items);
 
-/** Honest placeholder for sections not yet wired. */
+/** Honest placeholder for sections not yet wired. Labels resolve from the active persona's nav
+ *  (a path can appear in more than one persona with a different label). */
 function Placeholder() {
   const { pathname } = useLocation();
-  const label = ALL_ITEMS.find((i) => i.path === pathname)?.label ?? pathname.replace(/^\//, "");
+  const { me } = useAuth();
+  const personaItems = me
+    ? navForPersona(me.persona, {
+        isSuperAdmin: me.platformRole === "super_admin",
+        isCompanyAdmin: me.role === "company_admin",
+      }).flatMap((g) => g.items)
+    : [];
+  const label =
+    personaItems.find((i) => i.path === pathname)?.label ??
+    ALL_ITEMS.find((i) => i.path === pathname)?.label ??
+    pathname.replace(/^\//, "");
   return (
     <>
       <PageHeader title={label} />
@@ -53,7 +64,9 @@ export default function App() {
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
   const home = me.persona === "vendor" ? "/vendor" : me.persona === "service_provider" ? "/provider" : "/overview";
-  const placeholders = ALL_ITEMS.filter((i) => !WIRED.has(i.path));
+  // one placeholder route per unwired path (a path can appear in several persona navs)
+  const seenPaths = new Set(WIRED);
+  const placeholders = ALL_ITEMS.filter((i) => (seenPaths.has(i.path) ? false : (seenPaths.add(i.path), true)));
 
   return (
     <Routes>
