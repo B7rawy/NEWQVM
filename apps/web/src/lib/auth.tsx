@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, auth } from "./api";
-import { subdomainMode, currentSubdomain, workspaceUrl, subdomainReachable } from "./tenant";
+import { subdomainMode, currentSubdomain, workspaceUrl, apexUrl, subdomainReachable } from "./tenant";
 
 export interface Workspace {
   id: string;
@@ -30,7 +30,7 @@ interface AuthState {
   environment: "live" | "sandbox";
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
-  switchWorkspace: (slug: string) => Promise<void>;
+  switchWorkspace: (slug: string | null) => Promise<void>;
   setEnvironment: (e: "live" | "sandbox") => void;
   impersonate: (userId: string) => Promise<void>;
   stopImpersonating: () => void;
@@ -50,31 +50,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [activeSlug, setActiveSlug] = useState<string | null>(auth.workspace());
   const [environment, setEnvironmentState] = useState<"live" | "sandbox">(auth.environment());
 
-  async function loadWorkspaces() {
+  async function loadMe() {
+    const m = await api.get<Me>("/me");
+    setMe(m);
+    return m;
+  }
+  /** Resolve the active workspace. Subdomain wins; on the apex a workspace is auto-picked, EXCEPT
+   *  for platform staff who may run unscoped ("All workspaces" / system mode → activeSlug null). */
+  async function loadWorkspaces(isInternal: boolean) {
     const res = await api.get<{ workspaces: Workspace[] }>("/workspaces");
     setWorkspaces(res.workspaces);
-    // On a workspace subdomain the URL is the source of truth — never override it.
     const sub = currentSubdomain();
     if (sub) {
       setActiveSlug(sub);
       return sub;
     }
-    let slug = auth.workspace();
-    if (!slug || !res.workspaces.some((w) => w.slug === slug)) {
-      slug = res.workspaces[0]?.slug ?? null;
-      auth.setWorkspace(slug);
+    const stored = auth.workspace();
+    if (stored && res.workspaces.some((w) => w.slug === stored)) {
+      setActiveSlug(stored);
+      return stored;
     }
+    if (isInternal) {
+      // platform staff with no chosen workspace → unscoped system view
+      auth.setWorkspace(null);
+      setActiveSlug(null);
+      return null;
+    }
+    const slug = res.workspaces[0]?.slug ?? null;
+    auth.setWorkspace(slug);
     setActiveSlug(slug);
     return slug;
-  }
-  async function loadMe() {
-    setMe(await api.get<Me>("/me"));
   }
 
   useEffect(() => {
     if (!authed) return;
-    loadWorkspaces()
-      .then(() => loadMe())
+    loadMe()
+      .then((m) => loadWorkspaces(m.isInternal))
       .catch(() => logout());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
@@ -83,13 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.post<{ token: string }>("/auth/login", { email, password });
     auth.setToken(res.token);
     setAuthed(true);
-    const slug = await loadWorkspaces();
-    const meData = slug ? await api.get<Me>("/me") : null;
-    if (meData) setMe(meData);
-    // A workspace user signing in on the apex is sent to their workspace subdomain — but only once
-    // the wildcard DNS is live (otherwise we stay on the apex, which works header-based).
-    // (Platform / vendor / workshop are cross-workspace and stay on the apex.)
-    if (meData && slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
+    const meData = await loadMe();
+    const slug = await loadWorkspaces(meData.isInternal);
+    // A workspace user signing in on the apex is sent to their workspace subdomain (once wildcard
+    // DNS is live). Platform/vendor/workshop are cross-workspace and stay on the apex.
+    if (slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
       if (await subdomainReachable(slug)) window.location.href = workspaceUrl(slug);
     }
   }
@@ -102,11 +111,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setWorkspaces([]);
     setActiveSlug(null);
   }
-  async function switchWorkspace(slug: string) {
-    // In subdomain mode, switching workspace = navigating to that workspace's subdomain.
+  async function switchWorkspace(slug: string | null) {
+    // slug === null → unscoped "All workspaces" / system view (platform staff).
     if (subdomainMode()) {
       auth.setWorkspace(slug);
-      window.location.href = workspaceUrl(slug);
+      window.location.href = slug ? workspaceUrl(slug) : apexUrl("/admin/workspaces");
       return;
     }
     auth.setWorkspace(slug);

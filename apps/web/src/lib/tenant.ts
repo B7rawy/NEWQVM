@@ -42,6 +42,12 @@ export function workspaceUrl(slug: string, path = "/"): string {
   return `${window.location.protocol}//${slug}.${root}${path}`;
 }
 
+/** Absolute URL of the apex (the unscoped "all workspaces / platform" surface). */
+export function apexUrl(path = "/"): string {
+  const root = rootDomain();
+  return `${window.location.protocol}//${root}${path}`;
+}
+
 /**
  * Is a workspace subdomain actually reachable? Used to gate the post-login redirect so nothing
  * breaks before the wildcard DNS (`*.easycarty.store`) is live — if the subdomain doesn't resolve

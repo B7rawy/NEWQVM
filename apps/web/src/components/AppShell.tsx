@@ -12,6 +12,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Globe,
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
@@ -119,13 +120,17 @@ export default function AppShell() {
             }
           >
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-accent text-[11px] font-semibold text-white">
-              {active?.name?.[0] ?? "Q"}
+              {activeSlug ? active?.name?.[0] ?? "Q" : <Globe className="h-3.5 w-3.5" />}
             </span>
             {!collapsed && (
               <>
                 <span className="min-w-0 flex-1 leading-tight">
-                  <span className="block truncate text-[12.5px] font-semibold text-ink">{active?.name ?? "Workspace"}</span>
-                  <span className="block text-[10.5px] text-faint">{active?.is_sandbox ? "Sandbox" : "Workspace"}</span>
+                  <span className="block truncate text-[12.5px] font-semibold text-ink">
+                    {activeSlug ? active?.name ?? "Workspace" : "All workspaces"}
+                  </span>
+                  <span className="block text-[10.5px] text-faint">
+                    {activeSlug ? (active?.is_sandbox ? "Sandbox" : "Workspace") : "Platform · system"}
+                  </span>
                 </span>
                 <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-faint" />
               </>
@@ -139,6 +144,20 @@ export default function AppShell() {
                   : "absolute inset-x-2.5 z-20 mt-1 overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
               }
             >
+              {/* Platform staff can leave every workspace and run the system-wide (unscoped) view. */}
+              {me?.isInternal && (
+                <button
+                  onClick={() => {
+                    switchWorkspace(null);
+                    setWsOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 border-b border-line-2 px-3 py-2 text-left text-[13px] font-medium text-sub hover:bg-surface"
+                >
+                  <Globe className="h-4 w-4 shrink-0 text-muted" />
+                  <span className="flex-1 truncate">All workspaces</span>
+                  {!activeSlug && <Check className="h-4 w-4 text-accent" />}
+                </button>
+              )}
               {workspaces.map((w) => (
                 <button
                   key={w.id}

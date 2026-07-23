@@ -58,12 +58,20 @@ const WIRED = new Set([
 ]);
 
 export default function App() {
-  const { authed, me } = useAuth();
+  const { authed, me, activeSlug } = useAuth();
   if (!authed) return <Login />;
   // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
-  const home = me.persona === "vendor" ? "/vendor" : me.persona === "service_provider" ? "/provider" : "/overview";
+  // Platform staff with no workspace selected run the system view; their home is Workspaces.
+  const systemMode = me.isInternal && !activeSlug;
+  const home = me.persona === "vendor"
+    ? "/vendor"
+    : me.persona === "service_provider"
+      ? "/provider"
+      : systemMode
+        ? "/admin/workspaces"
+        : "/overview";
   // one placeholder route per unwired path (a path can appear in several persona navs)
   const seenPaths = new Set(WIRED);
   const placeholders = ALL_ITEMS.filter((i) => (seenPaths.has(i.path) ? false : (seenPaths.add(i.path), true)));
@@ -71,7 +79,7 @@ export default function App() {
   return (
     <Routes>
       <Route element={<AppShell />}>
-        <Route path="/overview" element={<Overview />} />
+        <Route path="/overview" element={systemMode ? <Navigate to="/admin/workspaces" replace /> : <Overview />} />
         <Route path="/rfqs" element={<Rfqs />} />
         <Route path="/rfqs/:id" element={<RfqDetail />} />
         <Route path="/orders" element={<Orders />} />
