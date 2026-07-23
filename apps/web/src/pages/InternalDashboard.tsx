@@ -644,29 +644,31 @@ function ByItemTable({
   onNotes: (o: Order, i: Item) => void;
   flash: (t: string, ok?: boolean) => void;
 }) {
+  // Columns reveal progressively with width: the essentials always show, secondary data appears
+  // at md/lg/xl/2xl. Text is left-aligned, every number/amount is right-aligned + tabular.
   return (
-    <table className="w-full min-w-[1180px]">
+    <table className="w-full min-w-[640px]">
       <thead>
         <tr>
           <th className="th w-8">
             <input type="checkbox" checked={allSelected} onChange={onToggleAll} className="accent-accent" />
           </th>
-          <th className="th">Account Manager</th>
-          <th className="th">Order No</th>
-          <th className="th">RFQ Date</th>
-          <th className="th">Branch</th>
-          <th className="th">Status</th>
-          <th className="th">Part Description</th>
-          <th className="th">Part Number</th>
-          <th className="th text-right">Req. Qty</th>
-          <th className="th text-right">Appr. Qty</th>
-          <th className="th">Brand Class</th>
-          <th className="th text-right">Estimated</th>
-          <th className="th text-right">Selling</th>
-          <th className="th text-right">Total After Disc.</th>
-          <th className="th">Vehicle</th>
-          <th className="th text-center">Actions</th>
-          <th className="th">Notes</th>
+          <th className="th hidden whitespace-nowrap 2xl:table-cell">Account Manager</th>
+          <th className="th whitespace-nowrap">Order No</th>
+          <th className="th hidden whitespace-nowrap xl:table-cell">RFQ Date</th>
+          <th className="th hidden whitespace-nowrap lg:table-cell">Branch</th>
+          <th className="th whitespace-nowrap">Status</th>
+          <th className="th whitespace-nowrap">Part Description</th>
+          <th className="th hidden whitespace-nowrap md:table-cell">Part Number</th>
+          <th className="th whitespace-nowrap text-right">Req.</th>
+          <th className="th hidden whitespace-nowrap text-right xl:table-cell">Appr.</th>
+          <th className="th hidden whitespace-nowrap 2xl:table-cell">Brand Class</th>
+          <th className="th hidden whitespace-nowrap text-right xl:table-cell">Estimated</th>
+          <th className="th hidden whitespace-nowrap text-right lg:table-cell">Selling</th>
+          <th className="th hidden whitespace-nowrap text-right md:table-cell">Total</th>
+          <th className="th hidden whitespace-nowrap lg:table-cell">Vehicle</th>
+          <th className="th whitespace-nowrap text-right">Actions</th>
+          <th className="th hidden whitespace-nowrap text-right sm:table-cell">Notes</th>
         </tr>
       </thead>
       <tbody>
@@ -683,45 +685,55 @@ function ByItemTable({
                   className="accent-accent"
                 />
               </td>
-              <td className="td text-muted">{order.accountManager}</td>
-              <td className="td font-semibold text-accent tnum">{order.orderNumber}</td>
-              <td className="td tnum">
+              <td className="td hidden whitespace-nowrap text-muted 2xl:table-cell">{order.accountManager}</td>
+              <td className="td whitespace-nowrap font-semibold text-accent tnum">{order.orderNumber}</td>
+              <td className="td hidden whitespace-nowrap tnum xl:table-cell">
                 {fmtDate(order.rfqDate)}
                 {order.confirmationDate && (
                   <div className="text-[11px] text-faint">Confirmed: {fmtDate(order.confirmationDate)}</div>
                 )}
               </td>
-              <td className="td">
-                <div className="font-medium text-ink">{order.branchName}</div>
-                <div className="text-[11px] text-muted">{order.clientName}</div>
+              <td className="td hidden lg:table-cell">
+                <div className="max-w-[180px] truncate font-medium text-ink" title={order.branchName}>
+                  {order.branchName}
+                </div>
+                <div className="max-w-[180px] truncate text-[11px] text-muted" title={order.clientName}>
+                  {order.clientName}
+                </div>
               </td>
-              <td className="td">
+              <td className="td whitespace-nowrap">
                 <Badge tone={s.tone}>{s.label}</Badge>
               </td>
-              <td className="td max-w-[220px]">
-                <span className="text-ink">{item.partDescription || <span className="text-faint">—</span>}</span>
+              <td className="td">
+                <div className="max-w-[200px] truncate text-ink" title={item.partDescription || undefined}>
+                  {item.partDescription || <span className="text-faint">—</span>}
+                </div>
               </td>
-              <td className="td font-mono text-[12px] text-ink">{item.partNumber || <span className="font-sans text-faint">—</span>}</td>
-              <td className="td text-right tnum">{item.requestedQty}</td>
-              <td className="td text-right tnum">{item.approvedQty ?? <span className="text-faint">—</span>}</td>
-              <td className="td text-muted">{item.brandClass}</td>
-              <td className="td text-right">
+              <td className="td hidden whitespace-nowrap font-mono text-[12px] text-ink md:table-cell">
+                {item.partNumber || <span className="font-sans text-faint">—</span>}
+              </td>
+              <td className="td whitespace-nowrap text-right tnum">{item.requestedQty}</td>
+              <td className="td hidden whitespace-nowrap text-right tnum xl:table-cell">
+                {item.approvedQty ?? <span className="text-faint">—</span>}
+              </td>
+              <td className="td hidden whitespace-nowrap text-muted 2xl:table-cell">{item.brandClass}</td>
+              <td className="td hidden whitespace-nowrap text-right xl:table-cell">
                 <Money value={item.estimatedPrice} />
               </td>
-              <td className="td text-right">
+              <td className="td hidden whitespace-nowrap text-right lg:table-cell">
                 <Money value={item.mainSellingPrice} />
                 {item.discountAmount > 0 && (
                   <div className="text-[11px] text-emerald-600 dark:text-emerald-400 tnum">−{item.discountAmount}</div>
                 )}
               </td>
-              <td className="td text-right">
+              <td className="td hidden whitespace-nowrap text-right md:table-cell">
                 <Money value={item.totalAfterDiscount} bold />
               </td>
-              <td className="td">
+              <td className="td hidden lg:table-cell">
                 <div className="flex items-center gap-2">
                   <BrandChip brand={order.mainBrand} />
-                  <div>
-                    <div className="font-medium text-ink">
+                  <div className="min-w-0">
+                    <div className="max-w-[130px] truncate font-medium text-ink">
                       {order.mainBrand} {order.model}
                     </div>
                     <div className="text-[11px] text-muted tnum">{order.plate}</div>
@@ -729,7 +741,7 @@ function ByItemTable({
                 </div>
               </td>
               <td className="td">
-                <div className="flex items-center justify-center gap-1">
+                <div className="flex items-center justify-end gap-1">
                   <button onClick={() => flash("Add Item drawer opened")} title="Add Item" className="rounded-md p-1.5 text-accent hover:bg-accent-50">
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -746,7 +758,7 @@ function ByItemTable({
                   </button>
                 </div>
               </td>
-              <td className="td">
+              <td className="td hidden whitespace-nowrap text-right sm:table-cell">
                 {item.notes > 0 ? (
                   <button onClick={() => onNotes(order, item)} className="inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink">
                     <StickyNote className="h-3.5 w-3.5" />
@@ -787,18 +799,18 @@ function ByOrderTable({
   flash: (t: string, ok?: boolean) => void;
 }) {
   return (
-    <table className="w-full min-w-[860px]">
+    <table className="w-full min-w-[560px]">
       <thead>
         <tr>
           <th className="th w-8" />
           <th className="th w-8" />
-          <th className="th">Account Manager</th>
-          <th className="th">Order No</th>
-          <th className="th">RFQ Date</th>
-          <th className="th">Branch</th>
-          <th className="th">Status</th>
-          <th className="th text-center">Items</th>
-          <th className="th text-right">Actions</th>
+          <th className="th hidden whitespace-nowrap text-muted xl:table-cell">Account Manager</th>
+          <th className="th whitespace-nowrap">Order No</th>
+          <th className="th hidden whitespace-nowrap lg:table-cell">RFQ Date</th>
+          <th className="th hidden whitespace-nowrap md:table-cell">Branch</th>
+          <th className="th whitespace-nowrap">Status</th>
+          <th className="th whitespace-nowrap text-right">Items</th>
+          <th className="th whitespace-nowrap text-right">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -819,24 +831,28 @@ function ByOrderTable({
                     className="accent-accent"
                   />
                 </td>
-                <td className="td text-muted">{order.accountManager}</td>
-                <td className="td font-semibold text-accent tnum">{order.orderNumber}</td>
-                <td className="td tnum">{fmtDate(order.rfqDate)}</td>
-                <td className="td">
-                  <div className="font-medium text-ink">{order.branchName}</div>
-                  <div className="text-[11px] text-muted">{order.clientName}</div>
+                <td className="td hidden whitespace-nowrap text-muted xl:table-cell">{order.accountManager}</td>
+                <td className="td whitespace-nowrap font-semibold text-accent tnum">{order.orderNumber}</td>
+                <td className="td hidden whitespace-nowrap tnum lg:table-cell">{fmtDate(order.rfqDate)}</td>
+                <td className="td hidden md:table-cell">
+                  <div className="max-w-[180px] truncate font-medium text-ink" title={order.branchName}>
+                    {order.branchName}
+                  </div>
+                  <div className="max-w-[180px] truncate text-[11px] text-muted" title={order.clientName}>
+                    {order.clientName}
+                  </div>
                 </td>
                 <td className="td">
-                  <div className="flex flex-wrap items-center gap-1">
-                    {distinct.slice(0, 3).map((sid) => (
+                  <div className="flex items-center gap-1">
+                    {distinct.slice(0, 2).map((sid) => (
                       <Badge key={sid} tone={st(sid).tone}>
                         {st(sid).label}
                       </Badge>
                     ))}
-                    {distinct.length > 3 && <span className="text-[11px] text-muted">+{distinct.length - 3}</span>}
+                    {distinct.length > 2 && <span className="text-[11px] text-muted">+{distinct.length - 2}</span>}
                   </div>
                 </td>
-                <td className="td text-center">
+                <td className="td whitespace-nowrap text-right">
                   <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-panel-2 px-1.5 text-[11px] font-semibold text-sub tnum">
                     {order.items.length}
                   </span>
