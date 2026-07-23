@@ -91,15 +91,16 @@ async function main() {
 
   // ---- users (real argon2 passwords so login works over HTTP) — one per persona ----
   const adminHash = await argon2.hash("admin1234");
-  const advisorHash = await argon2.hash("advisor1234");
+  const staffHash = await argon2.hash("staff1234");
   const multiHash = await argon2.hash("multi1234");
   const managerHash = await argon2.hash("manager1234");
   const vendorHash = await argon2.hash("vendor1234");
   // Logins are named by ROLE on one domain (@qparts.local) so each persona is obvious.
   const [admin] = await sql`insert into users (email,full_name,password_hash)
     values ('admin@qparts.local','Platform Admin',${adminHash}) returning id`;
-  const [advisor] = await sql`insert into users (email,full_name,password_hash)
-    values ('advisor@qparts.local','Riyadh Advisor',${advisorHash}) returning id`;
+  // regular workspace EMPLOYEE (role service_advisor) — raises RFQs, no admin/setup access
+  const [staff] = await sql`insert into users (email,full_name,password_hash)
+    values ('staff@qparts.local','Riyadh Staff',${staffHash}) returning id`;
   // workspace ADMIN (company_admin) — sees Setup + Settings
   const [manager] = await sql`insert into users (email,full_name,password_hash)
     values ('manager@qparts.local','Riyadh Manager',${managerHash}) returning id`;
@@ -135,9 +136,9 @@ async function main() {
   // ---- access (ADR-0010 three layers) ----
   // admin = platform staff → sees ALL workspaces
   await sql`insert into platform_members (user_id,role) values (${admin.id},'super_admin')`;
-  // advisor = company-scoped to t1 only
+  // staff = service_advisor, scoped to t1 (Riyadh Main branch) only
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
-    values (${t1.id},${advisor.id},'service_advisor',${branch.id})`;
+    values (${t1.id},${staff.id},'service_advisor',${branch.id})`;
   // manager = WORKSPACE ADMIN of t1 (company_admin) → Setup + Settings
   await sql`insert into tenant_memberships (tenant_id,user_id,role)
     values (${t1.id},${manager.id},'company_admin')`;

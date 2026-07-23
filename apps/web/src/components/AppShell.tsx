@@ -16,6 +16,22 @@ import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { navForPersona, type Persona } from "../nav";
 
+/** Friendly labels for the raw role codes shown in the top bar. */
+const ROLE_LABEL: Record<string, string> = {
+  super_admin: "Super admin",
+  staff: "Staff",
+  account_manager: "Account manager",
+  purchasing: "Purchasing",
+  part_extractor: "Part extractor",
+  finance_manager: "Finance manager",
+  pricing_supervisor: "Pricing supervisor",
+  company_admin: "Company admin",
+  branch_manager: "Branch manager",
+  service_advisor: "Service advisor",
+  vendor_admin: "Vendor admin",
+  vendor_user: "Vendor user",
+};
+
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
  *  settings pinned at the bottom. The rail collapses to an icon-only strip (persisted). */
 export default function AppShell() {
@@ -273,7 +289,10 @@ export default function AppShell() {
             </button>
             <span className="text-[12px] text-muted">
               {me?.user?.full_name}
-              {me?.isInternal ? " · staff" : me?.role ? ` · ${me.role}` : ""}
+              {(() => {
+                const code = me?.isInternal ? me?.platformRole ?? "staff" : me?.role;
+                return code ? ` · ${ROLE_LABEL[code] ?? code}` : "";
+              })()}
             </span>
             <button onClick={logout} className="btn btn-sm">
               Sign out
