@@ -63,6 +63,7 @@ export class AuthGuard implements CanActivate {
 
         let tenant: { tenant_id?: string; role?: string } | undefined;
         let vendorAccess = false;
+        let workshopAccess = false;
         if (tenantSlug) {
           tenant = (await tx.execute(sql`
             select t.id as tenant_id, m.role as role
@@ -80,8 +81,17 @@ export class AuthGuard implements CanActivate {
                 where vu.user_id = ${userId}::uuid and tv.tenant_id = ${tenant.tenant_id}::uuid limit 1`)) as Array<unknown>
             )[0];
           }
+          // workshop users access a workspace via their workshop's tenant_workshops link
+          if (tenant?.tenant_id && !tenant.role && !vendorAccess) {
+            workshopAccess = !!(
+              (await tx.execute(sql`
+                select 1 from workshop_users wu
+                join tenant_workshops tw on tw.workshop_id = wu.workshop_id and tw.status = 'active'
+                where wu.user_id = ${userId}::uuid and tw.tenant_id = ${tenant.tenant_id}::uuid limit 1`)) as Array<unknown>
+            )[0];
+          }
         }
-        return { inactive: false as const, platformRole: platform?.role ?? null, tenant, vendorAccess };
+        return { inactive: false as const, platformRole: platform?.role ?? null, tenant, vendorAccess, workshopAccess };
       },
     );
 
@@ -90,22 +100,25 @@ export class AuthGuard implements CanActivate {
       platformRole: string | null;
       tenant?: { tenant_id?: string; role?: string };
       vendorAccess?: boolean;
+      workshopAccess?: boolean;
     };
     const isInternal = active.platformRole != null;
     const ctx: RequestContext = {
       userId,
       tenantSlug,
       tenantId: active.tenant?.tenant_id ?? null,
-      role: active.tenant?.role ?? (active.vendorAccess ? "vendor" : active.platformRole),
+      role:
+        active.tenant?.role ??
+        (active.vendorAccess ? "vendor" : active.workshopAccess ? "workshop" : active.platformRole),
       isInternal,
       environment: resolveEnvironment(req),
       impersonatorId,
     };
 
-    // If a workspace was requested, require access to it (member, vendor link, or platform staff).
+    // If a workspace was requested, require access (member, vendor/workshop link, or platform staff).
     if (tenantSlug) {
       if (!active.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
-      if (!isInternal && !active.tenant.role && !active.vendorAccess) {
+      if (!isInternal && !active.tenant.role && !active.vendorAccess && !active.workshopAccess) {
         throw new ForbiddenException("no access to this workspace");
       }
     }

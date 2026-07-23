@@ -7,10 +7,11 @@ import { DbService } from "../../db/db.service.js";
 
 /**
  * Workspace switcher backbone (ADR-0010). Returns every workspace the caller can access,
- * from the three identity layers:
- *   - platform staff  → all active tenants
- *   - workshop users  → tenants where they have a membership
- *   - vendor users    → tenants their vendor is linked to (tenant_vendors)
+ * from the identity layers:
+ *   - platform staff   → all active tenants
+ *   - workspace members → tenants where they have a tenant_membership
+ *   - vendor users     → tenants their vendor is linked to (tenant_vendors)
+ *   - workshop users   → tenants their workshop is linked to (tenant_workshops)
  * The frontend renders these as a switcher; switching = navigating to the workspace subdomain.
  */
 @Controller("workspaces")
@@ -65,6 +66,13 @@ export class WorkspacesController {
             join tenant_vendors tv on tv.vendor_id = vu.vendor_id and tv.status = 'active'
             join tenants t on t.id = tv.tenant_id and t.is_active = true
             where vu.user_id = ${ctx.userId}::uuid
+            union
+            -- workshop user → linked workspaces (tenant_workshops)
+            select t.id, t.slug, t.name, t.is_sandbox, 'workshop'::text as via, 'workshop'::text as role
+            from workshop_users wu
+            join tenant_workshops tw on tw.workshop_id = wu.workshop_id and tw.status = 'active'
+            join tenants t on t.id = tw.tenant_id and t.is_active = true
+            where wu.user_id = ${ctx.userId}::uuid
           )
           select distinct id, slug, name, is_sandbox, via, role from accessible order by name`),
     );

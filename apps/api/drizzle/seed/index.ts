@@ -25,7 +25,7 @@ async function main() {
     truncate table
       order_items, orders, rfq_vendor_items, rfq_vendors, rfq_items, rfqs,
       tenant_vendors, vendor_users, vendor_branches, vendors,
-      workshop_branches, workshops, tenant_memberships, platform_members,
+      workshop_users, workshop_branches, workshops, tenant_memberships, platform_members,
       tenants, plans, users, order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,
       regions, cities, cancellation_reasons, return_reasons, payment_accounts,
@@ -95,6 +95,7 @@ async function main() {
   const multiHash = await argon2.hash("multi1234");
   const managerHash = await argon2.hash("manager1234");
   const vendorHash = await argon2.hash("vendor1234");
+  const workshopHash = await argon2.hash("workshop1234");
   // Logins are named by ROLE on one domain (@qparts.local) so each persona is obvious.
   const [admin] = await sql`insert into users (email,full_name,password_hash)
     values ('admin@qparts.local','Platform Admin',${adminHash}) returning id`;
@@ -107,6 +108,9 @@ async function main() {
   // VENDOR user — lands on the vendor portal
   const [vendorUser] = await sql`insert into users (email,full_name,password_hash)
     values ('vendor@qparts.local','Gulf Vendor Admin',${vendorHash}) returning id`;
+  // WORKSHOP user — lands on the workshop (customer) portal
+  const [workshopUser] = await sql`insert into users (email,full_name,password_hash)
+    values ('workshop@qparts.local','Al Faisal Workshop Admin',${workshopHash}) returning id`;
   // a user who works with TWO workspaces — exercises workspace switching (ADR-0010)
   const [multi] = await sql`insert into users (email,full_name,password_hash)
     values ('multi@qparts.local','Multi Workspace User',${multiHash}) returning id`;
@@ -154,8 +158,11 @@ async function main() {
   await sql`insert into vendor_branches (vendor_id,name,region_id) values (${vendor.id},'Riyadh Depot',${central.id})`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${t1.id},${vendor.id},'active')`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${tSandbox.id},${vendor.id},'active')`;
-  // vendor-portal login: gulf@vendor.local is an admin of the Gulf vendor (persona = vendor)
+  // vendor-portal login: vendor@qparts.local is an admin of the Gulf vendor (persona = vendor)
   await sql`insert into vendor_users (vendor_id,user_id,is_vendor_admin) values (${vendor.id},${vendorUser.id},true)`;
+  // workshop-portal login: workshop@qparts.local is an admin of Al Faisal Motors (persona = workshop);
+  // that workshop is linked to BOTH riyadh + jeddah, so this user can switch between those workspaces.
+  await sql`insert into workshop_users (workshop_id,user_id,is_workshop_admin) values (${ws.id},${workshopUser.id},true)`;
 
   // ---- sandbox org so the sandbox guard can be exercised end-to-end ----
   const [sbWs] = await sql`insert into workshops (name) values ('Sandbox Motors') returning id`;

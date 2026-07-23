@@ -21,6 +21,30 @@ export const workshops = pgTable("workshops", {
   ...audit,
 });
 
+/**
+ * Workshop portal identity — which global user works for which global workshop (mirrors vendor_users).
+ * Global (no tenant_id); a workshop user reaches a workspace via tenant_workshops. `/me` resolves
+ * persona = "workshop" when a row exists here; the AuthGuard grants workspace access the same way.
+ */
+export const workshopUsers = pgTable(
+  "workshop_users",
+  {
+    id: pk(),
+    workshopId: uuid("workshop_id")
+      .notNull()
+      .references(() => workshops.id),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id),
+    isWorkshopAdmin: boolean("is_workshop_admin").notNull().default(false),
+    ...audit,
+  },
+  (t) => [
+    uniqueIndex("workshop_users_workshop_user_uq").on(t.workshopId, t.userId),
+    index("workshop_users_user_idx").on(t.userId),
+  ],
+);
+
 /** A physical branch of a workshop (global, under the workshop). RFQs are placed for a branch. */
 export const workshopBranches = pgTable(
   "workshop_branches",

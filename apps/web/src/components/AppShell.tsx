@@ -31,6 +31,8 @@ const ROLE_LABEL: Record<string, string> = {
   service_advisor: "Service advisor",
   vendor_admin: "Vendor admin",
   vendor_user: "Vendor user",
+  vendor: "Vendor",
+  workshop: "Workshop",
 };
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
