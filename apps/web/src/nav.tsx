@@ -21,6 +21,7 @@ import {
   Wrench,
   Boxes,
   Gauge,
+  Handshake,
   type LucideIcon,
 } from "lucide-react";
 
@@ -71,6 +72,7 @@ export const platformNav: NavGroup[] = [
     items: [
       { label: "Vendors", path: "/vendors", icon: Store },
       { label: "Workshops", path: "/org/workshops", icon: Wrench },
+      { label: "Providers", path: "/providers", icon: Handshake },
     ],
   },
   {
