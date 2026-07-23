@@ -82,10 +82,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return slug;
   }
 
+  /**
+   * Settle the user on their correct home AFTER the active workspace is resolved. The boot/login
+   * `/me` is fetched before a workspace is chosen, so for a workspace user it comes back with
+   * `role: null` (no tenant context). This heals that:
+   *   - a workspace user on the apex is sent to their workspace subdomain (tenant-correct home);
+   *   - if we stay on the apex (subdomain not reachable yet) and a workspace was auto-selected,
+   *     re-resolve `/me` so the workspace role (company_admin, …) is reflected in the nav.
+   * Platform/vendor/workshop personas are cross-workspace and stay on the apex.
+   * Returns true when navigating away (caller should stop).
+   */
+  async function settleHome(meData: Me, slug: string | null): Promise<boolean> {
+    if (slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
+      if (await subdomainReachable(slug)) {
+        window.location.href = workspaceUrl(slug);
+        return true;
+      }
+    }
+    if (slug && !meData.role && !currentSubdomain()) await loadMe();
+    return false;
+  }
+
   useEffect(() => {
     if (!authed) return;
     loadMe()
-      .then((m) => loadWorkspaces(m.isInternal))
+      .then(async (m) => {
+        const slug = await loadWorkspaces(m.isInternal);
+        await settleHome(m, slug);
+      })
       .catch(() => logout());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
@@ -96,11 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthed(true);
     const meData = await loadMe();
     const slug = await loadWorkspaces(meData.isInternal);
-    // A workspace user signing in on the apex is sent to their workspace subdomain (once wildcard
-    // DNS is live). Platform/vendor/workshop are cross-workspace and stay on the apex.
-    if (slug && subdomainMode() && meData.persona === "workspace" && currentSubdomain() !== slug) {
-      if (await subdomainReachable(slug)) window.location.href = workspaceUrl(slug);
-    }
+    await settleHome(meData, slug);
   }
   function logout() {
     auth.setToken(null);
