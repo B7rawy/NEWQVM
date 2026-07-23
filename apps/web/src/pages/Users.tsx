@@ -91,6 +91,23 @@ export default function Users() {
     }
   }
 
+  // Users & permissions are managed PER workspace (memberships belong to a workspace). In the
+  // unscoped Admin-workspace view there is no single workspace to manage, so prompt to pick one
+  // instead of leaving the table on an endless spinner.
+  if (!activeSlug) {
+    return (
+      <>
+        <PageHeader title="Users & Permissions" subtitle="People with access to a workspace" />
+        <Card>
+          <EmptyState
+            title="Select a workspace"
+            hint="User accounts and permissions are managed per workspace. Choose a workspace from the switcher to view and manage its users."
+          />
+        </Card>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader

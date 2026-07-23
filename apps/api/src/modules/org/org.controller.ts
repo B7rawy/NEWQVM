@@ -35,7 +35,7 @@ export class OrgController {
 
   @Get("branches")
   listBranches(@Req() req: Request) {
-    return this.svc.listBranches(this.ctx(req));
+    return this.svc.listBranches(this.ctxOpen(req));
   }
 
   @Post("branches")
@@ -46,11 +46,11 @@ export class OrgController {
 
   @Get("regions")
   regions(@Req() req: Request) {
-    return this.svc.regions(this.ctx(req));
+    return this.svc.regions(this.ctxOpen(req));
   }
 
   @Get("cities")
   cities(@Req() req: Request, @Query("regionId") regionId?: string) {
-    return this.svc.cities(this.ctx(req), regionId);
+    return this.svc.cities(this.ctxOpen(req), regionId);
   }
 }

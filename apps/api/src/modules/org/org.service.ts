@@ -62,17 +62,29 @@ export class OrgService {
     );
   }
 
-  /** Branches of workshops LINKED to the active workspace. */
+  /** Branches of workshops LINKED to the active workspace; for unscoped platform staff, EVERY
+   *  branch across all (global) workshops — the master-data view mirroring listWorkshops. */
   async listBranches(ctx: RlsContext) {
-    const rows = await this.dbService.withContext(scoped(ctx), (tx) =>
-      tx.execute(sql`
-        select wb.id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
-          w.name as workshop, r.label_en as region
-        from tenant_workshops tw
-        join workshops w on w.id = tw.workshop_id and tw.status <> 'archived'
-        join workshop_branches wb on wb.workshop_id = w.id
-        left join regions r on r.id = wb.region_id
-        order by w.name, wb.name`),
+    const global = ctx.isInternal && !ctx.tenantId;
+    const rows = await this.dbService.withContext(
+      global ? { tenantId: null, userId: ctx.userId, isInternal: true } : scoped(ctx),
+      (tx) =>
+        global
+          ? tx.execute(sql`
+              select wb.id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
+                w.name as workshop, r.label_en as region
+              from workshop_branches wb
+              join workshops w on w.id = wb.workshop_id
+              left join regions r on r.id = wb.region_id
+              order by w.name, wb.name`)
+          : tx.execute(sql`
+              select wb.id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
+                w.name as workshop, r.label_en as region
+              from tenant_workshops tw
+              join workshops w on w.id = tw.workshop_id and tw.status <> 'archived'
+              join workshop_branches wb on wb.workshop_id = w.id
+              left join regions r on r.id = wb.region_id
+              order by w.name, wb.name`),
     );
     return { count: rows.length, branches: rows };
   }
