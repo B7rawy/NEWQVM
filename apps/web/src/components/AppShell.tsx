@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import ErrorBoundary from "./ErrorBoundary";
 import {
   ChevronsUpDown,
   Search,
@@ -39,6 +40,7 @@ export default function AppShell() {
   const active = workspaces.find((w) => w.slug === activeSlug);
   const [wsOpen, setWsOpen] = useState(false);
   const [theme, toggleTheme] = useTheme();
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("qvm_sidebar") === "1";
@@ -303,7 +305,9 @@ export default function AppShell() {
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-auto px-6 py-6">
-          <Outlet />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
