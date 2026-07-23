@@ -1,7 +1,9 @@
 /** Single API client. Adds the JWT and the active-workspace header (X-Tenant) to every call. */
 import { currentSubdomain, getCookie, setSharedCookie } from "./tenant";
 
-const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
+// Production always talks to the same origin (nginx proxies /api). Dev hits the local API.
+// `||` (not `??`) so an unset OR empty VITE_API_URL both fall through to the mode default.
+const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http://localhost:4000");
 
 const TOKEN_KEY = "qvm_token";
 const WS_KEY = "qvm_ws";
