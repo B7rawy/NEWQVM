@@ -7,7 +7,6 @@ import {
   Plus,
   Tag,
   Send,
-  ChevronRight,
   ChevronDown,
   StickyNote,
   X,
@@ -19,7 +18,7 @@ import {
   Copy,
   Undo2,
 } from "lucide-react";
-import { PageHeader, Card, StatStrip, Badge, EmptyState } from "../components/ui";
+import { PageHeader, PageHero, Card, StatStrip, Badge, EmptyState } from "../components/ui";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Internal Dashboard (Orders & RFQs) — frontend-only rebuild.
@@ -343,24 +342,13 @@ export default function InternalDashboard() {
 
   return (
     <>
-      {/* ── Hero banner ──────────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-xl2 border border-line bg-[#0d4151] px-6 py-6 text-white shadow-card sm:px-8">
-        <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 right-24 h-56 w-56 rounded-full bg-accent/20 blur-3xl" />
-        <div className="relative max-w-2xl">
-          <div className="flex items-center gap-1.5 text-[12px] text-white/60">
-            <span>Home</span>
-            <ChevronRight className="h-3.5 w-3.5" />
-            <span>Internal</span>
-            <ChevronRight className="h-3.5 w-3.5" />
-            <span className="text-white/90">Orders &amp; RFQs</span>
-          </div>
-          <h1 className="mt-2 text-[26px] font-bold tracking-tight sm:text-[30px]">Internal Dashboard</h1>
-          <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-white/70">
-            Manage RFQs, pricing and order fulfillment in one place — track every request from quotation to delivery,
-            compare vendor costs, and keep your whole team aligned.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
+      {/* ── Hero banner (shared identity) ────────────────────────────────── */}
+      <PageHero
+        breadcrumb={["Home", "Internal", "Orders & RFQs"]}
+        title="Internal Dashboard"
+        description="Manage RFQs, pricing and order fulfillment in one place — track every request from quotation to delivery, compare vendor costs, and keep your whole team aligned."
+        actions={
+          <>
             <div className="inline-flex items-center rounded-full bg-white/10 p-0.5 text-[12px] font-medium ring-1 ring-white/15">
               {(["regular", "bulk"] as Mode[]).map((m) => (
                 <button
@@ -380,12 +368,12 @@ export default function InternalDashboard() {
             >
               <Plus className="h-4 w-4" /> Create Order
             </button>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      {/* ── KPI strip (overlapping banner) ───────────────────────────────── */}
-      <div className="relative z-10 -mt-8 mb-5">
+      {/* ── KPI strip ────────────────────────────────────────────────────── */}
+      <div>
         <StatStrip>
           {KPIS.map((k, i) => {
             const active = statusFilter.includes(k.statusId);

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  Home,
-  ChevronRight,
   Wrench,
   ShoppingBag,
   Building2,
@@ -26,7 +24,7 @@ import {
   BadgeCheck,
   Languages,
 } from "lucide-react";
-import { Card } from "../components/ui";
+import { Card, PageHero } from "../components/ui";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Management Overview — Executive Analytics Dashboard (frontend-only rebuild).
@@ -567,43 +565,32 @@ export default function ManagementOverview() {
         }
       `}</style>
 
-      {/* ── Hero banner ─────────────────────────────────────────────────── */}
-      <div className="relative overflow-hidden rounded-xl2 border border-line px-6 py-6 sm:px-8 sm:py-7" style={{ background: "linear-gradient(120deg,#0D4151 0%,#114a5c 55%,#0f766e 100%)" }}>
-        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full" style={{ background: "radial-gradient(circle,rgba(45,212,191,.35),transparent 70%)" }} />
-        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full" style={{ background: "radial-gradient(circle,rgba(56,189,248,.28),transparent 70%)" }} />
-        <div className="pointer-events-none absolute inset-0 opacity-[0.12]" style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.7) 1px, transparent 1px)", backgroundSize: "22px 22px" }} />
-        <div className="relative max-w-2xl text-white">
-          <div className="flex items-center gap-1.5 text-[12px] text-white/70">
-            <Home className="h-3.5 w-3.5" />
-            <span>{L(lang, "Home", "الرئيسية")}</span>
-            <ChevronRight className={`h-3.5 w-3.5 ${rtl ? "rotate-180" : ""}`} />
-            <span className="text-white/90">{L(lang, "Management Overview", "نظرة الإدارة العامة")}</span>
-          </div>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <h1 className="text-[24px] font-semibold tracking-tight sm:text-[27px]">
-              {L(lang, "Management Overview", "نظرة الإدارة العامة")}
-            </h1>
-            <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ring-1 ring-white/25">
-              {L(lang, "Demo data", "بيانات تجريبية")}
-            </span>
-          </div>
-          <div className="mt-1 text-[12.5px] text-white/70">{dateLine}</div>
-          <p className="mt-3 max-w-xl text-[13px] leading-relaxed text-white/85">
-            {L(
-              lang,
-              "Executive analytics across workshops, purchasing and suppliers — durations, volumes, value and SLA performance at a glance.",
-              "تحليلات تنفيذية للورش والمشتريات والموردين — المدد والأحجام والقيمة والالتزام باتفاقيات الخدمة في لمحة.",
-            )}
-          </p>
-        </div>
-        <button
-          onClick={() => setLang((l) => (l === "AR" ? "EN" : "AR"))}
-          className="absolute end-5 top-5 flex items-center gap-1.5 rounded-md bg-white/15 px-2.5 py-1.5 text-[12px] font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
-        >
-          <Languages className="h-3.5 w-3.5" />
-          {lang === "AR" ? "EN" : "عربي"}
-        </button>
-      </div>
+      {/* ── Hero banner (shared identity) ───────────────────────────────── */}
+      <PageHero
+        rtl={rtl}
+        breadcrumb={[L(lang, "Home", "الرئيسية"), L(lang, "Management Overview", "نظرة الإدارة العامة")]}
+        title={L(lang, "Management Overview", "نظرة الإدارة العامة")}
+        badge={
+          <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ring-1 ring-white/25">
+            {L(lang, "Demo data", "بيانات تجريبية")}
+          </span>
+        }
+        meta={dateLine}
+        description={L(
+          lang,
+          "Executive analytics across workshops, purchasing and suppliers — durations, volumes, value and SLA performance at a glance.",
+          "تحليلات تنفيذية للورش والمشتريات والموردين — المدد والأحجام والقيمة والالتزام باتفاقيات الخدمة في لمحة.",
+        )}
+        corner={
+          <button
+            onClick={() => setLang((l) => (l === "AR" ? "EN" : "AR"))}
+            className="flex items-center gap-1.5 rounded-md bg-white/15 px-2.5 py-1.5 text-[12px] font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
+          >
+            <Languages className="h-3.5 w-3.5" />
+            {lang === "AR" ? "EN" : "عربي"}
+          </button>
+        }
+      />
 
       {/* ── Tab switcher ────────────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-2">

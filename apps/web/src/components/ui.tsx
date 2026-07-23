@@ -1,6 +1,75 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
+import { ChevronRight, Home } from "lucide-react";
 
 /** Stripe-language UI primitives, QVM red accent. */
+
+/**
+ * The one page banner used across the app — a single visual identity for every hero.
+ * Fixed deep teal-navy gradient (does NOT flip with the theme, so the white text always
+ * has contrast), soft glows + dot texture, then: breadcrumb → title (+badge) → meta →
+ * description → actions. `corner` renders a top-end control (e.g. a language toggle).
+ * Owns its own bottom spacing (mb-5) so pages don't hand-tune the gap.
+ */
+export function PageHero({
+  breadcrumb,
+  title,
+  badge,
+  meta,
+  description,
+  actions,
+  corner,
+  rtl = false,
+}: {
+  breadcrumb?: string[];
+  title: string;
+  badge?: ReactNode;
+  meta?: ReactNode;
+  description?: ReactNode;
+  actions?: ReactNode;
+  corner?: ReactNode;
+  rtl?: boolean;
+}) {
+  return (
+    <div
+      className="relative mb-5 overflow-hidden rounded-xl2 border border-line px-6 py-6 sm:px-8 sm:py-7"
+      style={{ background: "linear-gradient(120deg,#0D4151 0%,#114a5c 55%,#0f766e 100%)" }}
+    >
+      <div
+        className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full"
+        style={{ background: "radial-gradient(circle,rgba(45,212,191,.35),transparent 70%)" }}
+      />
+      <div
+        className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full"
+        style={{ background: "radial-gradient(circle,rgba(56,189,248,.28),transparent 70%)" }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.12]"
+        style={{ backgroundImage: "radial-gradient(rgba(255,255,255,.7) 1px, transparent 1px)", backgroundSize: "22px 22px" }}
+      />
+      <div className="relative text-white">
+        {breadcrumb && breadcrumb.length > 0 && (
+          <div className="flex items-center gap-1.5 text-[12px] text-white/70">
+            <Home className="h-3.5 w-3.5 shrink-0" />
+            {breadcrumb.map((b, i) => (
+              <Fragment key={b}>
+                {i > 0 && <ChevronRight className={`h-3.5 w-3.5 shrink-0 ${rtl ? "rotate-180" : ""}`} />}
+                <span className={i === breadcrumb.length - 1 ? "text-white/90" : undefined}>{b}</span>
+              </Fragment>
+            ))}
+          </div>
+        )}
+        <div className="mt-2 flex flex-wrap items-center gap-3">
+          <h1 className="text-[24px] font-semibold tracking-tight sm:text-[28px]">{title}</h1>
+          {badge}
+        </div>
+        {meta && <div className="mt-1 text-[12.5px] text-white/70">{meta}</div>}
+        {description && <p className="mt-2.5 max-w-2xl text-[13px] leading-relaxed text-white/85">{description}</p>}
+        {actions && <div className="mt-4 flex flex-wrap items-center gap-3">{actions}</div>}
+      </div>
+      {corner && <div className="absolute end-5 top-5">{corner}</div>}
+    </div>
+  );
+}
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: ReactNode }) {
   return (
