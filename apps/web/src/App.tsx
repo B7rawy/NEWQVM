@@ -14,9 +14,9 @@ import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
-import { platformNav, workspaceNav, vendorNav } from "./nav";
+import { platformNav, workspaceNav, vendorNav, workshopNav, providerNav } from "./nav";
 
-const ALL_ITEMS = [...platformNav, ...workspaceNav, ...vendorNav].flatMap((g) => g.items);
+const ALL_ITEMS = [...platformNav, ...workspaceNav, ...vendorNav, ...workshopNav, ...providerNav].flatMap((g) => g.items);
 
 /** Honest placeholder for sections not yet wired. */
 function Placeholder() {
@@ -48,7 +48,7 @@ export default function App() {
   // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
-  const home = me.persona === "vendor" ? "/vendor" : "/overview";
+  const home = me.persona === "vendor" ? "/vendor" : me.persona === "service_provider" ? "/provider" : "/overview";
   const placeholders = ALL_ITEMS.filter((i) => !WIRED.has(i.path));
 
   return (

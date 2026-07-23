@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
-import { navForPersona } from "../nav";
+import { navForPersona, type Persona } from "../nav";
 
 /** Stripe-style shell: workspace switcher + search at the top of the sidebar, flat dense nav,
  *  settings pinned at the bottom. The rail collapses to an icon-only strip (persisted). */
@@ -38,13 +38,36 @@ export default function AppShell() {
     }
   }, [collapsed]);
 
-  const persona = me?.persona ?? "workspace";
+  // Portal preview — platform staff can preview any persona's sidebar (design aid; nav only).
+  const realPersona: Persona = me?.persona ?? "workspace";
+  const canPreview = !!me?.isInternal;
+  const [previewPersona, setPreviewPersona] = useState<Persona | "">(() => {
+    try {
+      return (localStorage.getItem("qvm_portal_preview") as Persona) || "";
+    } catch {
+      return "";
+    }
+  });
+  function changePreview(p: Persona | "") {
+    setPreviewPersona(p);
+    try {
+      if (p) localStorage.setItem("qvm_portal_preview", p);
+      else localStorage.removeItem("qvm_portal_preview");
+    } catch {
+      /* ignore */
+    }
+  }
+  const previewing = canPreview && !!previewPersona && previewPersona !== realPersona;
+  const persona: Persona = canPreview && previewPersona ? previewPersona : realPersona;
   const groups = navForPersona(persona, {
-    isSuperAdmin: me?.platformRole === "super_admin",
-    isCompanyAdmin: me?.role === "company_admin",
+    isSuperAdmin: previewing ? true : me?.platformRole === "super_admin",
+    isCompanyAdmin: previewing ? true : me?.role === "company_admin",
   });
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
-  const portalLabel = persona === "platform" ? "Platform" : persona === "vendor" ? "Vendor" : "Workspace";
+  const portalLabel =
+    ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider" } as const)[
+      persona
+    ] ?? "Workspace";
 
   return (
     <div
@@ -222,6 +245,23 @@ export default function AppShell() {
               </button>
             ))}
           </div>
+          {canPreview && (
+            <label className="flex items-center gap-1.5" title="Preview a portal's sidebar">
+              <Eye className="h-3.5 w-3.5 text-faint" />
+              <select
+                value={previewPersona}
+                onChange={(e) => changePreview(e.target.value as Persona | "")}
+                className={`rounded-md border px-2 py-1 text-[12px] ${previewing ? "border-accent text-accent" : "border-line bg-panel text-muted"}`}
+              >
+                <option value="">My portal</option>
+                <option value="platform">Platform</option>
+                <option value="workspace">Workspace (manager)</option>
+                <option value="vendor">Vendor</option>
+                <option value="workshop">Workshop</option>
+                <option value="service_provider">Provider</option>
+              </select>
+            </label>
+          )}
           <div className="ml-auto flex items-center gap-3">
             <button
               onClick={toggleTheme}
