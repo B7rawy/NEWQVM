@@ -1,20 +1,27 @@
 import { useEffect, useState } from "react";
+import { getCookie, setSharedCookie } from "./tenant";
 
 export type Theme = "light" | "dark";
 const KEY = "qvm_theme";
 
-/** Resolve the theme that should apply now: explicit choice wins, else the OS preference. */
+/**
+ * Resolve the theme: the saved choice wins (shared across subdomains via a cookie, so switching
+ * workspace keeps it), otherwise the default is LIGHT. We deliberately do NOT follow the OS
+ * dark-mode preference — light is the product default.
+ */
 export function resolveTheme(): Theme {
+  const stored = getCookie(KEY) ?? safeLocal();
+  return stored === "dark" ? "dark" : "light";
+}
+function safeLocal(): string | null {
   try {
-    const stored = localStorage.getItem(KEY) as Theme | null;
-    if (stored === "light" || stored === "dark") return stored;
+    return localStorage.getItem(KEY);
   } catch {
-    /* ignore */
+    return null;
   }
-  return typeof matchMedia !== "undefined" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-/** Apply the theme to <html> and persist the choice. */
+/** Apply the theme to <html> and persist it in localStorage + a cross-subdomain cookie. */
 export function applyTheme(t: Theme): void {
   document.documentElement.classList.toggle("dark", t === "dark");
   try {
@@ -22,6 +29,7 @@ export function applyTheme(t: Theme): void {
   } catch {
     /* ignore */
   }
+  setSharedCookie(KEY, t);
 }
 
 /** Small hook: current theme + a toggler. Syncs the class on mount in case the pre-paint script missed. */
