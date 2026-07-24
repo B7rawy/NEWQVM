@@ -18,6 +18,10 @@ import OnboardingReview from "./pages/OnboardingReview";
 import VendorOverview from "./pages/vendor/VendorOverview";
 import VendorQuotations from "./pages/vendor/VendorQuotations";
 import VendorQuotationDetail from "./pages/vendor/VendorQuotationDetail";
+import WorkshopOverview from "./pages/workshop/WorkshopOverview";
+import WorkshopRequests from "./pages/workshop/WorkshopRequests";
+import WorkshopNewRequest from "./pages/workshop/WorkshopNewRequest";
+import WorkshopRequestDetail from "./pages/workshop/WorkshopRequestDetail";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
@@ -64,6 +68,9 @@ const WIRED = new Set([
   "/onboarding/review",
   "/vendor",
   "/vendor/quotations",
+  "/workshop",
+  "/workshop/requests",
+  "/workshop/requests/new",
   "/settings",
 ]);
 
@@ -78,11 +85,13 @@ export default function App() {
   const systemMode = me.isInternal && !activeSlug;
   const home = me.persona === "vendor"
     ? "/vendor"
-    : me.persona === "service_provider"
-      ? "/provider"
-      : systemMode
-        ? "/admin/workspaces"
-        : "/overview";
+    : me.persona === "workshop"
+      ? "/workshop"
+      : me.persona === "service_provider"
+        ? "/provider"
+        : systemMode
+          ? "/admin/workspaces"
+          : "/overview";
   // one placeholder route per unwired path (a path can appear in several persona navs)
   const seenPaths = new Set(WIRED);
   const placeholders = ALL_ITEMS.filter((i) => (seenPaths.has(i.path) ? false : (seenPaths.add(i.path), true)));
@@ -105,6 +114,10 @@ export default function App() {
         <Route path="/vendor" element={<VendorOverview />} />
         <Route path="/vendor/quotations" element={<VendorQuotations />} />
         <Route path="/vendor/quotations/:id" element={<VendorQuotationDetail />} />
+        <Route path="/workshop" element={<WorkshopOverview />} />
+        <Route path="/workshop/requests" element={<WorkshopRequests />} />
+        <Route path="/workshop/requests/new" element={<WorkshopNewRequest />} />
+        <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />

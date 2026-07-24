@@ -235,19 +235,19 @@ export const vendorNav: NavGroup[] = [
 export const workshopNav: NavGroup[] = [
   {
     heading: "Overview",
-    items: [{ label: "Dashboard", path: "/overview", icon: LayoutDashboard }],
+    items: [{ label: "Dashboard", path: "/workshop", icon: LayoutDashboard }],
   },
   {
     heading: "Request parts",
     items: [
-      { label: "New Request", path: "/rfq-new", icon: FilePlus2 },
-      { label: "My Requests", path: "/rfqs", icon: Files },
+      { label: "New Request", path: "/workshop/requests/new", icon: FilePlus2 },
+      { label: "My Requests", path: "/workshop/requests", icon: Files },
     ],
   },
   {
     heading: "Orders & deliveries",
     items: [
-      { label: "My Orders", path: "/orders", icon: ShoppingCart },
+      { label: "My Orders", path: "/orders", icon: ShoppingCart, soon: true },
       { label: "Deliveries", path: "/deliveries", icon: Truck, soon: true },
       { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true },
     ],

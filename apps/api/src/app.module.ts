@@ -52,6 +52,8 @@ import { AccountController } from "./modules/account/account.controller.js";
 import { AccountService } from "./modules/account/account.service.js";
 import { VendorPortalController } from "./modules/vendor-portal/vendor-portal.controller.js";
 import { VendorPortalService } from "./modules/vendor-portal/vendor-portal.service.js";
+import { WorkshopPortalController } from "./modules/workshop-portal/workshop-portal.controller.js";
+import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal.service.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -86,6 +88,7 @@ import { VendorPortalService } from "./modules/vendor-portal/vendor-portal.servi
     CounterpartyController,
     AccountController,
     VendorPortalController,
+    WorkshopPortalController,
   ],
   providers: [
     RfqService,
@@ -113,6 +116,7 @@ import { VendorPortalService } from "./modules/vendor-portal/vendor-portal.servi
     CounterpartyService,
     AccountService,
     VendorPortalService,
+    WorkshopPortalService,
   ],
 })
 export class AppModule {}
