@@ -119,6 +119,26 @@ export class WorkshopPortalService {
     });
   }
 
+  /** The workshop's branches + the workspaces it works with (read-only account page). */
+  async branches(ctx: RlsContext) {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+      await this.requireWorkshopUser(tx, ctx.userId);
+      const branches = await tx.execute(sql`
+        select wb.id, wb.name, w.name as workshop, r.label_en as region, wb.order_category
+        from workshop_branches wb
+        join workshops w on w.id = wb.workshop_id
+        join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
+        left join regions r on r.id = wb.region_id
+        where wb.is_active = true order by wb.name`);
+      const ws = (await tx.execute(sql`
+        select distinct t.name from tenant_workshops tw
+        join tenants t on t.id = tw.tenant_id
+        join workshop_users wu on wu.workshop_id = tw.workshop_id and wu.user_id = ${ctx.userId}::uuid
+        where tw.status = 'active' order by t.name`)) as Array<{ name: string }>;
+      return { branches, workspaces: ws.map((w) => w.name) };
+    });
+  }
+
   /** Create a request (RFQ) in a chosen linked workspace, for one of the workshop's own branches. */
   async createRequest(ctx: RlsContext, dto: z.infer<typeof createRequestSchema>) {
     // ownership + link check (internal read)

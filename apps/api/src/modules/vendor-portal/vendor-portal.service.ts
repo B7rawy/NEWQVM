@@ -106,6 +106,25 @@ export class VendorPortalService {
     });
   }
 
+  /** The vendor's own profile: identity + branches + the workspaces it supplies (read-only). */
+  async profile(ctx: RlsContext) {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const vid = await this.requireVendorId(tx, ctx.userId);
+      const v = (await tx.execute(sql`
+        select legal_name, counterparty_type, activation_status, vendor_type, primary_email, primary_phone,
+          tax_number, commercial_registration_number
+        from vendors where id = ${vid}::uuid limit 1`))[0] as object;
+      const branches = await tx.execute(sql`
+        select vb.id, vb.name, vb.address, r.label_en as region
+        from vendor_branches vb left join regions r on r.id = vb.region_id
+        where vb.vendor_id = ${vid}::uuid order by vb.name`);
+      const ws = (await tx.execute(sql`
+        select t.name from tenant_vendors tv join tenants t on t.id = tv.tenant_id
+        where tv.vendor_id = ${vid}::uuid and tv.status <> 'archived' order by t.name`)) as Array<{ name: string }>;
+      return { ...v, branches, workspaces: ws.map((w) => w.name) };
+    });
+  }
+
   /** Submit / update this vendor's quote for a request (reuses the token-quote write path). */
   async submitQuote(ctx: RlsContext, rfqVendorId: string, dto: z.infer<typeof submitQuoteSchema>) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {

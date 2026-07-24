@@ -224,8 +224,8 @@ export const vendorNav: NavGroup[] = [
   {
     heading: "Account",
     items: [
+      { label: "Vendor Profile", path: "/vendor/profile", icon: UserCircle },
       { label: "Branches & Users", path: "/vendor/branches", icon: Building2, soon: true },
-      { label: "Vendor Profile", path: "/vendor/profile", icon: UserCircle, soon: true },
       { label: "Settings", path: "/vendor/settings", icon: Settings, soon: true },
     ],
   },
@@ -262,9 +262,9 @@ export const workshopNav: NavGroup[] = [
   {
     heading: "Account",
     items: [
-      { label: "Branches", path: "/org/workshops", icon: Building2 },
-      { label: "Users & Permissions", path: "/admin/users", icon: Users },
-      { label: "Settings", path: "/settings", icon: UserCircle },
+      { label: "Branches", path: "/workshop/branches", icon: Building2 },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users, soon: true },
+      { label: "Settings", path: "/settings", icon: UserCircle, soon: true },
     ],
   },
 ];

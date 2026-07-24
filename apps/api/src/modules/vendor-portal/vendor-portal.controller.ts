@@ -22,6 +22,11 @@ export class VendorPortalController {
     return this.svc.overview(this.ctx(req));
   }
 
+  @Get("profile")
+  profile(@Req() req: Request) {
+    return this.svc.profile(this.ctx(req));
+  }
+
   @Get("quotations")
   quotations(@Req() req: Request) {
     return this.svc.quotations(this.ctx(req));
