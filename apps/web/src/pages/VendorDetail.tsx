@@ -64,7 +64,7 @@ export default function VendorDetail() {
         actions={
           <div className="flex items-center gap-2">
             <Badge tone={statusTone(v.activation_status)}>{v.activation_status}</Badge>
-            {d.accounts.length > 0 ? <Badge tone="green">has login</Badge> : <Badge tone="amber">no login</Badge>}
+            {d.accounts.length > 0 ? <Badge tone="green">portal access</Badge> : <Badge tone="amber">no portal access</Badge>}
             {isPlatform && admin && (
               <button className="btn btn-sm rounded-md" onClick={() => impersonate(admin.id)}>
                 <Eye className="h-3.5 w-3.5" /> View as
@@ -99,21 +99,21 @@ export default function VendorDetail() {
         <Card className="lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-[14px] font-semibold text-ink">
-              <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal accounts
+              <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal users
             </h3>
             {isPlatform && (
               <div className="flex items-center gap-1.5">
                 <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
-                  <KeyRound className="h-3.5 w-3.5" /> Create login
+                  <KeyRound className="h-3.5 w-3.5" /> Add user
                 </button>
                 <button className="btn btn-sm rounded-md" onClick={() => setBulk(true)}>
-                  <Upload className="h-3.5 w-3.5" /> Import logins
+                  <Upload className="h-3.5 w-3.5" /> Import users
                 </button>
               </div>
             )}
           </div>
           {d.accounts.length === 0 ? (
-            <p className="text-[12.5px] text-muted">No login yet — this supplier cannot sign in to price requests. Create one so they can quote themselves.</p>
+            <p className="text-[12.5px] text-muted">No users yet — this supplier cannot sign in to price requests. Add one so they can quote themselves.</p>
           ) : (
             <table className="w-full">
               <thead><tr><th className="th">Name</th><th className="th">Email</th><th className="th">Role</th><th className="th">Status</th></tr></thead>

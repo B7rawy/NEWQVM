@@ -111,21 +111,21 @@ export default function WorkshopDetail() {
         <Card className="lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-[14px] font-semibold text-ink">
-              <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal accounts
+              <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal users
             </h3>
             {isPlatform && (
               <div className="flex items-center gap-1.5">
                 <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
-                  <KeyRound className="h-3.5 w-3.5" /> Create login
+                  <KeyRound className="h-3.5 w-3.5" /> Add user
                 </button>
                 <button className="btn btn-sm rounded-md" onClick={() => setBulk(true)}>
-                  <Upload className="h-3.5 w-3.5" /> Import logins
+                  <Upload className="h-3.5 w-3.5" /> Import users
                 </button>
               </div>
             )}
           </div>
           {d.accounts.length === 0 ? (
-            <p className="text-[12.5px] text-muted">No login yet — nobody can sign in as this workshop. Create one so the owner can raise their own requests.</p>
+            <p className="text-[12.5px] text-muted">No users yet — nobody can sign in as this workshop. Add one so the owner can raise their own requests.</p>
           ) : (
             <table className="w-full">
               <thead><tr><th className="th">Name</th><th className="th">Email</th><th className="th">Role</th><th className="th">Status</th></tr></thead>

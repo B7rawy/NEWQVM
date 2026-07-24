@@ -69,9 +69,9 @@ export default function BulkAccountsDialog({
     <Card className="mb-5">
       <div className="mb-3 flex items-start justify-between">
         <div>
-          <h3 className="text-[14px] font-semibold text-ink">Import logins for “{entityName}”</h3>
+          <h3 className="text-[14px] font-semibold text-ink">Import users for “{entityName}”</h3>
           <p className="mt-0.5 text-[12.5px] text-muted">
-            Upload an .xlsx/.csv with a header row: <span className="tnum">Email, Full name, Phone, Password</span>. Leave Password empty to invite.
+            Upload an .xlsx/.csv with a header row: <span className="tnum">Email, Full name, Phone, Password</span>. Leave Password empty to send an invite.
           </p>
         </div>
         <button className="btn btn-sm rounded-md" onClick={() => onClose(!!result)}>Close</button>
@@ -85,12 +85,12 @@ export default function BulkAccountsDialog({
         <button className="btn btn-sm rounded-md" onClick={template}><Download className="h-3.5 w-3.5" /> Template</button>
         {rows && rows.length > 0 && !result && (
           <button className="btn-primary rounded-md" disabled={busy} onClick={doImport}>
-            {busy ? "Importing…" : `Create ${rows.length} login${rows.length > 1 ? "s" : ""}`}
+            {busy ? "Importing…" : `Add ${rows.length} user${rows.length > 1 ? "s" : ""}`}
           </button>
         )}
       </div>
 
-      {busy && <Spinner label="Creating accounts…" />}
+      {busy && <Spinner label="Adding users…" />}
 
       {/* preview before import */}
       {rows && rows.length > 0 && !result && !busy && (

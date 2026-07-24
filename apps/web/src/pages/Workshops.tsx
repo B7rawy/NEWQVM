@@ -213,7 +213,7 @@ export default function Workshops() {
                       ) : (
                         <div className="flex flex-wrap gap-1">
                           {w.branches === 0 && <Badge tone="amber">needs branch</Badge>}
-                          {!w.has_account && <Badge tone="gray">needs login</Badge>}
+                          {!w.has_account && <Badge tone="gray">needs user</Badge>}
                         </div>
                       )}
                     </td>
@@ -221,7 +221,7 @@ export default function Workshops() {
                       <div className="flex items-center justify-end gap-1.5">
                         {isPlatform && !w.has_account && (
                           <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: w.id, name: w.name })}>
-                            <KeyRound className="h-3.5 w-3.5" /> Create login
+                            <KeyRound className="h-3.5 w-3.5" /> Add user
                           </button>
                         )}
                         <button className="btn btn-sm rounded-md" onClick={() => nav(`/org/workshops/${w.id}`)}>Open</button>

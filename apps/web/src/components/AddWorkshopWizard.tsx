@@ -8,7 +8,7 @@ import { Field } from "./ui";
  * them in order instead of leaving disconnected forms on the page:
  *   1. Identity — legal form drives the mandatory identifier (company⇒tax, individual⇒mobile).
  *   2. First branch — an RFQ is always raised for a branch, so a workshop with none can't transact.
- *   3. Portal access — the owner's login; without it nobody can sign in as this workshop.
+ *   3. Portal access — the owner's user account; without it nobody can sign in as this workshop.
  * Steps 2 and 3 are skippable and can be completed later from the row actions.
  */
 interface Region { id: string; name: string }
@@ -208,7 +208,7 @@ export default function AddWorkshopWizard({ regions, workspaces, activeSlug, onC
         {/* STEP 3 — portal access */}
         {step === 2 && (
           <div className="flex flex-col gap-4">
-            <p className="text-[12.5px] text-muted">Give the owner a login so they can raise their own requests. You can also do this later.</p>
+            <p className="text-[12.5px] text-muted">Add the owner as a user so they can raise their own requests. You can also do this later.</p>
             <Field label="Owner email">
               <input className="input" type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder="owner@workshop.sa" />
             </Field>
@@ -218,7 +218,7 @@ export default function AddWorkshopWizard({ regions, workspaces, activeSlug, onC
             <div className="flex gap-2">
               <button className="btn rounded-md" onClick={() => addAccount(true)}>Skip for now</button>
               <button className="btn-primary flex-1 rounded-md" disabled={busy || !ownerEmail.includes("@") || (!!ownerPass && ownerPass.length < 8)} onClick={() => addAccount()}>
-                {busy ? "Creating…" : "Create login & finish"}
+                {busy ? "Adding…" : "Add user & finish"}
               </button>
             </div>
           </div>
@@ -234,7 +234,7 @@ export default function AddWorkshopWizard({ regions, workspaces, activeSlug, onC
             <ul className="flex flex-col gap-1 text-[13px] text-sub">
               <li>✓ Workshop created ({isCompany ? "company" : "individual"})</li>
               <li>{result.branch ? `✓ Branch “${result.branch}” added` : "— No branch yet (add one from the list)"}</li>
-              <li>{result.account ? `✓ Login created for ${result.account}` : "— No login yet (create one from the list)"}</li>
+              <li>{result.account ? `✓ User added: ${result.account}` : "— No user yet (add one from the list)"}</li>
             </ul>
             <button className="btn-primary rounded-md" onClick={() => onClose(true)}>Done</button>
           </div>
