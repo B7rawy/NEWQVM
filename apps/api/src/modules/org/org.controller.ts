@@ -31,7 +31,7 @@ export class OrgController {
   @Post("workshops")
   @PlatformOnly()
   createWorkshop(@Req() req: Request, @Body() body: unknown) {
-    return this.svc.createWorkshop(this.ctx(req), createWorkshopSchema.parse(body));
+    return this.svc.createWorkshop(this.ctxOpen(req), createWorkshopSchema.parse(body));
   }
 
   @Get("branches")

@@ -182,7 +182,7 @@ export const workspaceNav: NavGroup[] = [
     heading: "Setup",
     items: [
       { label: "Add supplier / workshop", path: "/onboarding", icon: UserPlus, adminOnly: true },
-      { label: "Workshops & Branches", path: "/org/workshops", icon: Wrench, adminOnly: true },
+      { label: "Workshops", path: "/org/workshops", icon: Wrench, adminOnly: true },
       { label: "Vendors", path: "/vendors", icon: Store, adminOnly: true },
       { label: "Providers", path: "/providers", icon: Handshake, adminOnly: true },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, adminOnly: true },

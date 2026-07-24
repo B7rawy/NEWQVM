@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
@@ -92,13 +92,22 @@ export class VendorsService {
     return this.dbService.withContext(
       { tenantId: target, userId: ctx.userId, isInternal: true },
       async (tx) => {
-        const [v] = (await tx.execute(sql`
+        let v: { id: string };
+        try {
+          [v] = (await tx.execute(sql`
           insert into vendors (legal_name, counterparty_type, commercial_registration_number, tax_number, primary_email,
             primary_phone, vendor_type, payment_terms_days, created_by, updated_by)
           values (${dto.legalName}, ${dto.counterpartyType}, ${dto.commercialRegistrationNumber ?? null}, ${dto.taxNumber ?? null},
             ${dto.primaryEmail ?? null}, ${dto.primaryPhone ?? null}, ${dto.vendorType ?? "commercial"},
             ${dto.paymentTermsDays ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
           returning id`)) as Array<{ id: string }>;
+      } catch (e) {
+        // scoped partial-unique (company→tax, individual→mobile): the identity already exists —
+        // the caller should LINK/merge the existing one, not create a duplicate.
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException("a counterparty with this identifier already exists — link the existing one instead");
+        throw e;
+      }
         await tx.execute(sql`
           insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
           values (${target}::uuid, ${v.id}::uuid, 'active', ${dto.classification ?? null},

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
@@ -61,12 +61,19 @@ export class ProvidersService {
   async create(ctx: RlsContext, dto: z.infer<typeof createProviderSchema>) {
     const target = targetTenant(ctx, dto.tenantId);
     return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
-      const [sp] = (await tx.execute(sql`
+      let sp: { id: string };
+      try {
+        [sp] = (await tx.execute(sql`
         insert into service_providers (legal_name, counterparty_type, scope, service_type, tax_number,
           primary_email, primary_phone, created_by, updated_by)
         values (${dto.legalName}, ${dto.counterpartyType}, ${dto.scope}, ${dto.serviceType ?? null}, ${dto.taxNumber ?? null},
           ${dto.primaryEmail ?? null}, ${dto.primaryPhone ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
         returning id`)) as Array<{ id: string }>;
+      } catch (e) {
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException("a counterparty with this identifier already exists — link the existing one instead");
+        throw e;
+      }
       await tx.execute(sql`
         insert into tenant_service_providers (tenant_id, service_provider_id, status, classification, linked_by, created_by, updated_by)
         values (${target}::uuid, ${sp.id}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);

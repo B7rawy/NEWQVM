@@ -1,12 +1,28 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
+import { targetTenant } from "../../common/tenant-target.js";
 
 /** Scope org reads/writes to the ACTIVE workspace even for platform staff. */
 const scoped = (ctx: RlsContext): RlsContext => ({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false });
 
-export const createWorkshopSchema = z.object({ name: z.string().min(2), taxNumber: z.string().optional() });
+export const createWorkshopSchema = z
+  .object({
+    counterpartyType: z.enum(["individual", "company"]).default("company"),
+    name: z.string().min(2),
+    taxNumber: z.string().optional(),
+    primaryPhone: z.string().optional(),
+    primaryEmail: z.string().email().optional(),
+    tenantId: z.string().uuid().optional(), // platform staff: target a specific workspace
+  })
+  // QNEW-71: legal form drives the mandatory identifier — same rule as vendors/providers.
+  .superRefine((d, ctx) => {
+    if (d.counterpartyType === "company" && !d.taxNumber)
+      ctx.addIssue({ code: "custom", path: ["taxNumber"], message: "a company requires a tax number" });
+    if (d.counterpartyType === "individual" && !d.primaryPhone)
+      ctx.addIssue({ code: "custom", path: ["primaryPhone"], message: "an individual requires a mobile number" });
+  });
 export const createBranchSchema = z.object({
   workshopId: z.string().uuid(),
   name: z.string().min(2),
@@ -29,14 +45,19 @@ export class OrgService {
       (tx) =>
         global
           ? tx.execute(sql`
-              select w.id, w.name, w.tax_number, w.is_active,
+              select w.id, w.name, w.counterparty_type, w.activation_status, w.tax_number, w.primary_phone,
+                w.primary_email, w.is_active,
                 (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches,
-                (select count(*)::int from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces
+                (select count(*)::int from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces,
+                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account
               from workshops w
               order by w.name`)
           : tx.execute(sql`
-              select w.id, w.name, w.tax_number, w.is_active,
-                (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches
+              select w.id, w.name, w.counterparty_type, w.activation_status, w.tax_number, w.primary_phone,
+                w.primary_email, w.is_active,
+                (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches,
+                1 as workspaces,
+                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account
               from tenant_workshops tw
               join workshops w on w.id = tw.workshop_id
               where tw.status <> 'archived'
@@ -47,17 +68,27 @@ export class OrgService {
 
   /** Create a new GLOBAL workshop and link it to the active workspace (mirrors vendor create). */
   async createWorkshop(ctx: RlsContext, dto: z.infer<typeof createWorkshopSchema>) {
-    if (!ctx.tenantId) throw new BadRequestException("no active workspace");
+    const target = targetTenant(ctx, dto.tenantId);
     return this.dbService.withContext(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true },
+      { tenantId: target, userId: ctx.userId, isInternal: true },
       async (tx) => {
-        const [w] = (await tx.execute(sql`
-          insert into workshops (name, tax_number, created_by, updated_by)
-          values (${dto.name}, ${dto.taxNumber ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+        let w: { id: string };
+        try {
+          [w] = (await tx.execute(sql`
+          insert into workshops (name, counterparty_type, tax_number, primary_phone, primary_email, created_by, updated_by)
+          values (${dto.name}, ${dto.counterpartyType}, ${dto.taxNumber ?? null}, ${dto.primaryPhone ?? null},
+            ${dto.primaryEmail ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
           returning id`)) as Array<{ id: string }>;
+      } catch (e) {
+        // scoped partial-unique (company→tax, individual→mobile): the identity already exists —
+        // the caller should LINK/merge the existing one, not create a duplicate.
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException("a counterparty with this identifier already exists — link the existing one instead");
+        throw e;
+      }
         await tx.execute(sql`
           insert into tenant_workshops (tenant_id, workshop_id, status, linked_by, created_by, updated_by)
-          values (${ctx.tenantId}::uuid, ${w.id}::uuid, 'active', ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);
+          values (${target}::uuid, ${w.id}::uuid, 'active', ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);
         return { id: w.id };
       },
     );
@@ -72,14 +103,14 @@ export class OrgService {
       (tx) =>
         global
           ? tx.execute(sql`
-              select wb.id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
+              select wb.id, wb.workshop_id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
                 w.name as workshop, r.label_en as region
               from workshop_branches wb
               join workshops w on w.id = wb.workshop_id
               left join regions r on r.id = wb.region_id
               order by w.name, wb.name`)
           : tx.execute(sql`
-              select wb.id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
+              select wb.id, wb.workshop_id, wb.name, wb.order_category, wb.is_bulk, wb.is_active,
                 w.name as workshop, r.label_en as region
               from tenant_workshops tw
               join workshops w on w.id = tw.workshop_id and tw.status <> 'archived'
