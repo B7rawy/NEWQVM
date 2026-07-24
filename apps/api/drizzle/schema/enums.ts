@@ -168,6 +168,21 @@ export const returnIssueType = pgEnum("return_issue_type", [
 /** Status vocabulary a status_log row refers to (item lifecycle vs vendor lifecycle). */
 export const statusDomain = pgEnum("status_domain", ["item", "vendor"]);
 
+/**
+ * Counterparty Identity & Governed Onboarding (QNEW-71 + onboarding pipeline).
+ * `counterpartyType` = QNEW-71's individual/company classification (named `counterparty_type` to
+ * avoid colliding with the pre-existing polymorphic `entity_type` enum below).
+ */
+export const counterpartyType = pgEnum("counterparty_type", ["individual", "company"]);
+/** Which directory a submission/import targets. */
+export const submissionKind = pgEnum("submission_kind", ["vendor", "workshop", "service_provider"]);
+/** How a submission arrived. */
+export const submissionSource = pgEnum("submission_source", ["manual", "excel_import"]);
+/** Review-queue lifecycle for a submitted counterparty. */
+export const submissionStatus = pgEnum("submission_status", ["pending", "approved", "merged", "rejected"]);
+/** Excel import-batch lifecycle. */
+export const importBatchStatus = pgEnum("import_batch_status", ["uploaded", "validated", "submitted", "completed", "failed"]);
+
 /** Polymorphic entity kinds referenced by attachments / status_logs / notes. */
 export const entityType = pgEnum("entity_type", [
   "rfq",

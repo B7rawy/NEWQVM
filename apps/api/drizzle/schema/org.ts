@@ -1,6 +1,7 @@
+import { sql } from "drizzle-orm";
 import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { orderCategory, tenantWorkshopStatus } from "./enums";
+import { counterpartyType, orderCategory, tenantWorkshopStatus } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { cities, regions } from "./reference";
@@ -13,13 +14,30 @@ import { cities, regions } from "./reference";
  */
 
 /** A client company (workshop) — global master data. */
-export const workshops = pgTable("workshops", {
-  id: pk(),
-  name: text("name").notNull(),
-  taxNumber: text("tax_number"),
-  isActive: isActive(),
-  ...audit,
-});
+export const workshops = pgTable(
+  "workshops",
+  {
+    id: pk(),
+    name: text("name").notNull(),
+    // QNEW-71: individual|company classification; drives which dedup key applies.
+    counterpartyType: counterpartyType("counterparty_type").notNull().default("company"),
+    commercialRegistrationNumber: text("commercial_registration_number"),
+    taxNumber: text("tax_number"),
+    primaryPhone: text("primary_phone"),
+    primaryEmail: text("primary_email"),
+    isActive: isActive(),
+    ...audit,
+  },
+  (t) => [
+    // Scoped dedup keys (partial unique): company→tax_number, individual→mobile (primary_phone).
+    uniqueIndex("workshops_company_tax_uq")
+      .on(t.taxNumber)
+      .where(sql`${t.counterpartyType} = 'company' AND ${t.taxNumber} IS NOT NULL`),
+    uniqueIndex("workshops_individual_mobile_uq")
+      .on(t.primaryPhone)
+      .where(sql`${t.counterpartyType} = 'individual' AND ${t.primaryPhone} IS NOT NULL`),
+  ],
+);
 
 /**
  * Workshop portal identity — which global user works for which global workshop (mirrors vendor_users).

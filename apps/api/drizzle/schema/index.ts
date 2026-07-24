@@ -29,3 +29,4 @@ export * from "./vendor_selfservice"; // QNEW-49/51 Vendor stock + pricing polic
 export * from "./vendor_finance"; // QNEW-50/52 Vendor payments + financing
 export * from "./shipping"; // QNEW-54/55 Shipping carriers + driver marketplace
 export * from "./platform_audit"; // cross-workspace admin audit trail
+export * from "./counterparty"; // QNEW-71 counterparty identity + governed onboarding (submissions/imports)

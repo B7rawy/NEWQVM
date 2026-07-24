@@ -1,6 +1,7 @@
+import { sql } from "drizzle-orm";
 import { boolean, integer, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { tenantVendorStatus, vendorType } from "./enums";
+import { counterpartyType, tenantVendorStatus, vendorType } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { cities, regions } from "./reference";
@@ -14,18 +15,32 @@ import { cities, regions } from "./reference";
  */
 
 /** Global supplier identity — shared across workspaces. */
-export const vendors = pgTable("vendors", {
-  id: pk(),
-  legalName: text("legal_name").notNull(),
-  commercialRegistrationNumber: text("commercial_registration_number"),
-  taxNumber: text("tax_number"),
-  primaryEmail: text("primary_email"),
-  primaryPhone: text("primary_phone"),
-  vendorType: vendorType("vendor_type").notNull().default("commercial"),
-  paymentTermsDays: integer("payment_terms_days"), // QNEW-50: overdue calc
-  isActive: isActive(),
-  ...audit,
-});
+export const vendors = pgTable(
+  "vendors",
+  {
+    id: pk(),
+    legalName: text("legal_name").notNull(),
+    // QNEW-71: individual|company classification; drives which dedup key applies.
+    counterpartyType: counterpartyType("counterparty_type").notNull().default("company"),
+    commercialRegistrationNumber: text("commercial_registration_number"),
+    taxNumber: text("tax_number"),
+    primaryEmail: text("primary_email"),
+    primaryPhone: text("primary_phone"),
+    vendorType: vendorType("vendor_type").notNull().default("commercial"),
+    paymentTermsDays: integer("payment_terms_days"), // QNEW-50: overdue calc
+    isActive: isActive(),
+    ...audit,
+  },
+  (t) => [
+    // Scoped dedup keys (partial unique): company→tax_number, individual→mobile (primary_phone).
+    uniqueIndex("vendors_company_tax_uq")
+      .on(t.taxNumber)
+      .where(sql`${t.counterpartyType} = 'company' AND ${t.taxNumber} IS NOT NULL`),
+    uniqueIndex("vendors_individual_mobile_uq")
+      .on(t.primaryPhone)
+      .where(sql`${t.counterpartyType} = 'individual' AND ${t.primaryPhone} IS NOT NULL`),
+  ],
+);
 
 /** Physical branch of a vendor. Location unified as geography (old had lat/lng + text). */
 export const vendorBranches = pgTable(
