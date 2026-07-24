@@ -36,10 +36,13 @@ export class AuthGuard implements CanActivate {
 
     let userId: string;
     let impersonatorId: string | null = null;
+    /** Workspace a NON-platform "view as" is confined to (stamped by ImpersonationService). */
+    let impTenant: string | null = null;
     try {
-      const claims = await this.jwt.verifyAsync<{ sub: string; imp?: string }>(auth.slice(7));
+      const claims = await this.jwt.verifyAsync<{ sub: string; imp?: string; impTenant?: string }>(auth.slice(7));
       userId = claims.sub;
       impersonatorId = claims.imp ?? null;
+      impTenant = claims.impTenant ?? null;
     } catch {
       throw new UnauthorizedException("invalid token");
     }
@@ -125,6 +128,13 @@ export class AuthGuard implements CanActivate {
       environment: resolveEnvironment(req),
       impersonatorId,
     };
+
+    // A company_admin's borrowed session is confined to the workspace that justified the grant —
+    // the TARGET may belong to more workspaces than the actor does, and without this the actor
+    // would inherit them (cross-tenant escalation).
+    if (impTenant && ctx.tenantId && ctx.tenantId !== impTenant) {
+      throw new ForbiddenException("view-as is limited to the workspace it was granted in");
+    }
 
     // If a workspace was requested, require access (member, vendor/workshop link, or platform staff).
     if (tenantSlug) {

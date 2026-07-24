@@ -48,35 +48,49 @@ export class ImpersonationService {
         if (targetIsPlatform) throw new ForbiddenException("cannot view as platform staff");
       }
 
-      const allowed = actorIsInternal
-        ? true
-        : !!(
-            (await tx.execute(sql`
-              select 1 where
-                exists (
-                  select 1 from tenant_memberships am
-                  join tenant_memberships tm on tm.tenant_id = am.tenant_id and tm.is_active
-                  where am.user_id = ${actorId}::uuid and am.role = 'company_admin' and am.is_active
-                    and tm.user_id = ${targetUserId}::uuid
-                )
-                or exists (
-                  select 1 from tenant_memberships am
-                  join tenant_vendors tv on tv.tenant_id = am.tenant_id and tv.status = 'active'
-                  join vendor_users vu on vu.vendor_id = tv.vendor_id
-                  where am.user_id = ${actorId}::uuid and am.role = 'company_admin' and am.is_active
-                    and vu.user_id = ${targetUserId}::uuid
-                )`)) as Array<unknown>
-          )[0];
-      if (!allowed) throw new ForbiddenException("not allowed to view as this user");
+      // A company_admin's authority is bounded by the ONE workspace that justifies the grant. The
+      // borrowed token is stamped with it (impTenant) and the guard refuses any other workspace —
+      // otherwise impersonating a member of several workspaces would hand the actor a workspace
+      // they have no membership in (cross-tenant escalation).
+      let impTenant: string | null = null;
+      if (!actorIsInternal) {
+        const grant = (await tx.execute(sql`
+          select am.tenant_id from tenant_memberships am
+          where am.user_id = ${actorId}::uuid and am.role = 'company_admin' and am.is_active
+            and (
+              exists (select 1 from tenant_memberships tm
+                      where tm.tenant_id = am.tenant_id and tm.is_active and tm.user_id = ${targetUserId}::uuid)
+              or exists (select 1 from tenant_vendors tv
+                         join vendor_users vu on vu.vendor_id = tv.vendor_id
+                         where tv.tenant_id = am.tenant_id and tv.status = 'active' and vu.user_id = ${targetUserId}::uuid)
+              or exists (select 1 from tenant_workshops tw
+                         join workshop_users wu on wu.workshop_id = tw.workshop_id
+                         where tw.tenant_id = am.tenant_id and tw.status = 'active' and wu.user_id = ${targetUserId}::uuid)
+            )
+          limit 1`))[0] as { tenant_id: string } | undefined;
+        if (!grant) throw new ForbiddenException("not allowed to view as this user");
+        impTenant = grant.tenant_id;
+      } else {
+        // Platform tier: staff may view as counterparties/workspace users, but NEVER as another
+        // platform staffer — that would let any staffer inherit super_admin.
+        const targetIsPlatform = (await tx.execute(sql`
+          select 1 from platform_members where user_id = ${targetUserId}::uuid and is_active limit 1`))[0];
+        if (targetIsPlatform) throw new ForbiddenException("platform staff cannot be viewed as");
+      }
 
       // Platform-level audit trail (spans workspaces).
       await tx.execute(sql`
         insert into platform_audit (actor_user_id, action, entity_type, entity_id, metadata)
         values (${actorId}::uuid, 'impersonate.start', 'user', ${targetUserId}::uuid,
-                ${JSON.stringify({ target: target.full_name })}::jsonb)`);
+                ${JSON.stringify({ target: target.full_name, scopedToTenant: impTenant })}::jsonb)`);
       this.logger.warn(`impersonate.start actor=${actorId} target=${targetUserId} (${target.full_name})`);
 
-      const token = await this.jwt.signAsync({ sub: target.id, imp: actorId });
+      // Short-lived on purpose: "Back to admin" is client-side, so the borrowed token must expire
+      // on its own rather than living for the full login TTL.
+      const token = await this.jwt.signAsync(
+        { sub: target.id, imp: actorId, ...(impTenant ? { impTenant } : {}) },
+        { expiresIn: process.env.IMPERSONATION_TTL ?? "30m" },
+      );
       return { token, user: { id: target.id, fullName: target.full_name } };
     });
   }

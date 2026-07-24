@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { Plus, Search, ShieldCheck } from "lucide-react";
+import { Plus, Search, ShieldCheck, Eye } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Card, Badge, Spinner, EmptyState, Field } from "../../components/ui";
@@ -12,7 +12,7 @@ import { Card, Badge, Spinner, EmptyState, Field } from "../../components/ui";
  * Workspace ROLES are not editable here — a role only means something inside a workspace, so that
  * stays on the workspace's own Users tab.
  */
-const PLATFORM_ROLES = ["super_admin", "purchasing", "pricing", "finance", "support"] as const;
+const PLATFORM_ROLES = ["super_admin", "staff", "account_manager", "purchasing", "part_extractor", "finance_manager", "pricing_supervisor"] as const; // mirrors the pg enum platform_role
 
 interface Staff { id: string; user_id: string; full_name: string; email: string; role: string; is_active: boolean; user_active: boolean }
 interface GlobalUser {
@@ -22,7 +22,7 @@ interface GlobalUser {
 }
 
 export default function PlatformPeople() {
-  const { me } = useAuth();
+  const { me, impersonate } = useAuth();
   const isSuperAdmin = me?.platformRole === "super_admin";
   const [staff, setStaff] = useState<Staff[] | null>(null);
   const [users, setUsers] = useState<GlobalUser[] | null>(null);
@@ -153,7 +153,7 @@ export default function PlatformPeople() {
           <EmptyState title="No people match" />
         ) : (
           <table className="w-full">
-            <thead><tr><th className="th">Name</th><th className="th">Email</th><th className="th">Belongs to</th><th className="th">Account</th></tr></thead>
+            <thead><tr><th className="th">Name</th><th className="th">Email</th><th className="th">Belongs to</th><th className="th">Account</th><th className="th" /></tr></thead>
             <tbody>
               {visible.map((u) => (
                 <tr key={u.id} className="trow">
@@ -171,6 +171,14 @@ export default function PlatformPeople() {
                     </div>
                   </td>
                   <td className="td"><Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge></td>
+                  <td className="td text-right">
+                    {/* every real account is reachable here — this is the directory that lists them all */}
+                    {u.is_active && u.id !== me?.user?.id && !u.platform_role && (
+                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}>
+                        <Eye className="h-3.5 w-3.5" /> View as
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

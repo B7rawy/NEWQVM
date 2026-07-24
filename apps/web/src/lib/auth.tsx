@@ -73,9 +73,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.get<{ workspaces: Workspace[] }>("/workspaces");
     setWorkspaces(res.workspaces);
     const sub = currentSubdomain();
-    if (sub) {
+    // The URL is only authoritative if this user can actually reach that workspace. After a
+    // "view as" the host may still be the ADMIN's last subdomain, which the impersonated user has
+    // no access to — trusting it would show a workspace that isn't theirs (and 403 every call).
+    if (sub && res.workspaces.some((w) => w.slug === sub)) {
       setActiveSlug(sub);
       return sub;
+    }
+    if (sub) {
+      // wrong host for this account → drop the stale choice and let the rules below pick.
+      auth.setWorkspace(null);
     }
     const stored = auth.workspace();
     if (stored && res.workspaces.some((w) => w.slug === stored)) {
@@ -122,7 +129,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const slug = await loadWorkspaces(m.isInternal);
         await settleHome(m, slug);
       })
-      .catch(() => logout());
+      .catch(() => {
+        // While impersonating, a failed boot (e.g. the borrowed session can't reach this host)
+        // must RETURN TO THE ADMIN — logging out would wipe the stashed real token and strand them.
+        if (auth.realToken()) stopImpersonating();
+        else logout();
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
 
@@ -148,6 +160,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadMe();
   }
   function logout() {
+    // setToken/setWorkspace/setRealToken(null) each clear BOTH the per-origin copy and the shared
+    // cookie — otherwise a live admin JWT would linger in another origin's localStorage.
     auth.setToken(null);
     auth.setWorkspace(null);
     auth.setRealToken(null);
@@ -172,11 +186,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEnvironmentState(e);
   }
   async function impersonate(userId: string) {
-    const res = await api.post<{ token: string }>("/admin/impersonate", { userId });
+    let res: { token: string };
+    try {
+      res = await api.post<{ token: string }>("/admin/impersonate", { userId });
+    } catch (e) {
+      // No call site handles this; without a message a refusal is indistinguishable from a bug.
+      window.alert(`Can't view as this user: ${(e as Error).message}`);
+      return;
+    }
     if (!auth.realToken()) auth.setRealToken(auth.token()); // stash the real admin token once
     auth.setToken(res.token);
-    auth.setWorkspace(null); // let the impersonated user's default workspace resolve
-    window.location.href = "/";
+    auth.setWorkspace(null); // the impersonated user's own default workspace resolves on load
+
+    // Land on a host the TARGET can actually use. Staying on the admin's current subdomain is the
+    // root of "wrong workspace at the top" and of 403s that make Back-to-admin look broken: the
+    // target may have no access to it. The apex always works, and settleHome() then forwards a
+    // workspace user to their own subdomain.
+    if (subdomainMode() && currentSubdomain()) window.location.href = apexUrl("/");
+    else window.location.href = "/";
   }
   function stopImpersonating() {
     const real = auth.realToken();
@@ -184,8 +211,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       auth.setToken(real);
       auth.setRealToken(null);
       auth.setWorkspace(null);
+    } else {
+      // No stash (expired cookie / cleared storage): never strand the user inside a borrowed
+      // session — end it, so they land on the sign-in page instead of a dead "Back to admin".
+      logout();
     }
-    window.location.href = "/";
+    // Return to the apex, not the impersonated user's subdomain — the admin's own home is unscoped
+    // and the borrowed subdomain may not even be one they were working in.
+    if (subdomainMode() && currentSubdomain()) window.location.href = apexUrl("/");
+    else window.location.href = "/";
   }
 
   return (

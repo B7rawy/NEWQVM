@@ -1,4 +1,10 @@
-/** Single API client. Adds the JWT and the active-workspace header (X-Tenant) to every call. */
+/**
+ * Single API client. Adds the JWT and the active-workspace header (X-Tenant) to every call.
+ *
+ * STORAGE RULE: every session key is written to BOTH localStorage and a cross-subdomain cookie, and
+ * read COOKIE-FIRST. localStorage is per-origin, so on the apex↔subdomain hops that "view as"
+ * performs a stale same-origin copy would otherwise outrank the value just written elsewhere.
+ */
 import { currentSubdomain, getCookie, setSharedCookie } from "./tenant";
 
 // Production always talks to the same origin (nginx proxies /api). Dev hits the local API.
@@ -8,25 +14,36 @@ const BASE = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? "" : "http:
 const TOKEN_KEY = "qvm_token";
 const WS_KEY = "qvm_ws";
 const ENV_KEY = "qvm_env";
+const REAL_KEY = "qvm_real_token";
 
 export const auth = {
   // Token lives in localStorage AND a cross-subdomain cookie, so a session started on the apex
   // (or another workspace subdomain) carries over to <slug>.easycarty.store seamlessly.
-  token: () => localStorage.getItem(TOKEN_KEY) ?? getCookie(TOKEN_KEY),
+  token: () => getCookie(TOKEN_KEY) ?? localStorage.getItem(TOKEN_KEY),
   setToken: (t: string | null) => {
     if (t) localStorage.setItem(TOKEN_KEY, t);
     else localStorage.removeItem(TOKEN_KEY);
     setSharedCookie(TOKEN_KEY, t);
   },
   // On a workspace subdomain the URL is the source of truth; else fall back to the stored choice.
-  workspace: () => currentSubdomain() ?? localStorage.getItem(WS_KEY),
-  setWorkspace: (slug: string | null) =>
-    slug ? localStorage.setItem(WS_KEY, slug) : localStorage.removeItem(WS_KEY),
+  workspace: () => currentSubdomain() ?? getCookie(WS_KEY) ?? localStorage.getItem(WS_KEY),
+  setWorkspace: (slug: string | null) => {
+    if (slug) localStorage.setItem(WS_KEY, slug);
+    else localStorage.removeItem(WS_KEY);
+    setSharedCookie(WS_KEY, slug); // per-origin storage alone would carry the ADMIN's workspace over
+  },
   environment: (): "live" | "sandbox" => (localStorage.getItem(ENV_KEY) === "sandbox" ? "sandbox" : "live"),
   setEnvironment: (e: "live" | "sandbox") => localStorage.setItem(ENV_KEY, e),
-  // "view as": the real admin token is stashed while impersonating so we can return to it.
-  realToken: () => localStorage.getItem("qvm_real_token"),
-  setRealToken: (t: string | null) => (t ? localStorage.setItem("qvm_real_token", t) : localStorage.removeItem("qvm_real_token")),
+  // "view as": the real admin token is stashed while impersonating so we can return to it. It MUST
+  // live in the cross-subdomain cookie too — impersonation routinely moves you between the apex and
+  // a workspace subdomain, and a localStorage-only copy would be lost on the way (making "Back to
+  // admin" silently do nothing).
+  realToken: () => getCookie(REAL_KEY) ?? localStorage.getItem(REAL_KEY),
+  setRealToken: (t: string | null) => {
+    if (t) localStorage.setItem(REAL_KEY, t);
+    else localStorage.removeItem(REAL_KEY);
+    setSharedCookie(REAL_KEY, t);
+  },
 };
 
 export class ApiError extends Error {

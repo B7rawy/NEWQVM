@@ -5,7 +5,7 @@ import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 
 /** Platform-tier roles (ADR-0010). These are NOT workspace roles — they span every workspace. */
-export const PLATFORM_ROLES = ["super_admin", "purchasing", "pricing", "finance", "support"] as const;
+export const PLATFORM_ROLES = ["super_admin", "staff", "account_manager", "purchasing", "part_extractor", "finance_manager", "pricing_supervisor"] as const; // MUST match the pg enum platform_role exactly
 
 export const addPlatformStaffSchema = z.object({
   email: z.string().email(),
