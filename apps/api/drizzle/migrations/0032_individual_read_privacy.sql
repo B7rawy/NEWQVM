@@ -11,6 +11,7 @@
 
 -- ── vendors ─────────────────────────────────────────────────────────────────
 DROP POLICY IF EXISTS "global_read" ON "vendors";--> statement-breakpoint
+DO $$ BEGIN
 CREATE POLICY "directory_read" ON "vendors" FOR SELECT USING (
   counterparty_type = 'company'
   OR public.app_is_internal()
@@ -18,10 +19,12 @@ CREATE POLICY "directory_read" ON "vendors" FOR SELECT USING (
     SELECT 1 FROM tenant_vendors tv
     WHERE tv.vendor_id = vendors.id AND tv.tenant_id = public.current_tenant_id()
   )
-);--> statement-breakpoint
+);
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
 
 -- ── workshops ───────────────────────────────────────────────────────────────
 DROP POLICY IF EXISTS "global_read" ON "workshops";--> statement-breakpoint
+DO $$ BEGIN
 CREATE POLICY "directory_read" ON "workshops" FOR SELECT USING (
   counterparty_type = 'company'
   OR public.app_is_internal()
@@ -30,3 +33,4 @@ CREATE POLICY "directory_read" ON "workshops" FOR SELECT USING (
     WHERE tw.workshop_id = workshops.id AND tw.tenant_id = public.current_tenant_id()
   )
 );
+EXCEPTION WHEN duplicate_object THEN null; END $$;
