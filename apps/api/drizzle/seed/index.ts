@@ -137,6 +137,17 @@ async function main() {
   // Al Faisal Motors is ALSO shared into t2 (same global workshop, two workspaces — demonstrates ADR-0011)
   await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${t2.id},${ws.id},'active')`;
 
+  // ---- service providers (QNEW-71 AC11) — internal team + external partners, linked to t1 ----
+  for (const p of [
+    { name: "Qparts Logistics", scope: "internal", service: "Delivery & fulfillment", tax: "SP-INT-1" },
+    { name: "SMSA Express", scope: "external", service: "Shipping", tax: "SP-EXT-1" },
+    { name: "Najm Services", scope: "external", service: "Insurance & claims", tax: "SP-EXT-2" },
+  ]) {
+    const [sp] = await sql`insert into service_providers (legal_name, scope, service_type, tax_number)
+      values (${p.name}, ${p.scope}, ${p.service}, ${p.tax}) returning id`;
+    await sql`insert into tenant_service_providers (tenant_id, service_provider_id, status) values (${t1.id}, ${sp.id}, 'active')`;
+  }
+
   // ---- access (ADR-0010 three layers) ----
   // admin = platform staff → sees ALL workspaces
   await sql`insert into platform_members (user_id,role) values (${admin.id},'super_admin')`;

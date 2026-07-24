@@ -184,6 +184,8 @@ export const submissionStatus = pgEnum("submission_status", ["pending", "approve
 export const importBatchStatus = pgEnum("import_batch_status", ["uploaded", "validated", "submitted", "completed", "failed"]);
 /** Counterparty account activation lifecycle (QNEW-71): self-registered rows start 'pending'. */
 export const activationStatus = pgEnum("activation_status", ["pending", "active", "suspended", "rejected"]);
+/** Service-provider scope (QNEW-71 AC11): Qparts' own teams vs third-party partners. */
+export const providerScope = pgEnum("provider_scope", ["internal", "external"]);
 
 /** Polymorphic entity kinds referenced by attachments / status_logs / notes. */
 export const entityType = pgEnum("entity_type", [

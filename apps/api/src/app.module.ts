@@ -9,6 +9,8 @@ import { OrgController } from "./modules/org/org.controller.js";
 import { OrgService } from "./modules/org/org.service.js";
 import { VendorsController } from "./modules/vendors/vendors.controller.js";
 import { VendorsService } from "./modules/vendors/vendors.service.js";
+import { ProvidersController } from "./modules/providers/providers.controller.js";
+import { ProvidersService } from "./modules/providers/providers.service.js";
 import { UsersAdminController } from "./modules/admin/users-admin.controller.js";
 import { UsersAdminService } from "./modules/admin/users-admin.service.js";
 import { ImpersonationController } from "./modules/admin/impersonation.controller.js";
@@ -84,6 +86,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     WorkspacesAdminController,
     OrgController,
     VendorsController,
+    ProvidersController,
     UsersAdminController,
     ImpersonationController,
     CounterpartyController,
@@ -112,6 +115,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     WorkspacesAdminService,
     OrgService,
     VendorsService,
+    ProvidersService,
     UsersAdminService,
     ImpersonationService,
     CounterpartyService,
