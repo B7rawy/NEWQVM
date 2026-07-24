@@ -10,6 +10,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:verify": "tsx scripts/verify-rls.ts",
+    "test:smoke": "tsx drizzle/seed/index.ts > /dev/null && bash scripts/smoke.sh",
+    "test:smoke:prod": "bash scripts/smoke-prod.sh",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx drizzle/seed/index.ts"
   },
