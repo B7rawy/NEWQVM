@@ -1,16 +1,19 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Eye } from "lucide-react";
+import { ArrowLeft, Eye, Power, Link2, Plus, ClipboardCheck, Unlink } from "lucide-react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Card, Badge, statusTone, Spinner, EmptyState } from "../../components/ui";
+import LinkCounterpartyDialog from "../../components/LinkCounterpartyDialog";
+import { Link as RouterLink } from "react-router-dom";
 
 interface WsDetail {
-  workspace: { id: string; slug: string; name: string; is_sandbox: boolean; is_active: boolean; created_at: string };
+  workspace: { id: string; slug: string; name: string; is_sandbox: boolean; is_active: boolean; created_at: string; plan: string | null; plan_code: string | null; logo_url: string | null; settings: Record<string, unknown> };
   environment: "live" | "sandbox";
   users: Array<{ id: string; full_name: string; email: string; role: string; branch: string | null; is_active: boolean }>;
   workshops: Array<{ id: string; name: string; tax_number: string | null; branches: number }>;
   vendors: Array<{ id: string; legal_name: string; vendor_type: string; status: string; classification: string | null; user_id: string | null }>;
+  submissions: Array<{ id: string; kind: string; counterparty_type: string; legal_name: string; tax_number: string | null; mobile: string | null; candidates: number }>;
   rfqs: Array<{ id: string; order_number: string; plate_number: string | null; status: string | null; items: number }>;
   orders: Array<{ id: string; order_number: string; status: string | null; items: number }>;
   invoices: Array<{ id: string; invoice_number: string | null; total_incl_vat: string | null; status: string | null; order_number: string }>;
@@ -30,6 +33,19 @@ export default function WorkspaceDetail() {
   const [d, setD] = useState<WsDetail | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
+  const [linking, setLinking] = useState<"vendor" | "workshop" | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function toggleActive(active: boolean) {
+    setErr(""); setBusy(true);
+    try { await api.patch(`/admin/workspaces/${id}`, { isActive: active }); await load(); }
+    catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+  }
+  async function unlink(kind: "vendor" | "workshop", entityId: string) {
+    setErr("");
+    try { await api.post(`/admin/workspaces/${id}/unlink/${kind}/${entityId}`, {}); await load(); }
+    catch (e) { setErr((e as Error).message); }
+  }
 
   const load = useCallback(async () => {
     setD(await api.get<WsDetail>(`/admin/workspaces/${id}/detail`));
@@ -42,7 +58,7 @@ export default function WorkspaceDetail() {
 
   if (err) return <EmptyState title="Couldn't load workspace" hint={err} />;
   if (!d) return <Spinner />;
-  const { workspace: w, users, workshops, vendors, rfqs, orders, invoices } = d;
+  const { workspace: w, users, workshops, vendors, submissions, rfqs, orders, invoices } = d;
   const admins = users.filter((u) => u.role === "company_admin");
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -70,7 +86,23 @@ export default function WorkspaceDetail() {
           </div>
           <div className="text-[12.5px] text-muted tnum">{w.slug}.qparts.app</div>
         </div>
+        <div className="ml-auto flex items-center gap-2">
+          {submissions.length > 0 && (
+            <RouterLink to="/onboarding/review" className="btn btn-sm rounded-md">
+              <ClipboardCheck className="h-3.5 w-3.5" /> {submissions.length} under review
+            </RouterLink>
+          )}
+          <button className={`btn btn-sm rounded-md ${w.is_active ? "text-accent" : ""}`} disabled={busy}
+            onClick={() => toggleActive(!w.is_active)}>
+            <Power className="h-3.5 w-3.5" /> {busy ? "…" : w.is_active ? "Suspend workspace" : "Activate workspace"}
+          </button>
+        </div>
       </div>
+      {!w.is_active && (
+        <div className="mb-4 rounded-lg border border-line bg-surface px-4 py-2.5 text-[12.5px] text-sub">
+          This workspace is <strong>suspended</strong> — its users cannot sign in and its subdomain is closed.
+        </div>
+      )}
 
       {/* tabs */}
       <div className="mb-4 flex gap-1 border-b border-line">
@@ -115,6 +147,43 @@ export default function WorkspaceDetail() {
               <div className="flex justify-between py-1.5"><dt className="text-muted">Created</dt><dd className="font-medium">{new Date(w.created_at).toLocaleDateString()}</dd></div>
             </dl>
           </Card>
+
+          {/* full record + platform-side controls */}
+          <Card>
+            <h3 className="mb-3 text-[14px] font-semibold text-ink">Workspace details</h3>
+            <dl className="divide-y divide-line-2 text-[13px]">
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Subdomain</dt><dd className="font-medium tnum">{w.slug}.qparts.app</dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Slug</dt><dd className="font-medium tnum">{w.slug}</dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Plan</dt><dd className="font-medium">{w.plan ?? "—"}</dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Data mode</dt><dd><Badge tone={w.is_sandbox ? "amber" : "gray"}>{w.is_sandbox ? "sandbox workspace" : "live workspace"}</Badge></dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Status</dt><dd><Badge tone={w.is_active ? "green" : "gray"}>{w.is_active ? "active" : "suspended"}</Badge></dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Workspace id</dt><dd className="font-medium tnum text-[11.5px]">{w.id}</dd></div>
+            </dl>
+          </Card>
+
+          {/* what this workspace is waiting on us for */}
+          <Card>
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[14px] font-semibold text-ink">Under review</h3>
+              {submissions.length > 0 && <RouterLink to="/onboarding/review" className="btn btn-sm rounded-md">Open review queue</RouterLink>}
+            </div>
+            {submissions.length === 0 ? (
+              <p className="text-[12.5px] text-muted">Nothing pending — this workspace has no counterparty submissions awaiting review.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {submissions.map((sb) => (
+                  <div key={sb.id} className="flex items-center justify-between text-[13px]">
+                    <span className="font-medium text-ink">{sb.legal_name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <Badge tone="gray">{sb.kind}</Badge>
+                      <Badge tone={sb.counterparty_type === "company" ? "gray" : "amber"}>{sb.counterparty_type}</Badge>
+                      {sb.candidates > 0 && <Badge tone="amber">{sb.candidates} match</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </div>
       )}
 
@@ -141,9 +210,17 @@ export default function WorkspaceDetail() {
       )}
 
       {tab === "vendors" && (
+        <>
+        <div className="mb-3 flex items-center gap-2">
+          <button className="btn btn-sm rounded-md" onClick={() => setLinking("vendor")}><Link2 className="h-3.5 w-3.5" /> Link existing vendor</button>
+          <RouterLink to="/vendors" className="btn btn-sm rounded-md"><Plus className="h-3.5 w-3.5" /> New vendor</RouterLink>
+        </div>
+        {linking === "vendor" && (
+          <LinkCounterpartyDialog workspaceId={w.id} kind="vendor" onClose={(l) => { setLinking(null); if (l) load(); }} />
+        )}
         <Card pad={false}>
           {vendors.length === 0 ? (
-            <EmptyState title="No vendors linked" />
+            <EmptyState title="No vendors linked" hint="Link an existing supplier from the directory, or create a new one." />
           ) : (
             <table className="w-full">
               <thead><tr><th className="th">Vendor</th><th className="th">Type</th><th className="th">Class</th><th className="th">Status</th><th className="th" /></tr></thead>
@@ -155,7 +232,11 @@ export default function WorkspaceDetail() {
                     <td className="td tnum">{v.classification ?? "—"}</td>
                     <td className="td"><Badge tone={statusTone(v.status)}>{v.status}</Badge></td>
                     <td className="td text-right">
-                      {v.user_id && <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}><Eye className="h-3.5 w-3.5" /> View as</button>}
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button className="btn btn-sm rounded-md" onClick={() => nav(`/vendors/${v.id}`)}>Open</button>
+                        {v.user_id && <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}><Eye className="h-3.5 w-3.5" /> View as</button>}
+                        <button className="btn btn-sm rounded-md text-accent" onClick={() => unlink("vendor", v.id)}><Unlink className="h-3.5 w-3.5" /> Unlink</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -163,27 +244,43 @@ export default function WorkspaceDetail() {
             </table>
           )}
         </Card>
+        </>
       )}
 
       {tab === "workshops" && (
+        <>
+        <div className="mb-3 flex items-center gap-2">
+          <button className="btn btn-sm rounded-md" onClick={() => setLinking("workshop")}><Link2 className="h-3.5 w-3.5" /> Link existing workshop</button>
+          <RouterLink to="/org/workshops" className="btn btn-sm rounded-md"><Plus className="h-3.5 w-3.5" /> New workshop</RouterLink>
+        </div>
+        {linking === "workshop" && (
+          <LinkCounterpartyDialog workspaceId={w.id} kind="workshop" onClose={(l) => { setLinking(null); if (l) load(); }} />
+        )}
         <Card pad={false}>
           {workshops.length === 0 ? (
-            <EmptyState title="No workshops" />
+            <EmptyState title="No workshops" hint="Link an existing workshop customer from the directory, or create a new one." />
           ) : (
             <table className="w-full">
-              <thead><tr><th className="th">Workshop</th><th className="th">Tax no.</th><th className="th">Branches</th></tr></thead>
+              <thead><tr><th className="th">Workshop</th><th className="th">Tax no.</th><th className="th">Branches</th><th className="th" /></tr></thead>
               <tbody>
                 {workshops.map((wk) => (
                   <tr key={wk.id} className="trow">
                     <td className="td font-medium text-ink">{wk.name}</td>
                     <td className="td text-muted tnum">{wk.tax_number ?? "—"}</td>
                     <td className="td tnum">{wk.branches}</td>
+                    <td className="td text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button className="btn btn-sm rounded-md" onClick={() => nav(`/org/workshops/${wk.id}`)}>Open</button>
+                        <button className="btn btn-sm rounded-md text-accent" onClick={() => unlink("workshop", wk.id)}><Unlink className="h-3.5 w-3.5" /> Unlink</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
         </Card>
+        </>
       )}
 
       {(tab === "rfqs" || tab === "orders" || tab === "invoices") && (

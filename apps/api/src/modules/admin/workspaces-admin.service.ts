@@ -14,6 +14,7 @@ export const createWorkspaceSchema = z.object({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "slug must be lowercase letters, numbers and single hyphens"),
   isSandbox: z.boolean().optional().default(false),
 });
+export const linkCounterpartySchema = z.object({ classification: z.string().optional() });
 export const updateWorkspaceSchema = z.object({
   name: z.string().min(2).optional(),
   isActive: z.boolean().optional(),
@@ -72,9 +73,20 @@ export class WorkspacesAdminService {
     return this.dbService.withContext(INTERNAL, async (tx) => {
       const workspace = (
         (await tx.execute(sql`
-          select id, slug, name, is_sandbox, is_active, settings, created_at from tenants where id = ${id}::uuid limit 1`)) as Array<Record<string, unknown>>
+          select t.id, t.slug, t.name, t.is_sandbox, t.is_active, t.settings, t.logo_url, t.created_at,
+            p.name as plan, p.code as plan_code
+          from tenants t left join plans p on p.id = t.plan_id
+          where t.id = ${id}::uuid limit 1`)) as Array<Record<string, unknown>>
       )[0];
       if (!workspace) throw new NotFoundException("workspace not found");
+
+      // what this workspace still has waiting on the platform: counterparties it submitted for review
+      const submissions = await tx.execute(sql`
+        select s.id, s.kind, s.counterparty_type, s.legal_name, s.tax_number, s.mobile, s.status, s.created_at,
+          jsonb_array_length(s.match_candidates) as candidates
+        from counterparty_submissions s
+        where s.tenant_id = ${id}::uuid and s.status = 'pending'
+        order by s.created_at desc`);
 
       const users = await tx.execute(sql`
         select u.id, u.full_name, u.email, u.phone, u.is_active, m.role, m.id as membership_id,
@@ -120,7 +132,65 @@ export class WorkspacesAdminService {
         where i.tenant_id = ${id}::uuid
         order by i.created_at desc limit 25`);
 
-      return { workspace, environment, users, workshops, vendors, rfqs, orders, invoices };
+      return { workspace, environment, users, workshops, vendors, submissions, rfqs, orders, invoices };
+    });
+  }
+
+  /** Directory entities NOT yet linked to this workspace — the pick-list for "link existing". */
+  async linkable(id: string, kind: "vendor" | "workshop") {
+    return this.dbService.withContext(INTERNAL, async (tx) => {
+      const rows =
+        kind === "vendor"
+          ? await tx.execute(sql`
+              select v.id, v.legal_name as name, v.counterparty_type, v.tax_number, v.primary_phone
+              from vendors v
+              where v.is_active and not exists (
+                select 1 from tenant_vendors tv where tv.vendor_id = v.id and tv.tenant_id = ${id}::uuid and tv.status <> 'archived')
+              order by v.legal_name limit 100`)
+          : await tx.execute(sql`
+              select w.id, w.name, w.counterparty_type, w.tax_number, w.primary_phone
+              from workshops w
+              where w.is_active and not exists (
+                select 1 from tenant_workshops tw where tw.workshop_id = w.id and tw.tenant_id = ${id}::uuid and tw.status <> 'archived')
+              order by w.name limit 100`);
+      return { count: rows.length, candidates: rows };
+    });
+  }
+
+  /** Link an EXISTING directory identity to this workspace (re-activates an archived link). */
+  async linkCounterparty(actorUserId: string, id: string, kind: "vendor" | "workshop", entityId: string, classification?: string) {
+    return this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
+      if (kind === "vendor") {
+        await tx.execute(sql`
+          insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
+          values (${id}::uuid, ${entityId}::uuid, 'active', ${classification ?? null}, ${actorUserId}::uuid, ${actorUserId}::uuid, ${actorUserId}::uuid)
+          on conflict (tenant_id, vendor_id) do update set status = 'active', updated_at = now()`);
+      } else {
+        await tx.execute(sql`
+          insert into tenant_workshops (tenant_id, workshop_id, status, linked_by, created_by, updated_by)
+          values (${id}::uuid, ${entityId}::uuid, 'active', ${actorUserId}::uuid, ${actorUserId}::uuid, ${actorUserId}::uuid)
+          on conflict (tenant_id, workshop_id) do update set status = 'active', updated_at = now()`);
+      }
+      await tx.execute(sql`
+        insert into platform_audit (tenant_id, actor_user_id, action, entity_type, entity_id, metadata)
+        values (${id}::uuid, ${actorUserId}::uuid, 'workspace.link_counterparty', ${kind}, ${entityId}::uuid, '{}'::jsonb)`);
+      return { ok: true };
+    });
+  }
+
+  /** Unlink (archive the relationship) — the global identity itself is never deleted. */
+  async unlinkCounterparty(actorUserId: string, id: string, kind: "vendor" | "workshop", entityId: string) {
+    return this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
+      const table = kind === "vendor" ? "tenant_vendors" : "tenant_workshops";
+      const col = kind === "vendor" ? "vendor_id" : "workshop_id";
+      const rows = (await tx.execute(sql`
+        update ${sql.raw(table)} set status = 'archived', updated_by = ${actorUserId}::uuid, updated_at = now()
+        where tenant_id = ${id}::uuid and ${sql.raw(col)} = ${entityId}::uuid returning id`)) as Array<{ id: string }>;
+      if (!rows[0]) throw new NotFoundException("link not found");
+      await tx.execute(sql`
+        insert into platform_audit (tenant_id, actor_user_id, action, entity_type, entity_id, metadata)
+        values (${id}::uuid, ${actorUserId}::uuid, 'workspace.unlink_counterparty', ${kind}, ${entityId}::uuid, '{}'::jsonb)`);
+      return { ok: true };
     });
   }
 

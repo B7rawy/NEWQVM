@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException, Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
@@ -6,6 +7,7 @@ import { PlatformOnly } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
   createWorkspaceSchema,
+  linkCounterpartySchema,
   updateWorkspaceSchema,
   WorkspacesAdminService,
 } from "./workspaces-admin.service.js";
@@ -44,6 +46,27 @@ export class WorkspacesAdminController {
   @Patch(":id")
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.update(getContext(req).userId!, id, updateWorkspaceSchema.parse(body));
+  }
+
+  /** Directory identities not yet linked to this workspace (pick-list for "link existing"). */
+  @Get(":id/linkable/:kind")
+  linkable(@Param("id") id: string, @Param("kind") kind: string) {
+    if (kind !== "vendor" && kind !== "workshop") throw new BadRequestException("kind must be vendor | workshop");
+    return this.svc.linkable(id, kind);
+  }
+
+  /** Link / unlink an existing counterparty to this workspace (the identity itself is untouched). */
+  @Post(":id/link/:kind/:entityId")
+  link(@Req() req: Request, @Param("id") id: string, @Param("kind") kind: string, @Param("entityId") entityId: string, @Body() body: unknown) {
+    if (kind !== "vendor" && kind !== "workshop") throw new BadRequestException("kind must be vendor | workshop");
+    const dto = linkCounterpartySchema.parse(body ?? {});
+    return this.svc.linkCounterparty(getContext(req).userId!, id, kind, entityId, dto.classification);
+  }
+
+  @Post(":id/unlink/:kind/:entityId")
+  unlink(@Req() req: Request, @Param("id") id: string, @Param("kind") kind: string, @Param("entityId") entityId: string) {
+    if (kind !== "vendor" && kind !== "workshop") throw new BadRequestException("kind must be vendor | workshop");
+    return this.svc.unlinkCounterparty(getContext(req).userId!, id, kind, entityId);
   }
 
   /** Super-admin: edit a membership INSIDE a specific workspace (cross-workspace entrance). */
