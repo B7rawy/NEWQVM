@@ -18,8 +18,17 @@ interface Me {
   platformRole: string | null;
   isVendor: boolean;
   persona: Persona;
+  activationStatus: string | null; // QNEW-71: pending self-registration → active
   impersonating: boolean;
   impersonatorName: string | null;
+}
+
+export interface SignupDto {
+  kind: "vendor" | "workshop";
+  fullName: string;
+  email: string;
+  password: string;
+  mobile?: string;
 }
 
 interface AuthState {
@@ -29,6 +38,8 @@ interface AuthState {
   activeSlug: string | null;
   environment: "live" | "sandbox";
   login: (email: string, password: string) => Promise<void>;
+  signup: (dto: SignupDto) => Promise<void>;
+  refreshMe: () => Promise<void>;
   logout: () => void;
   switchWorkspace: (slug: string | null) => Promise<void>;
   setEnvironment: (e: "live" | "sandbox") => void;
@@ -122,6 +133,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const slug = await loadWorkspaces(meData.isInternal);
     await settleHome(meData, slug);
   }
+  /** Self-registration (QNEW-71): create a counterparty account and sign in, landing on its portal. */
+  async function signup(dto: SignupDto) {
+    const res = await api.post<{ token: string }>("/auth/signup", dto);
+    auth.setToken(res.token);
+    setAuthed(true);
+    const meData = await loadMe();
+    const slug = await loadWorkspaces(meData.isInternal);
+    await settleHome(meData, slug);
+  }
+  /** Re-fetch /me (e.g. after activation flips activationStatus pending → active). */
+  async function refreshMe() {
+    await loadMe();
+  }
   function logout() {
     auth.setToken(null);
     auth.setWorkspace(null);
@@ -165,7 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <Ctx.Provider
-      value={{ authed, me, workspaces, activeSlug, environment, login, logout, switchWorkspace, setEnvironment, impersonate, stopImpersonating }}
+      value={{ authed, me, workspaces, activeSlug, environment, login, signup, refreshMe, logout, switchWorkspace, setEnvironment, impersonate, stopImpersonating }}
     >
       {children}
     </Ctx.Provider>

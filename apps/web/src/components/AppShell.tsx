@@ -17,6 +17,7 @@ import {
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { navForPersona, type Persona } from "../nav";
+import ActivationBanner from "./ActivationBanner";
 
 /** Friendly labels for the raw role codes shown in the top bar. */
 const ROLE_LABEL: Record<string, string> = {
@@ -127,10 +128,10 @@ export default function AppShell() {
               <>
                 <span className="min-w-0 flex-1 leading-tight">
                   <span className="block truncate text-[12.5px] font-semibold text-ink">
-                    {activeSlug ? active?.name ?? "Workspace" : "Admin workspace"}
+                    {activeSlug ? active?.name ?? "Workspace" : persona === "platform" ? "Admin workspace" : `${portalLabel} account`}
                   </span>
                   <span className="block text-[10.5px] text-faint">
-                    {activeSlug ? (active?.is_sandbox ? "Sandbox" : "Workspace") : "Platform · system"}
+                    {activeSlug ? (active?.is_sandbox ? "Sandbox" : "Workspace") : persona === "platform" ? "Platform · system" : "Self-service"}
                   </span>
                 </span>
                 <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-faint" />
@@ -326,6 +327,7 @@ export default function AppShell() {
             </span>
           </div>
         </header>
+        <ActivationBanner />
         <main className="min-h-0 flex-1 overflow-auto px-6 py-6">
           <ErrorBoundary resetKey={location.pathname}>
             <Outlet />

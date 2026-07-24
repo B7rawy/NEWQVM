@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./lib/auth";
 import Login from "./pages/Login";
+import Signup from "./pages/Signup";
 import AppShell from "./components/AppShell";
 import Overview from "./pages/Overview";
 import Rfqs from "./pages/Rfqs";
@@ -63,7 +64,8 @@ const WIRED = new Set([
 
 export default function App() {
   const { authed, me, activeSlug } = useAuth();
-  if (!authed) return <Login />;
+  // Unauthenticated: /signup shows the self-registration page, everything else the login page.
+  if (!authed) return typeof window !== "undefined" && window.location.pathname === "/signup" ? <Signup /> : <Login />;
   // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 

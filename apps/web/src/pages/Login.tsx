@@ -46,6 +46,10 @@ export default function Login() {
         <button className="btn-primary w-full rounded-md" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </button>
+        <p className="mt-3 text-center text-[12.5px] text-muted">
+          New supplier or workshop?{" "}
+          <a href="/signup" className="font-medium text-accent hover:underline">Create an account</a>
+        </p>
       </form>
     </div>
   );
