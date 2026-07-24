@@ -168,11 +168,14 @@ export class WorkshopPortalService {
     await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const ok = (await tx.execute(sql`
-        select 1 from workshop_users wu
+        select w.activation_status from workshop_users wu
+        join workshops w on w.id = wu.workshop_id
         join workshop_branches wb on wb.workshop_id = wu.workshop_id and wb.id = ${dto.workshopBranchId}::uuid
         join tenant_workshops tw on tw.workshop_id = wu.workshop_id and tw.tenant_id = ${dto.tenantId}::uuid and tw.status = 'active'
-        where wu.user_id = ${ctx.userId}::uuid limit 1`))[0];
+        where wu.user_id = ${ctx.userId}::uuid limit 1`))[0] as { activation_status: string } | undefined;
       if (!ok) throw new ForbiddenException("branch not owned by your workshop, or workspace not linked");
+      // QNEW-71 §3.4: gate transactional actions until the account is activated.
+      if (ok.activation_status !== "active") throw new ForbiddenException("activate your account before creating requests");
     });
     // reuse the workspace RFQ-create (atomic order number + header + items) in the chosen tenant
     return this.rfqService.create(

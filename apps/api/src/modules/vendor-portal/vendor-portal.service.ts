@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { VendorRfqService, type SubmitQuoteDto } from "../rfq/vendor-rfq.service.js";
@@ -149,6 +149,11 @@ export class VendorPortalService {
         | undefined;
       if (!rv) throw new NotFoundException("quotation request not found");
       if (rv.environment !== "live") throw new BadRequestException("this request is not live");
+      // QNEW-71 §3.4: transactional actions are gated until the account is activated.
+      const act = (await tx.execute(sql`select activation_status from vendors where id = ${vid}::uuid limit 1`))[0] as
+        | { activation_status: string }
+        | undefined;
+      if (act?.activation_status !== "active") throw new ForbiddenException("activate your account before submitting quotes");
       return this.vendorRfq.writeQuoteItems(tx, { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id }, dto);
     });
   }
