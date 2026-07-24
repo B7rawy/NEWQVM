@@ -32,8 +32,12 @@ export const submitCounterpartySchema = z
     classification: z.string().optional(),
     tenantId: z.string().uuid().optional(), // platform staff: submit on behalf of a workspace
   })
-  .refine((d) => d.taxNumber || d.mobile || d.email, {
-    message: "provide at least one identifier: taxNumber, mobile, or email",
+  // QNEW-71 AC: a company MUST carry its tax number; an individual MUST carry its mobile.
+  .superRefine((d, ctx) => {
+    if (d.counterpartyType === "company" && !d.taxNumber)
+      ctx.addIssue({ code: "custom", path: ["taxNumber"], message: "a company requires a tax number" });
+    if (d.counterpartyType === "individual" && !d.mobile)
+      ctx.addIssue({ code: "custom", path: ["mobile"], message: "an individual requires a mobile number" });
   });
 export const approveSchema = z.object({ notes: z.string().optional(), classification: z.string().optional() });
 export const mergeSchema = z.object({ targetEntityId: z.string().uuid(), notes: z.string().optional() });
