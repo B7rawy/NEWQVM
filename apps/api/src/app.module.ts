@@ -50,6 +50,8 @@ import { CounterpartyController } from "./modules/counterparty/counterparty.cont
 import { CounterpartyService } from "./modules/counterparty/counterparty.service.js";
 import { AccountController } from "./modules/account/account.controller.js";
 import { AccountService } from "./modules/account/account.service.js";
+import { VendorPortalController } from "./modules/vendor-portal/vendor-portal.controller.js";
+import { VendorPortalService } from "./modules/vendor-portal/vendor-portal.service.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -83,6 +85,7 @@ import { AccountService } from "./modules/account/account.service.js";
     ImpersonationController,
     CounterpartyController,
     AccountController,
+    VendorPortalController,
   ],
   providers: [
     RfqService,
@@ -109,6 +112,7 @@ import { AccountService } from "./modules/account/account.service.js";
     ImpersonationService,
     CounterpartyService,
     AccountService,
+    VendorPortalService,
   ],
 })
 export class AppModule {}

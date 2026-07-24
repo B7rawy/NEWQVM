@@ -177,6 +177,9 @@ async function main() {
     values (${t1.id},${num.n},${branch.id},'ABC-1234',${newStatus.id}) returning id`;
   await sql`insert into rfq_items (tenant_id,rfq_id,part_number,part_description,quantity)
     values (${t1.id},${rfq.id},'12345-67890','Brake Pad Set',2)`;
+  // send this RFQ to the Gulf vendor so the vendor portal has a real quotation request to price
+  await sql`insert into rfq_vendors (tenant_id,rfq_id,vendor_id,status_id,sent_at)
+    values (${t1.id},${rfq.id},${vendor.id},(select id from vendor_statuses where code='rfq'),now())`;
 
   // ---- pricing engine (QNEW-30): a margin matrix + a basis setting for t1 ----
   const [pcat] = await sql`insert into profit_categories (tenant_id,name,part_category_id,brand_class_id)

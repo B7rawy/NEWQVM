@@ -15,6 +15,9 @@ import ManagementOverview from "./pages/ManagementOverview";
 import Users from "./pages/Users";
 import Onboarding from "./pages/Onboarding";
 import OnboardingReview from "./pages/OnboardingReview";
+import VendorOverview from "./pages/vendor/VendorOverview";
+import VendorQuotations from "./pages/vendor/VendorQuotations";
+import VendorQuotationDetail from "./pages/vendor/VendorQuotationDetail";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
@@ -59,6 +62,8 @@ const WIRED = new Set([
   "/admin/workspaces",
   "/onboarding",
   "/onboarding/review",
+  "/vendor",
+  "/vendor/quotations",
   "/settings",
 ]);
 
@@ -97,6 +102,9 @@ export default function App() {
         <Route path="/admin/users" element={<Users />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/onboarding/review" element={<OnboardingReview />} />
+        <Route path="/vendor" element={<VendorOverview />} />
+        <Route path="/vendor/quotations" element={<VendorQuotations />} />
+        <Route path="/vendor/quotations/:id" element={<VendorQuotationDetail />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />

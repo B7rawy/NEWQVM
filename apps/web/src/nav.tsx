@@ -198,8 +198,8 @@ export const vendorNav: NavGroup[] = [
   {
     heading: "Sales",
     items: [
-      { label: "Overview", path: "/vendor", icon: LayoutDashboard, soon: true },
-      { label: "Quotation Requests", path: "/vendor/quotations", icon: Files, soon: true },
+      { label: "Overview", path: "/vendor", icon: LayoutDashboard },
+      { label: "Quotation Requests", path: "/vendor/quotations", icon: Files },
       { label: "Confirmed Orders", path: "/vendor/confirmed", icon: ShoppingCart, soon: true },
     ],
   },
