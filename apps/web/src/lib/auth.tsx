@@ -19,6 +19,7 @@ interface Me {
   isVendor: boolean;
   persona: Persona;
   activationStatus: string | null; // QNEW-71: pending self-registration → active
+  counterpartyType: string | null; // QNEW-71: individual | company (drives the upgrade option)
   impersonating: boolean;
   impersonatorName: string | null;
 }

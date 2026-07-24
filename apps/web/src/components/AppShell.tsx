@@ -18,6 +18,7 @@ import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
 import { navForPersona, type Persona } from "../nav";
 import ActivationBanner from "./ActivationBanner";
+import UpgradeBanner from "./UpgradeBanner";
 
 /** Friendly labels for the raw role codes shown in the top bar. */
 const ROLE_LABEL: Record<string, string> = {
@@ -328,6 +329,7 @@ export default function AppShell() {
           </div>
         </header>
         <ActivationBanner />
+        <UpgradeBanner />
         <main className="min-h-0 flex-1 overflow-auto px-6 py-6">
           <ErrorBoundary resetKey={location.pathname}>
             <Outlet />

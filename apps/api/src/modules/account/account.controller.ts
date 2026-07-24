@@ -2,7 +2,7 @@ import { Body, Controller, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
-import { AccountService, activateSchema } from "./account.service.js";
+import { AccountService, activateSchema, upgradeSchema } from "./account.service.js";
 
 /** Self-service account actions for a signed-in counterparty (QNEW-71). */
 @Controller("account")
@@ -15,5 +15,12 @@ export class AccountController {
   activate(@Req() req: Request, @Body() body: unknown) {
     const c = getContext(req);
     return this.svc.activate({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal }, activateSchema.parse(body));
+  }
+
+  /** Upgrade an Individual account to a Company (creates the company + re-parents all history). */
+  @Post("upgrade")
+  upgrade(@Req() req: Request, @Body() body: unknown) {
+    const c = getContext(req);
+    return this.svc.upgrade({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal }, upgradeSchema.parse(body));
   }
 }
