@@ -46,6 +46,8 @@ import { VendorFinanceService } from "./modules/vendor-finance/vendor-finance.se
 import { ShippingController } from "./modules/shipping/shipping.controller.js";
 import { ShippingService } from "./modules/shipping/shipping.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
+import { CounterpartyController } from "./modules/counterparty/counterparty.controller.js";
+import { CounterpartyService } from "./modules/counterparty/counterparty.service.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -77,6 +79,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorsController,
     UsersAdminController,
     ImpersonationController,
+    CounterpartyController,
   ],
   providers: [
     RfqService,
@@ -101,6 +104,7 @@ import { WorkspacesController } from "./modules/workspaces/workspaces.controller
     VendorsService,
     UsersAdminService,
     ImpersonationService,
+    CounterpartyService,
   ],
 })
 export class AppModule {}
