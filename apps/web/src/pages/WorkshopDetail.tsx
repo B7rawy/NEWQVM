@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ChevronLeft, KeyRound, Plus, Building2, Users, Files } from "lucide-react";
+import { ChevronLeft, KeyRound, Plus, Building2, Users, Files, Upload } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
 import CreateAccountDialog from "../components/CreateAccountDialog";
+import BulkAccountsDialog from "../components/BulkAccountsDialog";
 
 /**
  * One workshop's own page — the full record behind a directory row: identity, branches, portal
@@ -41,6 +42,7 @@ export default function WorkshopDetail() {
   const [regions, setRegions] = useState<Region[]>([]);
   const [err, setErr] = useState("");
   const [acct, setAcct] = useState(false);
+  const [bulk, setBulk] = useState(false);
   const [addBranch, setAddBranch] = useState(false);
   const [bName, setBName] = useState("");
   const [bRegion, setBRegion] = useState("");
@@ -88,6 +90,10 @@ export default function WorkshopDetail() {
         <CreateAccountDialog kind="workshop" entityId={w.id} entityName={w.name}
           onClose={(created) => { setAcct(false); if (created) load(); }} />
       )}
+      {bulk && (
+        <BulkAccountsDialog kind="workshop" entityId={w.id} entityName={w.name}
+          onClose={(imported) => { setBulk(false); if (imported) load(); }} />
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* identity */}
@@ -108,9 +114,14 @@ export default function WorkshopDetail() {
               <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal accounts
             </h3>
             {isPlatform && (
-              <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
-                <KeyRound className="h-3.5 w-3.5" /> Create login
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
+                  <KeyRound className="h-3.5 w-3.5" /> Create login
+                </button>
+                <button className="btn btn-sm rounded-md" onClick={() => setBulk(true)}>
+                  <Upload className="h-3.5 w-3.5" /> Import logins
+                </button>
+              </div>
             )}
           </div>
           {d.accounts.length === 0 ? (

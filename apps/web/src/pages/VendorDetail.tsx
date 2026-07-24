@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ChevronLeft, KeyRound, Building2, Users, Files, Eye } from "lucide-react";
+import { ChevronLeft, KeyRound, Building2, Users, Files, Eye, Upload } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
 import CreateAccountDialog from "../components/CreateAccountDialog";
+import BulkAccountsDialog from "../components/BulkAccountsDialog";
 
 /**
  * One vendor's own page — the full record behind a directory row: identity, branches, portal
@@ -41,6 +42,7 @@ export default function VendorDetail() {
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState("");
   const [acct, setAcct] = useState(false);
+  const [bulk, setBulk] = useState(false);
 
   const load = useCallback(async () => {
     setD(await api.get<Detail>(`/vendors/${id}`));
@@ -76,6 +78,10 @@ export default function VendorDetail() {
         <CreateAccountDialog kind="vendor" entityId={v.id} entityName={v.legal_name}
           onClose={(created) => { setAcct(false); if (created) load(); }} />
       )}
+      {bulk && (
+        <BulkAccountsDialog kind="vendor" entityId={v.id} entityName={v.legal_name}
+          onClose={(imported) => { setBulk(false); if (imported) load(); }} />
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <Card>
@@ -96,9 +102,14 @@ export default function VendorDetail() {
               <Users className="mr-1.5 inline h-4 w-4 text-faint" /> Portal accounts
             </h3>
             {isPlatform && (
-              <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
-                <KeyRound className="h-3.5 w-3.5" /> Create login
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button className="btn btn-sm rounded-md" onClick={() => setAcct(true)}>
+                  <KeyRound className="h-3.5 w-3.5" /> Create login
+                </button>
+                <button className="btn btn-sm rounded-md" onClick={() => setBulk(true)}>
+                  <Upload className="h-3.5 w-3.5" /> Import logins
+                </button>
+              </div>
             )}
           </div>
           {d.accounts.length === 0 ? (

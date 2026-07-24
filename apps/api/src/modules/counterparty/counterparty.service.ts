@@ -47,6 +47,20 @@ export const createAccountSchema = z.object({
   phone: z.string().optional(),
   password: z.string().min(8).optional(), // omit → invited account (no password set yet)
 });
+/** Bulk portal-account provisioning (Excel/CSV rows). */
+export const bulkAccountsSchema = z.object({
+  rows: z
+    .array(
+      z.object({
+        email: z.string().email(),
+        fullName: z.string().min(2).optional(),
+        phone: z.string().optional(),
+        password: z.string().min(8).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
 export const approveSchema = z.object({ notes: z.string().optional(), classification: z.string().optional() });
 export const mergeSchema = z.object({ targetEntityId: z.string().uuid(), notes: z.string().optional() });
 export const rejectSchema = z.object({ notes: z.string().optional() });
@@ -371,6 +385,37 @@ export class CounterpartyService {
       await this.audit(tx, ctx, "counterparty.account_created", kind, entityId, { email, userId });
       return { userId, entity: entity.name, invited: !dto.password && !existing };
     });
+  }
+
+  /**
+   * BULK provision logins for one directory entity (the Excel/CSV path for portal accounts).
+   * Per-row isolation: one bad row never aborts the batch — each row reports created | linked |
+   * skipped | error, so the admin sees exactly what happened line by line.
+   */
+  async createAccountsBulk(
+    ctx: RlsContext,
+    kind: "vendor" | "workshop" | "service_provider",
+    entityId: string,
+    dto: z.infer<typeof bulkAccountsSchema>,
+  ) {
+    const results: Array<{ email: string; status: "created" | "linked" | "skipped" | "error"; message?: string }> = [];
+    for (const row of dto.rows) {
+      try {
+        const r = await this.createAccount(ctx, kind, entityId, {
+          email: row.email,
+          fullName: row.fullName,
+          phone: row.phone,
+          password: row.password,
+        });
+        results.push({ email: row.email, status: r.invited ? "created" : "linked" });
+      } catch (e) {
+        const msg = (e as { message?: string })?.message ?? "failed";
+        // an account that is already attached to this entity is a no-op, not a failure
+        results.push({ email: row.email, status: /already has an account/i.test(msg) ? "skipped" : "error", message: msg });
+      }
+    }
+    const tally = results.reduce<Record<string, number>>((a, r) => ({ ...a, [r.status]: (a[r.status] ?? 0) + 1 }), {});
+    return { total: results.length, tally, results };
   }
 
   /** Write a review decision to the platform audit trail (QNEW-71 §4.3). */

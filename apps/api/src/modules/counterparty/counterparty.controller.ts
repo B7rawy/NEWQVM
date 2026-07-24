@@ -7,6 +7,7 @@ import { getContext } from "../../common/request-context.js";
 import {
   approveSchema,
   CounterpartyService,
+  bulkAccountsSchema,
   createAccountSchema,
   importSchema,
   mergeSchema,
@@ -87,5 +88,14 @@ export class CounterpartyController {
     if (kind !== "vendor" && kind !== "workshop" && kind !== "service_provider")
       throw new BadRequestException("kind must be vendor | workshop | service_provider");
     return this.svc.createAccount(this.ctx(req), kind, entityId, createAccountSchema.parse(body));
+  }
+
+  /** Bulk: provision many logins for one entity from an uploaded sheet (per-row results). */
+  @Post(":kind/:entityId/accounts/bulk")
+  @PlatformOnly()
+  createAccountsBulk(@Req() req: Request, @Param("kind") kind: string, @Param("entityId") entityId: string, @Body() body: unknown) {
+    if (kind !== "vendor" && kind !== "workshop" && kind !== "service_provider")
+      throw new BadRequestException("kind must be vendor | workshop | service_provider");
+    return this.svc.createAccountsBulk(this.ctx(req), kind, entityId, bulkAccountsSchema.parse(body));
   }
 }

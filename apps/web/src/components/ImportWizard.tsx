@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Upload, CheckCircle2, AlertTriangle, Download } from "lucide-react";
 import { api } from "../lib/api";
+import { readSheet } from "../lib/sheet";
 import { Card, Badge, Field } from "./ui";
 
 /**
@@ -75,36 +76,6 @@ function mapRow(obj: Record<string, unknown>): Row | null {
 
 /** Minimal RFC-4180-ish CSV → row objects. Parsing text ourselves preserves leading zeros in
  *  mobiles and UTF-8 Arabic headers (SheetJS' CSV path mangles both). Handles quoted fields. */
-function parseCsv(input: string): Record<string, string>[] {
-  const text = input.replace(/^﻿/, ""); // strip UTF-8 BOM
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
-      } else field += c;
-    } else if (c === '"') inQuotes = true;
-    else if (c === ",") { row.push(field); field = ""; }
-    else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
-    else if (c !== "\r") field += c;
-  }
-  if (field.length || row.length) { row.push(field); rows.push(row); }
-  if (rows.length < 2) return [];
-  const headers = rows[0].map((h) => h.trim());
-  return rows
-    .slice(1)
-    .filter((r) => r.some((c) => c.trim() !== ""))
-    .map((r) => {
-      const o: Record<string, string> = {};
-      headers.forEach((h, i) => (o[h] = (r[i] ?? "").trim()));
-      return o;
-    });
-}
-
 export default function ImportWizard({ onDone }: { onDone: () => void }) {
   const [kind, setKind] = useState<"vendor" | "workshop">("vendor");
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -121,17 +92,7 @@ export default function ImportWizard({ onDone }: { onDone: () => void }) {
     setRows(null);
     setFilename(file.name);
     try {
-      let objs: Record<string, unknown>[];
-      if (/\.csv$/i.test(file.name)) {
-        // UTF-8 text parse preserves Arabic headers + leading zeros in mobile numbers.
-        objs = parseCsv(await file.text());
-      } else {
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { type: "array" });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        // raw:false → formatted text (keeps text-formatted phone/tax cells intact).
-        objs = XLSX.utils.sheet_to_json(sheet, { defval: "", raw: false }) as Record<string, unknown>[];
-      }
+      const objs = await readSheet(file); // shared reader (UTF-8 CSV / SheetJS xlsx)
       const parsed = objs.map(mapRow).filter((r): r is Row => r !== null);
       if (parsed.length === 0) setErr("No data rows found. The first row must be column headers (Name, Tax number, Mobile, Email…).");
       setRows(parsed);
