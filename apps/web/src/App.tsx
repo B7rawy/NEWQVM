@@ -12,6 +12,8 @@ import Providers from "./pages/Providers";
 import InternalDashboard from "./pages/InternalDashboard";
 import ManagementOverview from "./pages/ManagementOverview";
 import Users from "./pages/Users";
+import Onboarding from "./pages/Onboarding";
+import OnboardingReview from "./pages/OnboardingReview";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
@@ -54,6 +56,8 @@ const WIRED = new Set([
   "/management-overview",
   "/admin/users",
   "/admin/workspaces",
+  "/onboarding",
+  "/onboarding/review",
   "/settings",
 ]);
 
@@ -89,6 +93,8 @@ export default function App() {
         <Route path="/internal" element={<InternalDashboard />} />
         <Route path="/management-overview" element={<ManagementOverview />} />
         <Route path="/admin/users" element={<Users />} />
+        <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/onboarding/review" element={<OnboardingReview />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />

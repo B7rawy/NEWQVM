@@ -28,6 +28,8 @@ import {
   Target,
   SlidersHorizontal,
   ClipboardList,
+  ClipboardCheck,
+  UserPlus,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -87,6 +89,7 @@ export const platformNav: NavGroup[] = [
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
       { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
       { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
     ],
@@ -111,6 +114,7 @@ export const platformSystemNav: NavGroup[] = [
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
     ],
   },
   {
@@ -177,6 +181,7 @@ export const workspaceNav: NavGroup[] = [
   {
     heading: "Setup",
     items: [
+      { label: "Add supplier / workshop", path: "/onboarding", icon: UserPlus, adminOnly: true },
       { label: "Workshops & Branches", path: "/org/workshops", icon: Wrench, adminOnly: true },
       { label: "Vendors", path: "/vendors", icon: Store, adminOnly: true },
       { label: "Providers", path: "/providers", icon: Handshake, adminOnly: true },
