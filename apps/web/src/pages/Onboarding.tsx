@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, CheckCircle2, Clock } from "lucide-react";
+import { Plus, CheckCircle2, Clock, FileSpreadsheet } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
+import ImportWizard from "../components/ImportWizard";
 
 interface Submission {
   id: string;
@@ -32,6 +33,7 @@ export default function Onboarding() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [result, setResult] = useState<SubmitResult | null>(null);
+  const [showImport, setShowImport] = useState(false);
 
   const load = useCallback(async () => {
     const r = await api.get<{ submissions: Submission[] }>("/counterparty/submissions");
@@ -89,9 +91,17 @@ export default function Onboarding() {
       <PageHeader
         title="Add a supplier or workshop"
         subtitle="Request a new counterparty — our team verifies it and links it to your workspace (no duplicates)."
+        actions={
+          <button className="btn rounded-md" onClick={() => setShowImport((v) => !v)}>
+            <FileSpreadsheet className="h-4 w-4" /> {showImport ? "Single entry" : "Import from Excel"}
+          </button>
+        }
       />
 
+      {showImport && <ImportWizard onDone={load} />}
+
       {/* Submission form */}
+      {!showImport && (
       <Card className="mb-5">
         <form onSubmit={submit} className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <Field label="Type">
@@ -164,6 +174,7 @@ export default function Onboarding() {
           </div>
         )}
       </Card>
+      )}
 
       {/* My submissions */}
       <Card pad={false}>
