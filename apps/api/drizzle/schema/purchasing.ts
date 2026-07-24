@@ -30,6 +30,7 @@ export const purchaseOrders = pgTable(
     statusId: uuid("status_id").references(() => vendorStatuses.id),
     vendorInvoiceNumber: text("vendor_invoice_number"),
     invoiceAmount: money("invoice_amount"), // QNEW-50: vendor invoice total
+    vendorNameSnapshot: text("vendor_name_snapshot"), // QNEW-71 §6.1: vendor name at PO creation
     uploadedBy: uuid("uploaded_by").references(() => users.id),
     ...audit,
   },

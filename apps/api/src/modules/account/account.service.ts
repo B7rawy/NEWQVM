@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { resolveCounterparty } from "../../common/counterparty.helpers.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 
 export const activateSchema = z.object({ mobile: z.string().trim().min(6) });
 export const upgradeSchema = z.object({ legalName: z.string().min(2), taxNumber: z.string().trim().min(1) });
@@ -10,7 +11,10 @@ export const upgradeSchema = z.object({ legalName: z.string().min(2), taxNumber:
 /** Self-service account management for a signed-in counterparty (QNEW-71). */
 @Injectable()
 export class AccountService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   /**
    * Complete activation: the signed-in counterparty provides its identifier (individual→mobile).
@@ -115,7 +119,25 @@ export class AccountService {
       await tx.execute(sql`
         update ${sql.raw(entityTable)} set is_active = false, activation_status = 'suspended',
           updated_by = ${ctx.userId}::uuid, updated_at = now() where id = ${oldId}::uuid`);
-      return { kind, companyId: newId, reparentedTables: fks.length };
+
+      // QNEW-71 §6.4: a one-time transition notice to EVERY workspace linked to the entity (not just
+      // one) — the link rows were re-parented onto the company above, so they now point at newId.
+      const linkTable = kind === "vendor" ? "tenant_vendors" : "tenant_workshops";
+      const entityCol = kind === "vendor" ? "vendor_id" : "workshop_id";
+      const links = (await tx.execute(sql`
+        select t.id as tenant_id, t.is_sandbox from ${sql.raw(linkTable)} l
+        join tenants t on t.id = l.tenant_id
+        where l.${sql.raw(entityCol)} = ${newId}::uuid and l.status <> 'archived'`)) as Array<{ tenant_id: string; is_sandbox: boolean }>;
+      for (const l of links) {
+        await this.notifications.send(tx, {
+          tenantId: l.tenant_id,
+          isSandbox: l.is_sandbox,
+          channel: "webhook",
+          template: "counterparty.upgraded",
+          payload: { kind, entityId: newId, tradingAs: dto.legalName, previousType: "individual" },
+        });
+      }
+      return { kind, companyId: newId, reparentedTables: fks.length, notifiedWorkspaces: links.length };
     });
   }
 }

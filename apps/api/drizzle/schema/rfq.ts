@@ -40,6 +40,8 @@ export const rfqs = pgTable(
     vin: text("vin"),
     carBrandId: uuid("car_brand_id").references(() => carBrands.id),
     model: text("model"),
+    // QNEW-71 §6.1: the customer (workshop) name as it stood at creation — history never rewrites.
+    customerNameSnapshot: text("customer_name_snapshot"),
     orderType: orderType("order_type").notNull().default("regular"),
     deliveryType: deliveryType("delivery_type").notNull().default("delivery"),
     serviceAdvisorId: uuid("service_advisor_id").references(() => users.id),

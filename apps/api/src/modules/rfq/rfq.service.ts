@@ -42,12 +42,13 @@ export class RfqService {
       // tenant_workshops is tenant-scoped, so the join enforces the branch belongs to a linked workshop.
       const branch = (
         (await tx.execute(sql`
-          select wb.id, wb.region_id, r.code as region_code
+          select wb.id, wb.region_id, r.code as region_code, w.name as workshop_name
           from workshop_branches wb
+          join workshops w on w.id = wb.workshop_id
           join tenant_workshops tw on tw.workshop_id = wb.workshop_id and tw.status <> 'archived'
           left join regions r on r.id = wb.region_id
           where wb.id = ${dto.workshopBranchId}::uuid and wb.is_active = true
-          limit 1`)) as Array<{ id: string; region_id: string | null; region_code: string | null }>
+          limit 1`)) as Array<{ id: string; region_id: string | null; region_code: string | null; workshop_name: string }>
       )[0];
       if (!branch) throw new BadRequestException("workshop branch not found in this workspace");
 
@@ -81,6 +82,7 @@ export class RfqService {
           orderType: dto.orderType,
           deliveryType: dto.deliveryType,
           statusId: newStatusId,
+          customerNameSnapshot: branch.workshop_name, // frozen at creation (QNEW-71 §6.1)
         })
         .returning({ id: schema.rfqs.id });
 
@@ -122,7 +124,7 @@ export class RfqService {
         (await tx.execute(sql`
           select r.id, r.order_number, r.plate_number, r.vin, r.model, r.order_type, r.delivery_type,
                  r.payer_type, r.environment, r.created_at, s.label_en as status,
-                 s.code as status_code, w.name as workshop, wb.name as branch
+                 s.code as status_code, coalesce(r.customer_name_snapshot, w.name) as workshop, wb.name as branch
           from rfqs r
           left join item_statuses s on s.id = r.status_id
           left join workshop_branches wb on wb.id = r.workshop_branch_id

@@ -274,6 +274,13 @@
       "when": 1784919073863,
       "tag": "0038_service_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784919074863,
+      "tag": "0039_name_snapshots",
+      "breakpoints": true
     }
   ]
 }

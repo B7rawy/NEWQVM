@@ -25,6 +25,7 @@ async function main() {
     truncate table
       order_items, orders, rfq_vendor_items, rfq_vendors, rfq_items, rfqs,
       tenant_vendors, vendor_users, vendor_branches, vendors,
+      tenant_service_providers, service_provider_users, service_providers,
       workshop_users, workshop_branches, workshops, tenant_memberships, platform_members,
       tenants, plans, users, order_number_counters,
       item_statuses, vendor_statuses, car_brands, brand_classes, part_categories,

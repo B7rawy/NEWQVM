@@ -42,15 +42,17 @@ export class PurchasingService {
 
       const items = (await tx.execute(sql`
         select oi.id as order_item_id, oi.approved_qty,
-               oi.winning_vendor_quote_item_id as quote_id, rv.vendor_id
+               oi.winning_vendor_quote_item_id as quote_id, rv.vendor_id, v.legal_name as vendor_name
         from order_items oi
         join rfq_vendor_items vi on vi.id = oi.winning_vendor_quote_item_id
         join rfq_vendors rv on rv.id = vi.rfq_vendor_id
+        join vendors v on v.id = rv.vendor_id
         where oi.order_id = ${orderId}::uuid`)) as Array<{
         order_item_id: string;
         approved_qty: number | null;
         quote_id: string;
         vendor_id: string;
+        vendor_name: string;
       }>;
       if (items.length === 0) throw new BadRequestException("no confirmed items with a winning quote");
 
@@ -75,6 +77,7 @@ export class PurchasingService {
             orderId,
             vendorId,
             statusId: confirmedStatusId,
+            vendorNameSnapshot: vendorItems[0].vendor_name, // frozen at creation (QNEW-71 §6.1)
           })
           .returning({ id: schema.purchaseOrders.id });
 
@@ -98,7 +101,7 @@ export class PurchasingService {
   async listForOrder(ctx: RlsContext, orderId: string) {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
-        select po.id, v.legal_name as vendor, vs.label_en as status,
+        select po.id, coalesce(po.vendor_name_snapshot, v.legal_name) as vendor, vs.label_en as status,
                count(pi.id)::int as items,
                coalesce(sum(vi.offered_cost * coalesce(pi.qty, 1)), 0) as total_cost
         from purchase_orders po

@@ -20,7 +20,7 @@ scode(){ local m=$1 p=$2; shift 2; curl -s -o /dev/null -w '%{http_code}' -X $m 
 
 echo "############ SECTION 1 — SCHEMA & DEDUP (Slice 1) ############"
 ok 2 "$(psql "select count(*) from information_schema.columns where column_name='counterparty_type' and table_name in ('vendors','workshops')")" "counterparty_type on vendors+workshops"
-ok 4 "$(psql "select count(*) from pg_indexes where indexname like '%_company_tax_uq' or indexname like '%_individual_mobile_uq'")" "4 scoped dedup indexes"
+ok 6 "$(psql "select count(*) from pg_indexes where indexname like '%_company_tax_uq' or indexname like '%_individual_mobile_uq'")" "6 scoped dedup indexes (vendors + workshops + service_providers)"
 ok 2 "$(psql "select count(*) from pg_class where relname in ('counterparty_submissions','import_batches') and relrowsecurity")" "2 staging tables w/ RLS"
 # dedup behaviour (transaction rollback)
 D1=$(docker exec -i qvm_postgres psql -U qvm -d qvm_platform -q 2>&1 <<'SQL'
@@ -59,8 +59,9 @@ ok False "$(echo "$R1" | /usr/bin/python3 -c 'import sys,json;print("candidates"
 ok True  "$(echo "$R1" | /usr/bin/python3 -c 'import sys,json;print("matchCount" in json.load(sys.stdin))')" "T2 privacy: response has matchCount"
 # T3 no identifier
 ok 400 "$(scode POST /api/counterparty/submissions "${M[@]}" -d '{"kind":"vendor","legalName":"No Id Co"}')" "T3 submit w/o identifier -> 400"
-# T4 name % escape (only Gulf exists; '%%' escaped -> 0)
-R4=$(curl -s -X POST $B/api/counterparty/submissions "${M[@]}" -d '{"kind":"vendor","counterpartyType":"company","legalName":"%%","email":"p@x.com"}')
+# T4 name % escape (only Gulf exists; '%%' escaped -> 0). Company needs a tax number (QNEW-71 AC2);
+# use a UNIQUE tax so the only possible match is the escaped-LIKE name (which must not match-all).
+R4=$(curl -s -X POST $B/api/counterparty/submissions "${M[@]}" -d '{"kind":"vendor","counterpartyType":"company","legalName":"%%","taxNumber":"ESCAPE-TEST-9","email":"p@x.com"}')
 ok 0 "$(echo "$R4" | jf matchCount)" "T4 name '%%' escaped -> matchCount 0 (no match-all)"
 # T5 listMine
 ok True "$(curl -s $B/api/counterparty/submissions "${M[@]}" | /usr/bin/python3 -c 'import sys,json;print(json.load(sys.stdin)["count"]>=1)')" "T5 listMine sees own submissions"
