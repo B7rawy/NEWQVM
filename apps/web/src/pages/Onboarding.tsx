@@ -20,7 +20,7 @@ interface SubmitResult {
   status: "pending" | "merged";
   autoLinked: boolean;
   entityId?: string;
-  candidates: Array<{ id: string; name: string; score: number; reasons: string[] }>;
+  matchCount: number; // count only — directory names are never exposed to the workspace (privacy)
 }
 
 const empty = { kind: "vendor", counterpartyType: "company", legalName: "", taxNumber: "", commercialRegistrationNumber: "", mobile: "", email: "", classification: "" };
@@ -101,7 +101,15 @@ export default function Onboarding() {
             </select>
           </Field>
           <Field label="Entity">
-            <select className="input" value={f.counterpartyType} onChange={(e) => setF({ ...f, counterpartyType: e.target.value })}>
+            <select
+              className="input"
+              value={f.counterpartyType}
+              onChange={(e) => {
+                const v = e.target.value;
+                // Reset company-only identifiers when switching to individual (avoid stale values).
+                setF((prev) => ({ ...prev, counterpartyType: v, ...(v === "individual" ? { taxNumber: "", commercialRegistrationNumber: "" } : {}) }));
+              }}
+            >
               <option value="company">Company</option>
               <option value="individual">Individual</option>
             </select>
@@ -149,7 +157,7 @@ export default function Onboarding() {
                 <>Linked to an existing verified entity in your workspace — ready to use.</>
               ) : (
                 <>
-                  Submitted for review. {result.candidates.length > 0 && `We found ${result.candidates.length} possible existing match${result.candidates.length > 1 ? "es" : ""} — our team will confirm.`} You'll see it below once approved.
+                  Submitted for review. {result.matchCount > 0 && `We found ${result.matchCount} possible existing match${result.matchCount > 1 ? "es" : ""} — our team will confirm.`} You'll see it below once approved.
                 </>
               )}
             </div>

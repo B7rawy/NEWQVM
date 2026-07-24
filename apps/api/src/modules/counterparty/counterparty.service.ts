@@ -41,6 +41,7 @@ export const rejectSchema = z.object({ notes: z.string().optional() });
 interface Candidate {
   id: string;
   name: string;
+  cpType: "individual" | "company";
   score: number;
   reasons: string[];
 }
@@ -82,21 +83,24 @@ export class CounterpartyService {
     const tax = d.taxNumber ?? null;
     const mobile = d.mobile ?? null;
     const email = d.email ?? null;
-    const name = d.legalName ?? "";
+    // Escape LIKE metacharacters so a name containing % or _ can't broaden the fuzzy match
+    // (backslash is Postgres' default LIKE escape character).
+    const escName = (d.legalName ?? "").replace(/[\\%_]/g, (c) => "\\" + c);
+    const namePat = d.legalName ? `%${escName}%` : null;
     const rows = (await tx.execute(sql`
-      select id, ${sql.raw(nameCol)} as name,
+      select id, ${sql.raw(nameCol)} as name, counterparty_type as cp_type,
         (${tax}::text is not null and tax_number = ${tax}) as m_tax,
         (${mobile}::text is not null and primary_phone = ${mobile}) as m_mobile,
         (${email}::text is not null and lower(primary_email) = lower(${email})) as m_email,
-        (${name} <> '' and ${sql.raw(nameCol)} ilike '%' || ${name} || '%') as m_name
+        (${namePat}::text is not null and ${sql.raw(nameCol)} ilike ${namePat}) as m_name
       from ${sql.raw(table)}
       where is_active = true and (
         (${tax}::text is not null and tax_number = ${tax}) or
         (${mobile}::text is not null and primary_phone = ${mobile}) or
         (${email}::text is not null and lower(primary_email) = lower(${email})) or
-        (${name} <> '' and ${sql.raw(nameCol)} ilike '%' || ${name} || '%')
+        (${namePat}::text is not null and ${sql.raw(nameCol)} ilike ${namePat})
       )
-      limit 20`)) as Array<{ id: string; name: string; m_tax: boolean; m_mobile: boolean; m_email: boolean; m_name: boolean }>;
+      limit 20`)) as Array<{ id: string; name: string; cp_type: "individual" | "company"; m_tax: boolean; m_mobile: boolean; m_email: boolean; m_name: boolean }>;
     const scored = rows.map((r) => {
       const reasons: string[] = [];
       let score = 0;
@@ -104,7 +108,7 @@ export class CounterpartyService {
       if (r.m_mobile) (reasons.push("mobile"), (score = Math.max(score, 90)));
       if (r.m_email) (reasons.push("email"), (score = Math.max(score, 80)));
       if (r.m_name) (reasons.push("name"), (score = Math.max(score, 40)));
-      return { id: r.id, name: r.name, score, reasons };
+      return { id: r.id, name: r.name, cpType: r.cp_type, score, reasons };
     });
     scored.sort((a, b) => b.score - a.score);
     return scored.slice(0, 5);
@@ -135,12 +139,23 @@ export class CounterpartyService {
   /** Workspace submits a proposed counterparty. Auto-links on an exact key, else queues for review. */
   async submit(ctx: RlsContext, dto: z.infer<typeof submitCounterpartySchema>) {
     const target = this.targetTenant(ctx, dto.tenantId);
+    // Type-normalise identifiers: tax_number / CR are company concepts; an individual is keyed by
+    // mobile. Drop the non-applicable ones so a stale client value can't pollute matching/storage.
+    const isCompany = dto.counterpartyType === "company";
+    const taxNumber = isCompany ? dto.taxNumber ?? null : null;
+    const cr = isCompany ? dto.commercialRegistrationNumber ?? null : null;
     return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
-      const candidates = await this.findCandidates(tx, dto.kind, dto);
+      const candidates = await this.findCandidates(tx, dto.kind, {
+        taxNumber: taxNumber ?? undefined,
+        mobile: dto.mobile,
+        email: dto.email,
+        legalName: dto.legalName,
+      });
+      // Auto-link ONLY on an exact key match to a same-type identity (company↔tax, individual↔mobile).
       const exact = candidates.find(
         (c) =>
-          (dto.counterpartyType === "company" && c.reasons.includes("tax")) ||
-          (dto.counterpartyType === "individual" && c.reasons.includes("mobile")),
+          (isCompany && c.cpType === "company" && c.reasons.includes("tax")) ||
+          (!isCompany && c.cpType === "individual" && c.reasons.includes("mobile")),
       );
       const cand = JSON.stringify(candidates);
       if (AUTO_LINK_ON_EXACT_KEY && exact) {
@@ -150,23 +165,25 @@ export class CounterpartyService {
             (tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
              mobile, email, classification, source, status, match_candidates, resolved_entity_id,
              submitted_by, reviewed_at, review_notes, created_by, updated_by)
-          values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${dto.taxNumber ?? null},
-             ${dto.commercialRegistrationNumber ?? null}, ${dto.mobile ?? null}, ${dto.email ?? null},
+          values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${taxNumber},
+             ${cr}, ${dto.mobile ?? null}, ${dto.email ?? null},
              ${dto.classification ?? null}, 'manual', 'merged', ${cand}::jsonb, ${exact.id}::uuid,
              ${ctx.userId}::uuid, now(), 'auto-linked on exact key match', ${ctx.userId}::uuid, ${ctx.userId}::uuid)
           returning id`)) as Array<{ id: string }>;
-        return { submissionId: s.id, status: "merged" as const, autoLinked: true, entityId: exact.id, candidates };
+        // NOTE: never echo candidate names/ids to the (non-internal) workspace — privacy boundary.
+        // Full candidates are persisted for the @PlatformOnly review queue only.
+        return { submissionId: s.id, status: "merged" as const, autoLinked: true, entityId: exact.id, matchCount: candidates.length };
       }
       const [s] = (await tx.execute(sql`
         insert into counterparty_submissions
           (tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
            mobile, email, classification, source, status, match_candidates, submitted_by, created_by, updated_by)
-        values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${dto.taxNumber ?? null},
-           ${dto.commercialRegistrationNumber ?? null}, ${dto.mobile ?? null}, ${dto.email ?? null},
+        values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${taxNumber},
+           ${cr}, ${dto.mobile ?? null}, ${dto.email ?? null},
            ${dto.classification ?? null}, 'manual', 'pending', ${cand}::jsonb, ${ctx.userId}::uuid,
            ${ctx.userId}::uuid, ${ctx.userId}::uuid)
         returning id`)) as Array<{ id: string }>;
-      return { submissionId: s.id, status: "pending" as const, autoLinked: false, candidates };
+      return { submissionId: s.id, status: "pending" as const, autoLinked: false, matchCount: candidates.length };
     });
   }
 
@@ -202,10 +219,12 @@ export class CounterpartyService {
   }
 
   private async loadPending(tx: Tx, id: string): Promise<SubmissionRow> {
+    // FOR UPDATE serialises concurrent decisions: a second reviewer blocks until the first commits,
+    // then sees the terminal status and is rejected below (no double-create / double-link).
     const [s] = (await tx.execute(sql`
       select id, tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
         mobile, email, classification, status
-      from counterparty_submissions where id = ${id}::uuid limit 1`)) as SubmissionRow[];
+      from counterparty_submissions where id = ${id}::uuid limit 1 for update`)) as SubmissionRow[];
     if (!s) throw new NotFoundException("submission not found");
     if (s.status !== "pending") throw new BadRequestException(`submission already ${s.status}`);
     return s;
@@ -234,9 +253,11 @@ export class CounterpartyService {
             returning id`)) as Array<{ id: string }>;
           entityId = w.id;
         }
-      } catch {
-        // scoped partial-unique tripped → an identity with this key already exists
-        throw new BadRequestException("an identity with this key already exists — use merge instead");
+      } catch (e) {
+        // ONLY a scoped partial-unique violation (23505) means "already exists → merge"; surface anything else.
+        if ((e as { code?: string })?.code === "23505")
+          throw new BadRequestException("an identity with this key already exists — use merge instead");
+        throw e;
       }
       await this.linkEntity(tx, s.kind, s.tenant_id, entityId, dto.classification ?? s.classification, ctx.userId);
       await tx.execute(sql`

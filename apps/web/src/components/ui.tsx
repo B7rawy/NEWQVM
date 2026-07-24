@@ -122,7 +122,7 @@ export function statusTone(status?: string | null): keyof typeof badgeTones {
   const s = (status ?? "").toLowerCase();
   if (/(new|draft)/.test(s)) return "gray";
   if (/(pending|sent|quoted|progress|assigned|in_transit)/.test(s)) return "amber";
-  if (/(confirm|deliver|paid|accepted|approved|closed|completed)/.test(s)) return "green";
+  if (/(confirm|deliver|paid|accepted|approved|merged|linked|closed|completed)/.test(s)) return "green";
   if (/(reject|cancel|return|overdue|failed)/.test(s)) return "red";
   return "blue";
 }
