@@ -40,6 +40,13 @@ export class VendorsController {
     return this.svc.available(this.ctxOpen(req), tenantId);
   }
 
+  /** One vendor's own page: identity + branches + accounts + workspaces + quotations + won orders.
+   *  Declared AFTER the literal "available" route so that path is not swallowed by :id. */
+  @Get(":id")
+  detail(@Req() req: Request, @Param("id") id: string) {
+    return this.svc.detail(this.ctxOpen(req), id);
+  }
+
   // Directory identity writes are platform-only; a workspace onboards via POST /counterparty/submissions.
   @Post()
   @PlatformOnly()

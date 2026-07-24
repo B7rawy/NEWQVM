@@ -80,6 +80,71 @@ export class VendorsService {
     return { count: rows.length, vendors: rows };
   }
 
+  /**
+   * Everything about ONE vendor, for its own page: identity, branches, portal accounts, workspace
+   * links, quotation activity and won orders. Privacy: a non-platform caller must be linked to the
+   * vendor, and only ever sees ITS OWN link + ITS OWN quotations — a shared global counterparty
+   * never leaks another tenant's relationship.
+   */
+  async detail(ctx: RlsContext, id: string) {
+    const global = ctx.isInternal && !ctx.tenantId;
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const v = (await tx.execute(sql`
+        select id, legal_name, counterparty_type, activation_status, vendor_type, tax_number,
+          commercial_registration_number, primary_phone, primary_email, payment_terms_days, is_active, created_at
+        from vendors where id = ${id}::uuid limit 1`))[0] as Record<string, unknown> | undefined;
+      if (!v) throw new NotFoundException("vendor not found");
+
+      if (!global) {
+        const linked = (await tx.execute(sql`
+          select 1 from tenant_vendors where vendor_id = ${id}::uuid and tenant_id = ${ctx.tenantId}::uuid
+            and status <> 'archived' limit 1`))[0];
+        if (!linked) throw new NotFoundException("vendor not found in this workspace");
+      }
+
+      const branches = await tx.execute(sql`
+        select vb.id, vb.name, vb.address, vb.is_active, r.label_en as region, c.label_en as city
+        from vendor_branches vb
+        left join regions r on r.id = vb.region_id
+        left join cities c on c.id = vb.city_id
+        where vb.vendor_id = ${id}::uuid order by vb.name`);
+
+      const accounts = await tx.execute(sql`
+        select u.id, u.full_name, u.email, u.phone, u.is_active, vu.is_vendor_admin
+        from vendor_users vu join users u on u.id = vu.user_id
+        where vu.vendor_id = ${id}::uuid order by vu.is_vendor_admin desc, u.full_name`);
+
+      const workspaces = await tx.execute(sql`
+        select t.id, t.name, t.slug, tv.status, tv.classification
+        from tenant_vendors tv join tenants t on t.id = tv.tenant_id
+        where tv.vendor_id = ${id}::uuid and tv.status <> 'archived'
+          ${global ? sql`` : sql`and tv.tenant_id = ${ctx.tenantId}::uuid`}
+        order by t.name`);
+
+      const quotations = await tx.execute(sql`
+        select rv.id, r.order_number, r.plate_number, rv.sent_at, vs.label_en as status,
+          t.name as workspace,
+          (select count(*)::int from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_items
+        from rfq_vendors rv
+        join rfqs r on r.id = rv.rfq_id and r.environment = 'live'
+        join tenants t on t.id = rv.tenant_id
+        left join vendor_statuses vs on vs.id = rv.status_id
+        where rv.vendor_id = ${id}::uuid ${global ? sql`` : sql`and rv.tenant_id = ${ctx.tenantId}::uuid`}
+        order by coalesce(rv.sent_at, r.created_at) desc limit 10`);
+
+      const won = (await tx.execute(sql`
+        select count(distinct o.id)::int as orders,
+          coalesce(sum(rvi.offered_cost * oi.approved_qty), 0) as total
+        from orders o
+        join order_items oi on oi.order_id = o.id
+        join rfq_vendor_items rvi on rvi.id = oi.winning_vendor_quote_item_id
+        join rfq_vendors rv on rv.id = rvi.rfq_vendor_id and rv.vendor_id = ${id}::uuid
+        where o.environment = 'live' ${global ? sql`` : sql`and o.tenant_id = ${ctx.tenantId}::uuid`}`))[0];
+
+      return { vendor: v, branches, accounts, workspaces, quotations, won };
+    });
+  }
+
   /** Create a new global vendor AND link it to the active workspace. Needs is_internal (global
    *  write) + the active tenant_id (tenant_vendors isolation) — both satisfied here. */
   /** Resolve the target workspace via the shared helper (platform may target any workspace). */

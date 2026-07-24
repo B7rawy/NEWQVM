@@ -10,6 +10,7 @@ import Orders from "./pages/Orders";
 import Workshops from "./pages/Workshops";
 import WorkshopDetail from "./pages/WorkshopDetail";
 import Vendors from "./pages/Vendors";
+import VendorDetail from "./pages/VendorDetail";
 import Providers from "./pages/Providers";
 import InternalDashboard from "./pages/InternalDashboard";
 import ManagementOverview from "./pages/ManagementOverview";
@@ -115,6 +116,7 @@ export default function App() {
         <Route path="/org/workshops" element={<Workshops />} />
         <Route path="/org/workshops/:id" element={<WorkshopDetail />} />
         <Route path="/vendors" element={<Vendors />} />
+        <Route path="/vendors/:id" element={<VendorDetail />} />
         <Route path="/providers" element={<Providers />} />
         <Route path="/internal" element={<InternalDashboard />} />
         <Route path="/management-overview" element={<ManagementOverview />} />

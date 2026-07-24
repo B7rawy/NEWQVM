@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
-import { Plus, Eye, KeyRound } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Plus, Eye, KeyRound, Search } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
@@ -28,6 +28,7 @@ interface Ws {
 }
 
 export default function Vendors() {
+  const nav = useNavigate();
   const { activeSlug, me, impersonate } = useAuth();
   const isPlatform = me?.persona === "platform";
   const canManage = isPlatform; // only platform staff write the global vendor directory
@@ -40,8 +41,10 @@ export default function Vendors() {
   const [f, setF] = useState({ counterpartyType: "company", legalName: "", taxNumber: "", vendorType: "commercial", primaryEmail: "", primaryPhone: "", classification: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const [pendingOnly, setPendingOnly] = useState(false);
+
   const [acct, setAcct] = useState<{ id: string; name: string } | null>(null);
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<"all" | "pending" | "no_account">("all");
   const isCompany = f.counterpartyType === "company";
 
   const load = useCallback(async () => {
@@ -91,6 +94,19 @@ export default function Vendors() {
       setErr((e as Error).message);
     }
   }
+
+  const visible = (() => {
+    let out = rows ?? [];
+    if (filter === "pending") out = out.filter((r) => r.activation_status === "pending");
+    if (filter === "no_account") out = out.filter((r) => !r.user_id);
+    const needle = q.trim().toLowerCase();
+    if (needle) out = out.filter((r) =>
+      r.legal_name.toLowerCase().includes(needle) ||
+      (r.tax_number ?? "").toLowerCase().includes(needle) ||
+      (r.primary_email ?? "").toLowerCase().includes(needle));
+    // least-ready first (no login) so the page opens on what needs work
+    return [...out].sort((a, b) => Number(!!a.user_id) - Number(!!b.user_id) || a.legal_name.localeCompare(b.legal_name));
+  })();
 
   return (
     <>
@@ -183,21 +199,32 @@ export default function Vendors() {
         </Card>
       )}
 
-      {rows && rows.some((v) => v.activation_status === "pending") && (
-        <div className="mb-3 flex items-center gap-2">
-          <button
-            className={`btn btn-sm rounded-md ${pendingOnly ? "btn-primary" : ""}`}
-            onClick={() => setPendingOnly((v) => !v)}
-          >
-            Pending activation ({rows.filter((v) => v.activation_status === "pending").length})
+      {/* the stat strip IS the filter bar (mirrors Workshops) */}
+      <div className="mb-5 grid grid-cols-3 divide-x divide-line-2 overflow-hidden rounded-xl2 border border-line bg-panel shadow-card">
+        {([
+          { key: "all" as const, label: "Suppliers", value: rows?.length ?? 0, hint: "all suppliers" },
+          { key: "pending" as const, label: "Pending activation", value: rows?.filter((r) => r.activation_status === "pending").length ?? 0, hint: "awaiting activation" },
+          { key: "no_account" as const, label: "No portal access", value: rows?.filter((r) => !r.user_id).length ?? 0, hint: "cannot sign in yet" },
+        ]).map((c) => (
+          <button key={c.key} onClick={() => setFilter(c.key)}
+            className={`px-5 py-4 text-left transition hover:bg-surface ${filter === c.key ? "bg-surface" : ""}`}>
+            <div className="text-[12px] font-medium uppercase tracking-wide text-faint">{c.label}</div>
+            <div className={`mt-1 text-[22px] font-semibold tnum ${c.value && c.key !== "all" ? "text-accent" : "text-ink"}`}>{c.value}</div>
+            <div className="text-[11.5px] text-faint">{c.hint}</div>
           </button>
-          {pendingOnly && <span className="text-[12.5px] text-muted">showing accounts awaiting activation</span>}
+        ))}
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint" />
+          <input className="input h-8 w-64 py-1 pl-8" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, tax number, email…" />
         </div>
-      )}
+        {filter !== "all" && <button className="btn btn-sm rounded-md" onClick={() => setFilter("all")}>Clear filter</button>}
+      </div>
       <Card pad={false}>
         {rows === null ? (
           <Spinner />
-        ) : (pendingOnly ? rows.filter((v) => v.activation_status === "pending") : rows).length === 0 ? (
+        ) : visible.length === 0 ? (
           <EmptyState title="No vendors yet" hint={me?.isInternal ? "Add your first vendor." : "No suppliers linked to this workspace."} />
         ) : (
           <table className="w-full">
@@ -214,9 +241,12 @@ export default function Vendors() {
               </tr>
             </thead>
             <tbody>
-              {(pendingOnly ? rows.filter((v) => v.activation_status === "pending") : rows).map((v) => (
+              {visible.map((v) => (
                 <tr key={v.id} className="trow">
-                  <td className="td font-medium text-ink">{v.legal_name}</td>
+                  <td className="td">
+                    <button className="font-medium text-ink hover:text-accent hover:underline"
+                      onClick={() => nav(`/vendors/${v.id}`)}>{v.legal_name}</button>
+                  </td>
                   <td className="td">
                     <Badge tone={v.counterparty_type === "company" ? "gray" : "amber"}>{v.counterparty_type}</Badge>
                   </td>
@@ -243,6 +273,7 @@ export default function Vendors() {
                           <KeyRound className="h-3.5 w-3.5" /> Create account
                         </button>
                       )}
+                      <button className="btn btn-sm rounded-md" onClick={() => nav(`/vendors/${v.id}`)}>Open</button>
                       {canViewAs && v.user_id && (
                         <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}>
                           <Eye className="h-3.5 w-3.5" /> View as
