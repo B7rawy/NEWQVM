@@ -47,12 +47,14 @@ export class WorkshopPortalService {
       const c = (await tx.execute(sql`
         select
           count(*) as total,
-          count(*) filter (where ist.code in ('new_rfq','pending','priced','processing')) as open,
+          count(*) filter (where not exists (select 1 from orders o where o.rfq_id = r.id)
+            and coalesce(ist.code, '') not in ('cancelled', 'unavailable', 'settled')) as open,
           count(*) filter (where exists (select 1 from orders o where o.rfq_id = r.id)) as ordered
         from rfqs r
         join workshop_branches wb on wb.id = r.workshop_branch_id
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
-        left join item_statuses ist on ist.id = r.status_id`))[0] as { total: number; open: number; ordered: number };
+        left join item_statuses ist on ist.id = r.status_id
+        where r.environment = 'live'`))[0] as { total: number; open: number; ordered: number };
       return { total: Number(c.total), open: Number(c.open), ordered: Number(c.ordered) };
     });
   }
@@ -71,6 +73,7 @@ export class WorkshopPortalService {
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         join tenants t on t.id = r.tenant_id
         left join item_statuses ist on ist.id = r.status_id
+        where r.environment = 'live'
         order by r.created_at desc`);
       return { count: rows.length, requests: rows };
     });
@@ -88,7 +91,7 @@ export class WorkshopPortalService {
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         join tenants t on t.id = r.tenant_id
         left join item_statuses ist on ist.id = r.status_id
-        where r.id = ${rfqId}::uuid limit 1`))[0] as { id: string } | undefined;
+        where r.id = ${rfqId}::uuid and r.environment = 'live' limit 1`))[0] as { id: string } | undefined;
       if (!head) throw new NotFoundException("request not found");
       const items = await tx.execute(sql`
         select id, part_number, part_description, quantity from rfq_items where rfq_id = ${rfqId}::uuid order by part_number`);

@@ -47,8 +47,10 @@ export class VendorPortalService {
           count(*) filter (where vs.code = 'rfq') as open,
           count(*) filter (where vs.code = 'priced') as priced,
           count(*) filter (where vs.code = 'confirmed') as won
-        from rfq_vendors rv join vendor_statuses vs on vs.id = rv.status_id
-        where rv.vendor_id = ${vid}::uuid`))[0] as { total: number; open: number; priced: number; won: number };
+        from rfq_vendors rv
+        join vendor_statuses vs on vs.id = rv.status_id
+        join rfqs r on r.id = rv.rfq_id
+        where rv.vendor_id = ${vid}::uuid and r.environment = 'live'`))[0] as { total: number; open: number; priced: number; won: number };
       const total = Number(c.total);
       const responded = Number(c.priced) + Number(c.won);
       return {
@@ -74,7 +76,7 @@ export class VendorPortalService {
         join rfqs r on r.id = rv.rfq_id
         join vendor_statuses vs on vs.id = rv.status_id
         join tenants t on t.id = rv.tenant_id
-        where rv.vendor_id = ${vid}::uuid
+        where rv.vendor_id = ${vid}::uuid and r.environment = 'live'
         order by coalesce(rv.sent_at, r.created_at) desc`);
       return { count: rows.length, quotations: rows };
     });
@@ -91,7 +93,7 @@ export class VendorPortalService {
         join rfqs r on r.id = rv.rfq_id
         join vendor_statuses vs on vs.id = rv.status_id
         join tenants t on t.id = rv.tenant_id
-        where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid limit 1`))[0] as
+        where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid and r.environment = 'live' limit 1`))[0] as
         | { rfq_id: string; status: string }
         | undefined;
       if (!head) throw new NotFoundException("quotation request not found");
@@ -130,10 +132,13 @@ export class VendorPortalService {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rv = (await tx.execute(sql`
-        select id, rfq_id, tenant_id from rfq_vendors where id = ${rfqVendorId}::uuid and vendor_id = ${vid}::uuid limit 1`))[0] as
-        | { id: string; rfq_id: string; tenant_id: string }
+        select rv.id, rv.rfq_id, rv.tenant_id, r.environment from rfq_vendors rv
+        join rfqs r on r.id = rv.rfq_id
+        where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid limit 1`))[0] as
+        | { id: string; rfq_id: string; tenant_id: string; environment: string }
         | undefined;
       if (!rv) throw new NotFoundException("quotation request not found");
+      if (rv.environment !== "live") throw new BadRequestException("this request is not live");
       const confirmed = (await tx.execute(sql`select 1 from orders where rfq_id = ${rv.rfq_id}::uuid limit 1`))[0];
       if (confirmed) throw new BadRequestException("this RFQ is already confirmed");
       const pricedStatusId = ((await tx.execute(sql`select id from vendor_statuses where code = 'priced' limit 1`))[0] as { id: string }).id;

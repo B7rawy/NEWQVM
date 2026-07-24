@@ -60,7 +60,7 @@ export default function VendorQuotationDetail() {
           offeredCost: Number(r.price),
           availableQty: r.qty ? Number(r.qty) : undefined,
           alternativePartNumber: r.alt || undefined,
-          slaHours: r.sla ? Number(r.sla) : undefined,
+          slaHours: Number(r.sla) > 0 ? Number(r.sla) : undefined, // API requires positive int; blank/0 → unset
         }));
       if (items.length === 0) {
         setErr("Enter a unit price for at least one part.");
@@ -130,7 +130,7 @@ export default function VendorQuotationDetail() {
                       <input className="input h-8 w-32 py-1" disabled={locked} value={r.alt} onChange={(e) => set(i.rfq_item_id, "alt", e.target.value)} placeholder="—" />
                     </td>
                     <td className="td">
-                      <input className="input h-8 w-20 py-1 tnum" type="number" min="0" disabled={locked} value={r.sla} onChange={(e) => set(i.rfq_item_id, "sla", e.target.value)} placeholder="—" />
+                      <input className="input h-8 w-20 py-1 tnum" type="number" min="1" disabled={locked} value={r.sla} onChange={(e) => set(i.rfq_item_id, "sla", e.target.value)} placeholder="—" />
                     </td>
                     <td className="td tnum font-medium text-ink">{lineTotal}</td>
                   </tr>

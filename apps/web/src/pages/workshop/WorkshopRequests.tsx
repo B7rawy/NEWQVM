@@ -61,7 +61,7 @@ export default function WorkshopRequests() {
                     <td className="td text-muted">{r.branch}</td>
                     <td className="td tnum text-muted">{r.plate_number ?? "—"}</td>
                     <td className="td tnum text-muted">{r.item_count}</td>
-                    <td className="td tnum text-muted">{r.vendor_count || "—"}</td>
+                    <td className="td tnum text-muted">{Number(r.vendor_count) || "—"}</td>
                     <td className="td"><Badge tone={statusTone(r.status)}>{r.status_label}</Badge></td>
                   </tr>
                 ))}

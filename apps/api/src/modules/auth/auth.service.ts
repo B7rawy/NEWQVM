@@ -57,11 +57,12 @@ export class AuthService {
   async signup(dto: SignupDto): Promise<{ token: string; user: { id: string; fullName: string } }> {
     const email = dto.email.toLowerCase();
     return this.dbService.withContext({ tenantId: null, userId: null, isInternal: true }, async (tx) => {
-      const exists = (await tx.execute(sql`select id from users where email = ${email} limit 1`))[0];
-      if (exists) throw new ConflictException("email already registered");
       const hash = await argon2.hash(dto.password);
+      // Atomic email-uniqueness: ON CONFLICT (users_email_uq) avoids a check-then-insert race.
       const [u] = (await tx.execute(sql`
-        insert into users (email, full_name, password_hash) values (${email}, ${dto.fullName}, ${hash}) returning id`)) as Array<{ id: string }>;
+        insert into users (email, full_name, password_hash) values (${email}, ${dto.fullName}, ${hash})
+        on conflict do nothing returning id`)) as Array<{ id: string }>;
+      if (!u) throw new ConflictException("email already registered");
       try {
         if (dto.kind === "vendor") {
           const [v] = (await tx.execute(sql`

@@ -16,7 +16,8 @@ export default function UpgradeBanner() {
   const [done, setDone] = useState(false);
 
   const eligible = (me?.persona === "vendor" || me?.persona === "workshop") && me?.counterpartyType === "individual" && me?.activationStatus === "active";
-  if (!eligible) return null;
+  // keep showing while `done` so the success confirmation survives refreshMe flipping counterpartyType.
+  if (!done && !eligible) return null;
 
   async function upgrade(e: React.FormEvent) {
     e.preventDefault();

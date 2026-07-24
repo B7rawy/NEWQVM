@@ -12,7 +12,8 @@ export default function ActivationBanner() {
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
 
-  if (!me || me.activationStatus !== "pending") return null;
+  // keep showing while `done` so the success confirmation survives refreshMe flipping the status.
+  if (!done && (!me || me.activationStatus !== "pending")) return null;
 
   async function activate(e: React.FormEvent) {
     e.preventDefault();

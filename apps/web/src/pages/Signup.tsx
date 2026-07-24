@@ -63,7 +63,7 @@ export default function Signup() {
           <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="At least 8 characters" />
         </Field>
         {err && <div className="mb-2 text-[13px] text-accent">{err}</div>}
-        <button className="btn-primary w-full rounded-md" disabled={busy || !fullName || !email || password.length < 8}>
+        <button className="btn-primary w-full rounded-md" disabled={busy || fullName.trim().length < 2 || !email || password.length < 8}>
           {busy ? "Creating account…" : "Create account"}
         </button>
         <p className="mt-3 text-center text-[12.5px] text-muted">
