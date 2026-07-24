@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../components/ui";
@@ -23,7 +25,9 @@ interface Region {
 }
 
 export default function Workshops() {
-  const { activeSlug } = useAuth();
+  const { activeSlug, me } = useAuth();
+  const isPlatform = me?.persona === "platform"; // only platform staff write the global workshop directory
+  const canRequest = me?.role === "company_admin"; // a workspace onboards via the submission flow
   const [workshops, setWorkshops] = useState<Workshop[] | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -111,20 +115,30 @@ export default function Workshops() {
               </table>
             )}
           </Card>
-          <Card>
-            <h3 className="mb-3 text-[14px] font-semibold text-ink">New workshop</h3>
-            <form onSubmit={addWorkshop}>
-              <Field label="Name">
-                <input className="input" value={wName} onChange={(e) => setWName(e.target.value)} placeholder="Al-Salam Motors" />
-              </Field>
-              <Field label="Tax number (optional)">
-                <input className="input" value={wTax} onChange={(e) => setWTax(e.target.value)} placeholder="3001234" />
-              </Field>
-              <button className="btn-primary w-full rounded-md" disabled={!wName}>
-                Add workshop
-              </button>
-            </form>
-          </Card>
+          {isPlatform ? (
+            <Card>
+              <h3 className="mb-3 text-[14px] font-semibold text-ink">New workshop</h3>
+              <form onSubmit={addWorkshop}>
+                <Field label="Name">
+                  <input className="input" value={wName} onChange={(e) => setWName(e.target.value)} placeholder="Al-Salam Motors" />
+                </Field>
+                <Field label="Tax number (optional)">
+                  <input className="input" value={wTax} onChange={(e) => setWTax(e.target.value)} placeholder="3001234" />
+                </Field>
+                <button className="btn-primary w-full rounded-md" disabled={!wName}>
+                  Add workshop
+                </button>
+              </form>
+            </Card>
+          ) : canRequest ? (
+            <Card>
+              <h3 className="mb-2 text-[14px] font-semibold text-ink">Add a workshop</h3>
+              <p className="mb-3 text-[12.5px] text-muted">Workshops are verified centrally to avoid duplicates. Submit one for review and we'll link it to your workspace.</p>
+              <Link to="/onboarding" className="btn-primary rounded-md">
+                <Plus className="h-4 w-4" /> Request a workshop
+              </Link>
+            </Card>
+          ) : null}
         </div>
         {/* Branches */}
         <div>

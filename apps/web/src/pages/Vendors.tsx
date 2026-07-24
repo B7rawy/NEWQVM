@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { Plus, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -25,8 +26,9 @@ interface Ws {
 export default function Vendors() {
   const { activeSlug, me, impersonate } = useAuth();
   const isPlatform = me?.persona === "platform";
-  const canManage = isPlatform || me?.role === "company_admin"; // manage vendors in this workspace
-  const canViewAs = canManage;
+  const canManage = isPlatform; // only platform staff write the global vendor directory
+  const canViewAs = isPlatform;
+  const canRequest = me?.role === "company_admin"; // a workspace onboards via the submission flow
   const [rows, setRows] = useState<Vendor[] | null>(null);
   const [show, setShow] = useState(false);
   const [workspaces, setWorkspaces] = useState<Ws[]>([]);
@@ -91,6 +93,10 @@ export default function Vendors() {
             <button className="btn-primary rounded-md" onClick={() => setShow((v) => !v)}>
               <Plus className="h-4 w-4" /> New vendor
             </button>
+          ) : canRequest ? (
+            <Link to="/onboarding" className="btn-primary rounded-md">
+              <Plus className="h-4 w-4" /> Request a vendor
+            </Link>
           ) : undefined
         }
       />

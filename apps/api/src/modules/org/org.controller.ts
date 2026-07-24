@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, Post, Query, Req, UseGuards
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
-import { Roles } from "../../common/roles.decorator.js";
+import { PlatformOnly, Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import { createBranchSchema, createWorkshopSchema, OrgService } from "./org.service.js";
 
@@ -27,8 +27,9 @@ export class OrgController {
     return this.svc.listWorkshops(this.ctxOpen(req));
   }
 
+  // Workshop identity writes are platform-only; a workspace onboards via POST /counterparty/submissions.
   @Post("workshops")
-  @Roles("company_admin")
+  @PlatformOnly()
   createWorkshop(@Req() req: Request, @Body() body: unknown) {
     return this.svc.createWorkshop(this.ctx(req), createWorkshopSchema.parse(body));
   }

@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, 
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
-import { Roles } from "../../common/roles.decorator.js";
+import { PlatformOnly, Roles } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
   createVendorBranchSchema,
@@ -35,19 +35,20 @@ export class VendorsController {
   }
 
   @Get("available")
-  @Roles("company_admin")
+  @PlatformOnly()
   available(@Req() req: Request, @Query("tenantId") tenantId?: string) {
     return this.svc.available(this.ctx(req), tenantId);
   }
 
+  // Directory identity writes are platform-only; a workspace onboards via POST /counterparty/submissions.
   @Post()
-  @Roles("company_admin")
+  @PlatformOnly()
   create(@Req() req: Request, @Body() body: unknown) {
     return this.svc.create(this.ctx(req), createVendorSchema.parse(body));
   }
 
   @Patch(":id")
-  @Roles("company_admin")
+  @PlatformOnly()
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.update(this.ctx(req), id, updateVendorSchema.parse(body));
   }
@@ -59,7 +60,7 @@ export class VendorsController {
   }
 
   @Post(":id/link")
-  @Roles("company_admin")
+  @PlatformOnly()
   link(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.link(this.ctx(req), id, linkVendorSchema.parse(body));
   }
