@@ -94,4 +94,20 @@ export class ImpersonationService {
       return { token, user: { id: target.id, fullName: target.full_name } };
     });
   }
+
+  /**
+   * Record the END of a "view as". The client swaps its token back, so nothing server-side would
+   * otherwise mark the close — leaving an audit trail with starts and no ends, and no way to see how
+   * long a borrowed session lasted. Called by "Back to admin" with the BORROWED token still active.
+   */
+  async stop(actorId: string | null, targetUserId: string | null) {
+    if (!actorId) return { ok: true };
+    return this.dbService.withContext({ ...INTERNAL, userId: actorId }, async (tx) => {
+      await tx.execute(sql`
+        insert into platform_audit (actor_user_id, action, entity_type, entity_id, metadata)
+        values (${actorId}::uuid, 'impersonate.stop', 'user', ${targetUserId}::uuid, '{}'::jsonb)`);
+      this.logger.warn(`impersonate.stop actor=${actorId} target=${targetUserId}`);
+      return { ok: true };
+    });
+  }
 }

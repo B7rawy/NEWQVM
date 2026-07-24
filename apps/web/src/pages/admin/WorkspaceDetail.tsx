@@ -29,7 +29,7 @@ type Tab = "overview" | "users" | "vendors" | "workshops" | "rfqs" | "orders" | 
 export default function WorkspaceDetail() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { impersonate, environment } = useAuth();
+  const { impersonate, environment, me } = useAuth();
   const [d, setD] = useState<WsDetail | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
@@ -200,7 +200,9 @@ export default function WorkspaceDetail() {
                   <td className="td text-muted">{u.branch ?? "All"}</td>
                   <td className="td"><Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge></td>
                   <td className="td text-right">
-                    <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}><Eye className="h-3.5 w-3.5" /> View as</button>
+                    {u.is_active && u.id !== me?.user?.id && (
+                      <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}><Eye className="h-3.5 w-3.5" /> View as</button>
+                    )}
                   </td>
                 </tr>
               ))}

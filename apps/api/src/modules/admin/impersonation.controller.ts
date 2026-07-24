@@ -14,6 +14,13 @@ import { impersonateSchema, ImpersonationService } from "./impersonation.service
 export class ImpersonationController {
   constructor(private readonly svc: ImpersonationService) {}
 
+  /** Close the current "view as" (called with the BORROWED token) so the audit trail has an end. */
+  @Post("stop")
+  stop(@Req() req: Request) {
+    const ctx = getContext(req);
+    return this.svc.stop(ctx.impersonatorId, ctx.userId);
+  }
+
   @Post()
   start(@Req() req: Request, @Body() body: unknown) {
     const ctx = getContext(req);

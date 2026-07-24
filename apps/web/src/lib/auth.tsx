@@ -130,10 +130,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await settleHome(m, slug);
       })
       .catch(() => {
-        // While impersonating, a failed boot (e.g. the borrowed session can't reach this host)
-        // must RETURN TO THE ADMIN — logging out would wipe the stashed real token and strand them.
-        if (auth.realToken()) stopImpersonating();
-        else logout();
+        // A failed boot is usually "this session cannot use THIS HOST", not "these credentials are
+        // bad" — so recover in that order instead of destroying the session:
+        if (auth.realToken()) return stopImpersonating(); // borrowed session → back to the admin
+        if (subdomainMode() && currentSubdomain()) {
+          // stuck on a workspace subdomain we have no access to → drop it and retry on the apex
+          auth.setWorkspace(null);
+          window.location.href = apexUrl("/");
+          return;
+        }
+        logout();
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed]);
@@ -206,6 +212,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     else window.location.href = "/";
   }
   function stopImpersonating() {
+    // Record the end while the BORROWED token is still active (fire-and-forget: the audit trail
+    // must not be able to block the way out).
+    void api.post("/admin/impersonate/stop", {}).catch(() => {});
     const real = auth.realToken();
     if (real) {
       auth.setToken(real);

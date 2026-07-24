@@ -243,8 +243,8 @@ export default function AppShell() {
           <div className="flex items-center gap-3 bg-[#0a2540] px-6 py-2 text-[13px] text-white">
             <Eye className="h-4 w-4" />
             <span>
-              Viewing as <b className="font-semibold">{me.user?.full_name}</b>
-              {me.impersonatorName ? ` — as ${me.impersonatorName}` : ""}
+              {me.impersonatorName ? <>{me.impersonatorName} viewing as </> : <>Viewing as </>}
+              <b className="font-semibold">{me.user?.full_name}</b>
             </span>
             <button
               onClick={stopImpersonating}
