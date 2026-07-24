@@ -66,6 +66,62 @@ export class OrgService {
     return { count: rows.length, workshops: rows };
   }
 
+  /**
+   * Everything about ONE workshop, for its own page: identity, branches, portal accounts, workspace
+   * links and recent requests. Privacy: a non-platform caller only ever sees ITS OWN workspace link
+   * and ITS OWN requests — a shared global counterparty must not leak another tenant's relationship.
+   */
+  async workshopDetail(ctx: RlsContext, id: string) {
+    const global = ctx.isInternal && !ctx.tenantId;
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const w = (await tx.execute(sql`
+        select id, name, counterparty_type, activation_status, tax_number, commercial_registration_number,
+          primary_phone, primary_email, is_active, created_at
+        from workshops where id = ${id}::uuid limit 1`))[0] as Record<string, unknown> | undefined;
+      if (!w) throw new NotFoundException("workshop not found");
+
+      // a scoped caller must be linked to it, otherwise the workshop is none of their business
+      if (!global) {
+        const linked = (await tx.execute(sql`
+          select 1 from tenant_workshops where workshop_id = ${id}::uuid and tenant_id = ${ctx.tenantId}::uuid
+            and status <> 'archived' limit 1`))[0];
+        if (!linked) throw new NotFoundException("workshop not found in this workspace");
+      }
+
+      const branches = await tx.execute(sql`
+        select wb.id, wb.name, wb.order_category, wb.is_active, r.label_en as region, c.label_en as city
+        from workshop_branches wb
+        left join regions r on r.id = wb.region_id
+        left join cities c on c.id = wb.city_id
+        where wb.workshop_id = ${id}::uuid order by wb.name`);
+
+      const accounts = await tx.execute(sql`
+        select u.id, u.full_name, u.email, u.phone, u.is_active, wu.is_workshop_admin, wu.created_at
+        from workshop_users wu join users u on u.id = wu.user_id
+        where wu.workshop_id = ${id}::uuid order by wu.is_workshop_admin desc, u.full_name`);
+
+      const workspaces = await tx.execute(sql`
+        select t.id, t.name, t.slug, tw.status
+        from tenant_workshops tw join tenants t on t.id = tw.tenant_id
+        where tw.workshop_id = ${id}::uuid and tw.status <> 'archived'
+          ${global ? sql`` : sql`and tw.tenant_id = ${ctx.tenantId}::uuid`}
+        order by t.name`);
+
+      const requests = await tx.execute(sql`
+        select r.id, r.order_number, r.plate_number, r.created_at, s.label_en as status,
+          wb.name as branch, t.name as workspace,
+          exists (select 1 from orders o where o.rfq_id = r.id) as ordered
+        from rfqs r
+        join workshop_branches wb on wb.id = r.workshop_branch_id and wb.workshop_id = ${id}::uuid
+        join tenants t on t.id = r.tenant_id
+        left join item_statuses s on s.id = r.status_id
+        where r.environment = 'live' ${global ? sql`` : sql`and r.tenant_id = ${ctx.tenantId}::uuid`}
+        order by r.created_at desc limit 10`);
+
+      return { workshop: w, branches, accounts, workspaces, requests };
+    });
+  }
+
   /** Create a new GLOBAL workshop and link it to the active workspace (mirrors vendor create). */
   async createWorkshop(ctx: RlsContext, dto: z.infer<typeof createWorkshopSchema>) {
     const target = targetTenant(ctx, dto.tenantId);

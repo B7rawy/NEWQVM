@@ -8,6 +8,7 @@ import Rfqs from "./pages/Rfqs";
 import RfqDetail from "./pages/RfqDetail";
 import Orders from "./pages/Orders";
 import Workshops from "./pages/Workshops";
+import WorkshopDetail from "./pages/WorkshopDetail";
 import Vendors from "./pages/Vendors";
 import Providers from "./pages/Providers";
 import InternalDashboard from "./pages/InternalDashboard";
@@ -112,6 +113,7 @@ export default function App() {
         <Route path="/rfqs/:id" element={<RfqDetail />} />
         <Route path="/orders" element={<Orders />} />
         <Route path="/org/workshops" element={<Workshops />} />
+        <Route path="/org/workshops/:id" element={<WorkshopDetail />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/providers" element={<Providers />} />
         <Route path="/internal" element={<InternalDashboard />} />

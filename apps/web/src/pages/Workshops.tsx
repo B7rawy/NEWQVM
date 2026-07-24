@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Plus, KeyRound, ChevronRight, ChevronDown, Search, Building2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -39,6 +39,7 @@ interface Ws { id: string; name: string }
 type Filter = "all" | "pending" | "no_account" | "no_branch";
 
 export default function Workshops() {
+  const nav = useNavigate();
   const { activeSlug, me } = useAuth();
   const isPlatform = me?.persona === "platform"; // only platform staff write the global workshop directory
   const canRequest = me?.role === "company_admin"; // a workspace onboards via the submission flow
@@ -190,7 +191,8 @@ export default function Workshops() {
                     <td className="td text-faint">{isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</td>
                     <td className="td">
                       <div className="flex items-center gap-2">
-                        <span className="font-medium text-ink">{w.name}</span>
+                        <button className="font-medium text-ink hover:text-accent hover:underline"
+                          onClick={(e) => { e.stopPropagation(); nav(`/org/workshops/${w.id}`); }}>{w.name}</button>
                         <Badge tone={w.counterparty_type === "company" ? "gray" : "amber"}>{w.counterparty_type}</Badge>
                       </div>
                     </td>
@@ -216,11 +218,14 @@ export default function Workshops() {
                       )}
                     </td>
                     <td className="td text-right" onClick={(e) => e.stopPropagation()}>
-                      {isPlatform && !w.has_account && (
-                        <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: w.id, name: w.name })}>
-                          <KeyRound className="h-3.5 w-3.5" /> Create login
-                        </button>
-                      )}
+                      <div className="flex items-center justify-end gap-1.5">
+                        {isPlatform && !w.has_account && (
+                          <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: w.id, name: w.name })}>
+                            <KeyRound className="h-3.5 w-3.5" /> Create login
+                          </button>
+                        )}
+                        <button className="btn btn-sm rounded-md" onClick={() => nav(`/org/workshops/${w.id}`)}>Open</button>
+                      </div>
                     </td>
                   </tr>,
                   isOpen && (

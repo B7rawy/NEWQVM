@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
@@ -25,6 +25,12 @@ export class OrgController {
   @Get("workshops")
   listWorkshops(@Req() req: Request) {
     return this.svc.listWorkshops(this.ctxOpen(req));
+  }
+
+  /** One workshop's own page: identity + branches + accounts + workspaces + recent requests. */
+  @Get("workshops/:id")
+  workshopDetail(@Req() req: Request, @Param("id") id: string) {
+    return this.svc.workshopDetail(this.ctxOpen(req), id);
   }
 
   // Workshop identity writes are platform-only; a workspace onboards via POST /counterparty/submissions.
