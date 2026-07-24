@@ -37,6 +37,11 @@ export class WorkshopPortalController {
     return this.svc.branches(this.ctx(req));
   }
 
+  @Get("orders")
+  orders(@Req() req: Request) {
+    return this.svc.orders(this.ctx(req));
+  }
+
   @Get("requests/:id")
   requestDetail(@Req() req: Request, @Param("id") id: string) {
     return this.svc.requestDetail(this.ctx(req), id);

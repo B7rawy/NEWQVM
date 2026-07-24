@@ -178,8 +178,19 @@ async function main() {
   await sql`insert into rfq_items (tenant_id,rfq_id,part_number,part_description,quantity)
     values (${t1.id},${rfq.id},'12345-67890','Brake Pad Set',2)`;
   // send this RFQ to the Gulf vendor so the vendor portal has a real quotation request to price
-  await sql`insert into rfq_vendors (tenant_id,rfq_id,vendor_id,status_id,sent_at)
-    values (${t1.id},${rfq.id},${vendor.id},(select id from vendor_statuses where code='rfq'),now())`;
+  const [rvRow] = await sql`insert into rfq_vendors (tenant_id,rfq_id,vendor_id,status_id,sent_at)
+    values (${t1.id},${rfq.id},${vendor.id},(select id from vendor_statuses where code='rfq'),now()) returning id`;
+  // vendor quotes the item, wins it, and the workspace confirms → a real order for the portals
+  const [rItem] = await sql`select id, quantity, part_number from rfq_items where rfq_id=${rfq.id} limit 1`;
+  const [quote] = await sql`insert into rfq_vendor_items (tenant_id,rfq_vendor_id,rfq_item_id,offered_cost,sla_hours,available_qty,status_id)
+    values (${t1.id},${rvRow.id},${rItem.id},130.00,24,${rItem.quantity},(select id from vendor_statuses where code='priced')) returning id`;
+  await sql`update rfq_items set winning_vendor_quote_item_id=${quote.id} where id=${rItem.id}`;
+  const [confIs] = await sql`select id from item_statuses where code='confirmed'`;
+  const [order] = await sql`insert into orders (tenant_id,environment,rfq_id,order_number,status_id)
+    values (${t1.id},'live',${rfq.id},${num.n},${confIs.id}) returning id`;
+  await sql`insert into order_items (tenant_id,order_id,rfq_item_id,final_part_number,approved_qty,winning_vendor_quote_item_id,status_id)
+    values (${t1.id},${order.id},${rItem.id},${rItem.part_number},${rItem.quantity},${quote.id},${confIs.id})`;
+  await sql`update rfqs set status_id=${confIs.id} where id=${rfq.id}`;
 
   // ---- pricing engine (QNEW-30): a margin matrix + a basis setting for t1 ----
   const [pcat] = await sql`insert into profit_categories (tenant_id,name,part_category_id,brand_class_id)

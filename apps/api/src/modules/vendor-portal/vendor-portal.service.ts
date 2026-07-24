@@ -108,6 +108,27 @@ export class VendorPortalService {
     });
   }
 
+  /** Orders this vendor won — derived via order_items → winning rfq_vendor_item → rfq_vendors.vendor_id. */
+  async orders(ctx: RlsContext) {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const vid = await this.requireVendorId(tx, ctx.userId);
+      const rows = await tx.execute(sql`
+        select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code, t.name as workspace,
+          count(oi.id) as items,
+          coalesce(sum(rvi.offered_cost * oi.approved_qty), 0) as total
+        from orders o
+        join order_items oi on oi.order_id = o.id
+        join rfq_vendor_items rvi on rvi.id = oi.winning_vendor_quote_item_id
+        join rfq_vendors rv on rv.id = rvi.rfq_vendor_id
+        join tenants t on t.id = o.tenant_id
+        left join item_statuses s on s.id = o.status_id
+        where rv.vendor_id = ${vid}::uuid and o.environment = 'live'
+        group by o.id, o.order_number, o.created_at, s.label_en, s.code, t.name
+        order by o.created_at desc`);
+      return { count: rows.length, orders: rows };
+    });
+  }
+
   /** The vendor's own profile: identity + branches + the workspaces it supplies (read-only). */
   async profile(ctx: RlsContext) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {

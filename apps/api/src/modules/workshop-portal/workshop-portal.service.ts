@@ -142,6 +142,26 @@ export class WorkshopPortalService {
     });
   }
 
+  /** The workshop's confirmed orders (across linked workspaces). */
+  async orders(ctx: RlsContext) {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+      await this.requireWorkshopUser(tx, ctx.userId);
+      const rows = await tx.execute(sql`
+        select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code,
+          t.name as workspace, wb.name as branch,
+          (select count(*) from order_items oi where oi.order_id = o.id) as items
+        from orders o
+        join rfqs r on r.id = o.rfq_id
+        join workshop_branches wb on wb.id = r.workshop_branch_id
+        join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
+        join tenants t on t.id = o.tenant_id
+        left join item_statuses s on s.id = o.status_id
+        where o.environment = 'live'
+        order by o.created_at desc`);
+      return { count: rows.length, orders: rows };
+    });
+  }
+
   /** Create a request (RFQ) in a chosen linked workspace, for one of the workshop's own branches. */
   async createRequest(ctx: RlsContext, dto: z.infer<typeof createRequestSchema>) {
     // ownership + link check (internal read)

@@ -200,7 +200,7 @@ export const vendorNav: NavGroup[] = [
     items: [
       { label: "Overview", path: "/vendor", icon: LayoutDashboard },
       { label: "Quotation Requests", path: "/vendor/quotations", icon: Files },
-      { label: "Confirmed Orders", path: "/vendor/confirmed", icon: ShoppingCart, soon: true },
+      { label: "Confirmed Orders", path: "/vendor/confirmed", icon: ShoppingCart },
     ],
   },
   {
@@ -247,7 +247,7 @@ export const workshopNav: NavGroup[] = [
   {
     heading: "Orders & deliveries",
     items: [
-      { label: "My Orders", path: "/orders", icon: ShoppingCart, soon: true },
+      { label: "My Orders", path: "/workshop/orders", icon: ShoppingCart },
       { label: "Deliveries", path: "/deliveries", icon: Truck, soon: true },
       { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true },
     ],

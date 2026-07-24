@@ -19,8 +19,10 @@ import VendorOverview from "./pages/vendor/VendorOverview";
 import VendorQuotations from "./pages/vendor/VendorQuotations";
 import VendorQuotationDetail from "./pages/vendor/VendorQuotationDetail";
 import VendorProfile from "./pages/vendor/VendorProfile";
+import VendorConfirmedOrders from "./pages/vendor/VendorConfirmedOrders";
 import WorkshopOverview from "./pages/workshop/WorkshopOverview";
 import WorkshopBranches from "./pages/workshop/WorkshopBranches";
+import WorkshopOrders from "./pages/workshop/WorkshopOrders";
 import WorkshopRequests from "./pages/workshop/WorkshopRequests";
 import WorkshopNewRequest from "./pages/workshop/WorkshopNewRequest";
 import WorkshopRequestDetail from "./pages/workshop/WorkshopRequestDetail";
@@ -70,11 +72,13 @@ const WIRED = new Set([
   "/onboarding/review",
   "/vendor",
   "/vendor/quotations",
+  "/vendor/confirmed",
   "/vendor/profile",
   "/workshop",
   "/workshop/requests",
   "/workshop/requests/new",
   "/workshop/branches",
+  "/workshop/orders",
   "/settings",
 ]);
 
@@ -119,11 +123,13 @@ export default function App() {
         <Route path="/vendor/quotations" element={<VendorQuotations />} />
         <Route path="/vendor/quotations/:id" element={<VendorQuotationDetail />} />
         <Route path="/vendor/profile" element={<VendorProfile />} />
+        <Route path="/vendor/confirmed" element={<VendorConfirmedOrders />} />
         <Route path="/workshop" element={<WorkshopOverview />} />
         <Route path="/workshop/requests" element={<WorkshopRequests />} />
         <Route path="/workshop/requests/new" element={<WorkshopNewRequest />} />
         <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />
         <Route path="/workshop/branches" element={<WorkshopBranches />} />
+        <Route path="/workshop/orders" element={<WorkshopOrders />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />
