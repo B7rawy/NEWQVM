@@ -4,17 +4,26 @@ import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
 
-export const createVendorSchema = z.object({
-  legalName: z.string().min(2),
-  commercialRegistrationNumber: z.string().optional(),
-  taxNumber: z.string().optional(),
-  primaryEmail: z.string().email().optional(),
-  primaryPhone: z.string().optional(),
-  vendorType: z.enum(["agency", "commercial", "external"]).optional(),
-  paymentTermsDays: z.number().int().nonnegative().optional(),
-  classification: z.string().optional(),
-  tenantId: z.string().uuid().optional(), // super-admin: target a specific workspace
-});
+export const createVendorSchema = z
+  .object({
+    counterpartyType: z.enum(["individual", "company"]).default("company"),
+    legalName: z.string().min(2),
+    commercialRegistrationNumber: z.string().optional(),
+    taxNumber: z.string().optional(),
+    primaryEmail: z.string().email().optional(),
+    primaryPhone: z.string().optional(),
+    vendorType: z.enum(["agency", "commercial", "external"]).optional(), // business CATEGORY, not legal form
+    paymentTermsDays: z.number().int().nonnegative().optional(),
+    classification: z.string().optional(),
+    tenantId: z.string().uuid().optional(), // super-admin: target a specific workspace
+  })
+  // QNEW-71: legal form drives the required identifier — company⇒tax, individual⇒mobile (primaryPhone).
+  .superRefine((d, ctx) => {
+    if (d.counterpartyType === "company" && !d.taxNumber)
+      ctx.addIssue({ code: "custom", path: ["taxNumber"], message: "a company requires a tax number" });
+    if (d.counterpartyType === "individual" && !d.primaryPhone)
+      ctx.addIssue({ code: "custom", path: ["primaryPhone"], message: "an individual requires a mobile number" });
+  });
 export const updateVendorSchema = z.object({
   legalName: z.string().min(2).optional(),
   commercialRegistrationNumber: z.string().nullable().optional(),
@@ -50,7 +59,7 @@ export class VendorsService {
       (tx) =>
         global
           ? tx.execute(sql`
-              select v.id, v.legal_name, v.vendor_type, v.primary_email, v.primary_phone,
+              select v.id, v.legal_name, v.vendor_type, v.counterparty_type, v.activation_status, v.tax_number, v.primary_email, v.primary_phone,
                 case when v.is_active then 'active' else 'inactive' end as status,
                 null::text as classification,
                 (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id,
@@ -59,7 +68,7 @@ export class VendorsService {
               from vendors v
               order by v.legal_name`)
           : tx.execute(sql`
-              select v.id, v.legal_name, v.vendor_type, v.primary_email, v.primary_phone,
+              select v.id, v.legal_name, v.vendor_type, v.counterparty_type, v.activation_status, v.tax_number, v.primary_email, v.primary_phone,
                 tv.status, tv.classification,
                 (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id,
                 (select count(*)::int from vendor_branches vb where vb.vendor_id = v.id) as branches
@@ -84,9 +93,9 @@ export class VendorsService {
       { tenantId: target, userId: ctx.userId, isInternal: true },
       async (tx) => {
         const [v] = (await tx.execute(sql`
-          insert into vendors (legal_name, commercial_registration_number, tax_number, primary_email,
+          insert into vendors (legal_name, counterparty_type, commercial_registration_number, tax_number, primary_email,
             primary_phone, vendor_type, payment_terms_days, created_by, updated_by)
-          values (${dto.legalName}, ${dto.commercialRegistrationNumber ?? null}, ${dto.taxNumber ?? null},
+          values (${dto.legalName}, ${dto.counterpartyType}, ${dto.commercialRegistrationNumber ?? null}, ${dto.taxNumber ?? null},
             ${dto.primaryEmail ?? null}, ${dto.primaryPhone ?? null}, ${dto.vendorType ?? "commercial"},
             ${dto.paymentTermsDays ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
           returning id`)) as Array<{ id: string }>;
