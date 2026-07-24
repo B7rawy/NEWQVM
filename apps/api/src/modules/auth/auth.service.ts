@@ -22,6 +22,11 @@ export const signupSchema = z.object({
 });
 export type SignupDto = z.infer<typeof signupSchema>;
 
+// A real argon2 hash (computed once at startup) of a random secret. When no user/hash is found at
+// login we still verify against this so response time doesn't reveal whether the email exists
+// (timing user-enumeration). A hand-written string would fail-fast in the parser, defeating it.
+const DUMMY_HASH: Promise<string> = argon2.hash("no-such-account-timing-guard-" + process.pid);
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -42,11 +47,12 @@ export class AuthService {
       | { id: string; full_name: string; password_hash: string | null; is_active: boolean }
       | undefined;
 
-    if (!user || !user.is_active || !user.password_hash) {
+    // Always run a verify (against a dummy hash when the account is absent/inactive/passwordless) so
+    // login time doesn't leak whether the email exists.
+    const ok = await argon2.verify(user?.password_hash ?? (await DUMMY_HASH), dto.password).catch(() => false);
+    if (!user || !user.is_active || !user.password_hash || !ok) {
       throw new UnauthorizedException("invalid credentials");
     }
-    const ok = await argon2.verify(user.password_hash, dto.password).catch(() => false);
-    if (!ok) throw new UnauthorizedException("invalid credentials");
 
     const token = await this.jwt.signAsync({ sub: user.id });
     return { token, user: { id: user.id, fullName: user.full_name } };

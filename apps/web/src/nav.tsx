@@ -152,7 +152,7 @@ export const workspaceNav: NavGroup[] = [
   {
     heading: "Procurement",
     items: [
-      { label: "New RFQ", path: "/rfq-new", icon: FilePlus2 },
+      { label: "New RFQ", path: "/rfq-new", icon: FilePlus2, soon: true },
       { label: "RFQs Dashboard", path: "/rfqs", icon: Files },
       { label: "Orders Dashboard", path: "/orders", icon: ShoppingCart },
       { label: "Delivered Orders", path: "/delivered", icon: Truck, soon: true },

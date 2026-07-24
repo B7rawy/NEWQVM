@@ -35,14 +35,14 @@ export const importBatches = pgTable(
   (t) => [index("import_batches_tenant_idx").on(t.tenantId)],
 );
 
-/** A proposed counterparty awaiting review, then approved/merged/rejected. Tenant-scoped. */
+/** A proposed counterparty awaiting review, then approved/merged/rejected. Tenant-scoped —
+ *  EXCEPT self-service activation collisions (QNEW-71 §3.5), which belong to no workspace:
+ *  tenant_id is NULL there, so RLS makes the row visible to internal reviewers only. */
 export const counterpartySubmissions = pgTable(
   "counterparty_submissions",
   {
     id: pk(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
+    tenantId: uuid("tenant_id").references(() => tenants.id),
     kind: submissionKind("kind").notNull(),
     counterpartyType: counterpartyType("counterparty_type").notNull().default("company"),
     legalName: text("legal_name"),

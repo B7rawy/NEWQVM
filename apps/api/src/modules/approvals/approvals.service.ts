@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
@@ -50,18 +50,26 @@ export class ApprovalsService {
       )[0];
       if (!policy) throw new BadRequestException(`no active approval policy for ${dto.entityType}`);
 
-      const [r] = await tx
-        .insert(schema.approvalRequests)
-        .values({
-          tenantId: ctx.tenantId!,
-          policyId: policy.id,
-          entityType: dto.entityType,
-          entityId: dto.entityId,
-          requestedBy: ctx.userId,
-          currentLevel: 1,
-          overallStatus: "pending",
-        })
-        .returning({ id: schema.approvalRequests.id });
+      let r: { id: string };
+      try {
+        [r] = await tx
+          .insert(schema.approvalRequests)
+          .values({
+            tenantId: ctx.tenantId!,
+            policyId: policy.id,
+            entityType: dto.entityType,
+            entityId: dto.entityId,
+            requestedBy: ctx.userId,
+            currentLevel: 1,
+            overallStatus: "pending",
+          })
+          .returning({ id: schema.approvalRequests.id });
+      } catch (e) {
+        // approval_requests_pending_uq: an entity can have only one open request at a time.
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException("this entity already has a pending approval request");
+        throw e;
+      }
       return { requestId: r.id, status: "pending", currentLevel: 1 };
     });
   }
@@ -75,12 +83,13 @@ export class ApprovalsService {
       // FOR UPDATE serializes concurrent acts on the same request (prevents level-skip race)
       const req = (
         (await tx.execute(sql`
-          select id, policy_id, current_level, overall_status
+          select id, policy_id, current_level, overall_status, requested_by
           from approval_requests where id = ${requestId}::uuid limit 1 for update`)) as Array<{
           id: string;
           policy_id: string;
           current_level: number;
           overall_status: string;
+          requested_by: string | null;
         }>
       )[0];
       if (!req) throw new NotFoundException("approval request not found");
@@ -96,6 +105,10 @@ export class ApprovalsService {
       if (!current) throw new BadRequestException("no level configured");
       if (current.approver_user_id !== ctx.userId) {
         throw new ForbiddenException("you are not the approver for the current level");
+      }
+      // segregation of duties: the requester can never sign off on their own request.
+      if (req.requested_by === ctx.userId) {
+        throw new ForbiddenException("the requester cannot approve or reject their own request");
       }
 
       await tx.insert(schema.approvalActions).values({
@@ -133,7 +146,7 @@ export class ApprovalsService {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select r.id, r.entity_type, r.entity_id, r.current_level, r.overall_status,
-               (select count(*) from approval_actions a where a.request_id = r.id) as actions
+               (select count(*)::int from approval_actions a where a.request_id = r.id) as actions
         from approval_requests r where r.id = ${requestId}::uuid`),
     );
     if (rows.length === 0) throw new NotFoundException("approval request not found");

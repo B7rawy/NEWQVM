@@ -79,6 +79,8 @@ type SubmissionRow = {
   email: string | null;
   classification: string | null;
   status: string;
+  tenant_id_is_null?: boolean;
+  payload?: { pendingEntityId?: string } | null;
 };
 
 @Injectable()
@@ -285,9 +287,10 @@ export class CounterpartyService {
         tx.execute(sql`
           select s.id, s.kind, s.counterparty_type, s.legal_name, s.tax_number, s.commercial_registration_number,
             s.mobile, s.email, s.classification, s.status, s.match_candidates, s.source, s.created_at,
-            t.name as workspace, t.slug as workspace_slug
+            coalesce(t.name, 'Self-service') as workspace, t.slug as workspace_slug,
+            (s.payload->>'reason') as reason
           from counterparty_submissions s
-          join tenants t on t.id = s.tenant_id
+          left join tenants t on t.id = s.tenant_id
           where s.status = 'pending'
           order by s.created_at asc`),
     );
@@ -299,11 +302,42 @@ export class CounterpartyService {
     // then sees the terminal status and is rejected below (no double-create / double-link).
     const [s] = (await tx.execute(sql`
       select id, tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
-        mobile, email, classification, status
+        mobile, email, classification, status, payload
       from counterparty_submissions where id = ${id}::uuid limit 1 for update`)) as SubmissionRow[];
     if (!s) throw new NotFoundException("submission not found");
     if (s.status !== "pending") throw new BadRequestException(`submission already ${s.status}`);
     return s;
+  }
+
+  /** Write a review decision to the platform audit trail (QNEW-71 §4.3). */
+  private audit(tx: Tx, ctx: RlsContext, action: string, kind: string, entityId: string | null, meta: object) {
+    return tx.execute(sql`
+      insert into platform_audit (tenant_id, actor_user_id, impersonator_id, action, entity_type, entity_id, metadata)
+      values (null, ${ctx.userId}::uuid, ${ctx.impersonatorId ?? null}::uuid, ${action}, ${kind}, ${entityId}::uuid,
+              ${JSON.stringify(meta)}::jsonb)`);
+  }
+
+  /** Re-parent every single-column FK reference from one directory entity to another, then archive
+   *  the source (QNEW-71 §4.2 merge history-transfer — same FK-catalog walk as the upgrade path). */
+  private async reparent(tx: Tx, kind: "vendor" | "workshop", fromId: string, toId: string) {
+    const entityTable = kind === "vendor" ? "vendors" : "workshops";
+    const fks = (await tx.execute(sql`
+      select cl.relname as table_name, att.attname as column_name
+      from pg_constraint c
+      join pg_class cl on cl.oid = c.conrelid
+      join pg_class rf on rf.oid = c.confrelid
+      join pg_attribute att on att.attrelid = c.conrelid and att.attnum = c.conkey[1]
+      where c.contype = 'f' and rf.relname = ${entityTable} and array_length(c.conkey, 1) = 1`)) as Array<{
+      table_name: string;
+      column_name: string;
+    }>;
+    for (const fk of fks) {
+      if (!/^[a-z_][a-z0-9_]*$/.test(fk.table_name) || !/^[a-z_][a-z0-9_]*$/.test(fk.column_name)) continue;
+      await tx.execute(sql`update ${sql.raw(fk.table_name)} set ${sql.raw(fk.column_name)} = ${toId}::uuid where ${sql.raw(fk.column_name)} = ${fromId}::uuid`);
+    }
+    await tx.execute(sql`
+      update ${sql.raw(entityTable)} set is_active = false, activation_status = 'suspended', updated_at = now()
+      where id = ${fromId}::uuid`);
   }
 
   /** Approve: create a NEW directory identity + link it to the requesting workspace. */
@@ -336,12 +370,14 @@ export class CounterpartyService {
           throw new ConflictException("an identity with this key already exists — use merge instead");
         throw e;
       }
-      await this.linkEntity(tx, s.kind, s.tenant_id, entityId, dto.classification ?? s.classification, ctx.userId);
+      // a self-service collision submission carries no workspace (tenant_id NULL) — nothing to link.
+      if (s.tenant_id) await this.linkEntity(tx, s.kind, s.tenant_id, entityId, dto.classification ?? s.classification, ctx.userId);
       await tx.execute(sql`
         update counterparty_submissions set status = 'approved', resolved_entity_id = ${entityId}::uuid,
           reviewed_by = ${ctx.userId}::uuid, reviewed_at = now(), review_notes = ${dto.notes ?? null},
           updated_by = ${ctx.userId}::uuid, updated_at = now()
         where id = ${id}::uuid`);
+      await this.audit(tx, ctx, "counterparty.approve", s.kind, entityId, { submissionId: id });
       return { entityId, status: "approved" as const };
     });
   }
@@ -355,12 +391,19 @@ export class CounterpartyService {
         sql`select 1 from ${sql.raw(table)} where id = ${dto.targetEntityId}::uuid limit 1`,
       )) as Array<unknown>;
       if (!ex[0]) throw new NotFoundException("target entity not found in the directory");
-      await this.linkEntity(tx, s.kind, s.tenant_id, dto.targetEntityId, s.classification, ctx.userId);
+      if (s.tenant_id) await this.linkEntity(tx, s.kind, s.tenant_id, dto.targetEntityId, s.classification, ctx.userId);
+      // a self-service collision submission (tenant_id NULL) also re-parents the pending account's
+      // history onto the surviving identity, then archives the pending duplicate (QNEW-71 §4.2).
+      const pendingEntityId = (s as { payload?: { pendingEntityId?: string } }).payload?.pendingEntityId;
+      if (pendingEntityId && pendingEntityId !== dto.targetEntityId) {
+        await this.reparent(tx, s.kind, pendingEntityId, dto.targetEntityId);
+      }
       await tx.execute(sql`
         update counterparty_submissions set status = 'merged', resolved_entity_id = ${dto.targetEntityId}::uuid,
           reviewed_by = ${ctx.userId}::uuid, reviewed_at = now(), review_notes = ${dto.notes ?? null},
           updated_by = ${ctx.userId}::uuid, updated_at = now()
         where id = ${id}::uuid`);
+      await this.audit(tx, ctx, "counterparty.merge", s.kind, dto.targetEntityId, { submissionId: id, mergedFrom: pendingEntityId ?? null });
       return { entityId: dto.targetEntityId, status: "merged" as const };
     });
   }
@@ -368,11 +411,12 @@ export class CounterpartyService {
   /** Reject: leave the directory untouched; record the decision. */
   async reject(ctx: RlsContext, id: string, dto: z.infer<typeof rejectSchema>) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
-      await this.loadPending(tx, id);
+      const s = await this.loadPending(tx, id);
       await tx.execute(sql`
         update counterparty_submissions set status = 'rejected', reviewed_by = ${ctx.userId}::uuid,
           reviewed_at = now(), review_notes = ${dto.notes ?? null}, updated_by = ${ctx.userId}::uuid, updated_at = now()
         where id = ${id}::uuid`);
+      await this.audit(tx, ctx, "counterparty.reject", s.kind, null, { submissionId: id });
       return { status: "rejected" as const };
     });
   }

@@ -60,15 +60,16 @@ export class VendorRfqService {
 
       const results: Array<{ vendorId: string; notify: string; token?: string }> = [];
       for (const vendorId of dto.vendorIds) {
-        // vendor must be linked to THIS workspace
+        // vendor must be linked to THIS workspace AND be a live directory identity (not suspended /
+        // pending activation) — mirrors the auto-assignment pool filter.
         const link = (
           (await tx.execute(sql`
             select v.primary_email
             from tenant_vendors tv join vendors v on v.id = tv.vendor_id
             where tv.tenant_id = ${ctx.tenantId}::uuid and tv.vendor_id = ${vendorId}::uuid
-              and tv.status = 'active' limit 1`)) as Array<{ primary_email: string | null }>
+              and tv.status = 'active' and v.is_active and v.activation_status = 'active' limit 1`)) as Array<{ primary_email: string | null }>
         )[0];
-        if (!link) throw new BadRequestException(`vendor ${vendorId} is not linked to this workspace`);
+        if (!link) throw new BadRequestException(`vendor ${vendorId} is not an active supplier in this workspace`);
 
         const rawToken = randomBytes(24).toString("base64url");
         const expiresAt = new Date(Date.now() + TOKEN_TTL_DAYS * 86400_000);

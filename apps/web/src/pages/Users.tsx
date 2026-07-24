@@ -13,7 +13,8 @@ interface Member {
   role: string;
   branch: string | null;
   workshop_branch_id: string | null;
-  is_active: boolean;
+  is_active: boolean; // the user's GLOBAL account status
+  membership_active: boolean; // whether they're active IN THIS WORKSPACE (what this screen manages)
 }
 interface Branch {
   id: string;
@@ -233,16 +234,16 @@ export default function Users() {
                     </td>
                     <td className="td text-muted">{u.branch ?? "All"}</td>
                     <td className="td">
-                      <Badge tone={u.is_active ? "green" : "gray"}>{u.is_active ? "active" : "inactive"}</Badge>
+                      <Badge tone={u.membership_active ? "green" : "gray"}>{u.membership_active ? "active" : "inactive"}</Badge>
                     </td>
                     <td className="td">
                       <div className="flex items-center justify-end gap-1.5">
                         <button className="btn btn-sm rounded-md" onClick={() => setEditing(u.membership_id)}>Edit</button>
                         <button
-                          className={`btn btn-sm rounded-md ${u.is_active ? "text-accent" : ""}`}
-                          onClick={() => patchMember(u.membership_id, { isActive: !u.is_active })}
+                          className={`btn btn-sm rounded-md ${u.membership_active ? "text-accent" : ""}`}
+                          onClick={() => patchMember(u.membership_id, { isActive: !u.membership_active })}
                         >
-                          {u.is_active ? "Deactivate" : "Reactivate"}
+                          {u.membership_active ? "Deactivate" : "Reactivate"}
                         </button>
                         {canViewAs && u.id !== me?.user?.id && u.is_active && (
                           <button className="btn btn-sm rounded-md" onClick={() => impersonate(u.id)}>

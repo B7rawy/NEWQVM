@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
@@ -6,15 +6,14 @@ import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 /**
  * Shared part-number cleaner (QNEW-34) — ONE utility used everywhere a part number is entered
  * (purchasing form, vendor portal, Excel upload, invoice OCR), so the same part isn't stored in
- * different formats. Rules: trim, uppercase, collapse whitespace, normalize separators to '-'.
+ * different formats. Rules: trim, uppercase, normalize every separator run — whitespace, . / _ and
+ * '-' — to a single '-', then strip leading/trailing dashes. (So "12 34" and "12-34" collapse alike.)
  */
 export function cleanPartNumber(raw: string): string {
   return raw
     .trim()
     .toUpperCase()
-    .replace(/\s+/g, "")
-    .replace(/[.\/_]+/g, "-")
-    .replace(/-+/g, "-")
+    .replace(/[\s./_-]+/g, "-")
     .replace(/^-|-$/g, "");
 }
 
@@ -55,12 +54,15 @@ export class PartsService {
   }
 
   async addSynonym(ctx: RlsContext, partId: string, synonym: string) {
+    const value = synonym.trim();
     return this.dbService.withContext(ctx, async (tx) => {
-      await tx
-        .insert(schema.partSynonyms)
-        .values({ partId, synonym: synonym.trim() })
-        .onConflictDoNothing();
-      return { partId, synonym: synonym.trim() };
+      // synonym is globally unique: if it already points elsewhere, say so instead of a silent no-op.
+      const owner = (await tx.execute(sql`
+        select part_id from part_synonyms where synonym = ${value} limit 1`))[0] as { part_id: string } | undefined;
+      if (owner && owner.part_id !== partId)
+        throw new ConflictException("this synonym already belongs to another part");
+      if (!owner) await tx.insert(schema.partSynonyms).values({ partId, synonym: value });
+      return { partId, synonym: value };
     });
   }
 

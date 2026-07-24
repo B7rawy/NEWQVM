@@ -23,17 +23,43 @@ export class AccountService {
       if (!cp) throw new BadRequestException("no counterparty account to activate");
       const { kind, entityId } = cp;
       const table = kind === "vendor" ? "vendors" : "workshops";
-      let rows: Array<{ id: string }>;
-      try {
-        rows = (await tx.execute(sql`
-          update ${sql.raw(table)} set primary_phone = ${dto.mobile}, activation_status = 'active',
-            updated_by = ${ctx.userId}::uuid, updated_at = now()
-          where id = ${entityId}::uuid and counterparty_type = 'individual' returning id`)) as Array<{ id: string }>;
-      } catch (e) {
-        if ((e as { code?: string })?.code === "23505")
-          throw new ConflictException("this mobile is already registered to another account");
-        throw e;
+      const nameCol = kind === "vendor" ? "legal_name" : "name";
+
+      // QNEW-71 §3.5: detect an identifier COLLISION up-front (a SELECT, not a failing UPDATE — a
+      // 23505 would abort the whole tx). If the mobile already identifies ANOTHER individual, this
+      // doesn't reject: it becomes a review-queue submission (tenant_id NULL → internal reviewers
+      // only) so an admin can MERGE the pending account into the existing identity, or reject it.
+      const clash = (await tx.execute(sql`
+        select id, ${sql.raw(nameCol)} as name from ${sql.raw(table)}
+        where counterparty_type = 'individual' and primary_phone = ${dto.mobile} and id <> ${entityId}::uuid limit 1`))[0] as
+        | { id: string; name: string }
+        | undefined;
+      if (clash) {
+        const me = (await tx.execute(sql`
+          select ${sql.raw(nameCol)} as name, primary_email from ${sql.raw(table)} where id = ${entityId}::uuid limit 1`))[0] as
+          | { name: string; primary_email: string | null }
+          | undefined;
+        const already = (await tx.execute(sql`
+          select id from counterparty_submissions
+          where tenant_id is null and status = 'pending' and payload->>'pendingEntityId' = ${entityId} limit 1`))[0];
+        if (!already) {
+          const candidates = [{ id: clash.id, name: clash.name, cpType: "individual", score: 90, reasons: ["mobile"] }];
+          await tx.execute(sql`
+            insert into counterparty_submissions
+              (tenant_id, kind, counterparty_type, legal_name, mobile, email, source, status,
+               match_candidates, payload, submitted_by, created_by, updated_by)
+            values (null, ${kind}, 'individual', ${me?.name ?? "(unknown)"}, ${dto.mobile}, ${me?.primary_email ?? null},
+               'manual', 'pending', ${JSON.stringify(candidates)}::jsonb,
+               ${JSON.stringify({ pendingEntityId: entityId, reason: "activation_collision" })}::jsonb,
+               ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)`);
+        }
+        return { status: "pending_review" as const, kind, entityId };
       }
+
+      const rows = (await tx.execute(sql`
+        update ${sql.raw(table)} set primary_phone = ${dto.mobile}, activation_status = 'active',
+          updated_by = ${ctx.userId}::uuid, updated_at = now()
+        where id = ${entityId}::uuid and counterparty_type = 'individual' returning id`)) as Array<{ id: string }>;
       if (!rows[0]) throw new BadRequestException("account is not an individual pending activation");
       return { status: "active" as const, kind, entityId };
     });

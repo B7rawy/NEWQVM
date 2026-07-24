@@ -547,7 +547,7 @@ export default function Overview() {
   ];
 
   const quickLinks: { title: string; subtitle: string; icon: ReactNode; accent: Accent; to: string }[] = [
-    { title: "New RFQ", subtitle: "Create a new request for quotation", icon: <FilePlus2 className="h-5 w-5" />, accent: "sky", to: "/rfq-new" },
+    { title: "RFQs", subtitle: "Browse and manage requests for quotation", icon: <FilePlus2 className="h-5 w-5" />, accent: "sky", to: "/rfqs" },
     { title: "RFQs Dashboard", subtitle: "Review and price incoming requests", icon: <Files className="h-5 w-5" />, accent: "emerald", to: "/rfqs" },
     { title: "Orders Dashboard", subtitle: "Track confirmed orders to fulfilment", icon: <ShoppingCart className="h-5 w-5" />, accent: "violet", to: "/orders" },
     { title: "Delivered Orders", subtitle: "Browse completed deliveries", icon: <Truck className="h-5 w-5" />, accent: "teal", to: "/delivered" },
@@ -577,7 +577,7 @@ export default function Overview() {
         actions={
           <>
             <button
-              onClick={() => nav("/rfq-new")}
+              onClick={() => nav("/rfqs")}
               className="inline-flex items-center gap-2 rounded-md bg-accent px-3.5 py-2 text-[13px] font-medium text-white shadow-btn transition hover:bg-accent-hover"
             >
               <FilePlus2 className="h-4 w-4" /> New RFQ

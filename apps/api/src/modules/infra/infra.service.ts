@@ -35,7 +35,8 @@ export class AuditService {
       tx.execute(sql`
         select id, entity_type, entity_id, action, actor_user_id, created_at
         from audit_log
-        where (${entityType ?? null}::text is null or entity_type = ${entityType ?? null})
+        where tenant_id = ${ctx.tenantId}::uuid
+          and (${entityType ?? null}::text is null or entity_type = ${entityType ?? null})
           and (${entityId ?? null}::uuid is null or entity_id = ${entityId ?? null}::uuid)
         order by created_at desc limit 100`),
     );

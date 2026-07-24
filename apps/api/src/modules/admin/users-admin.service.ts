@@ -114,6 +114,16 @@ export class UsersAdminService {
         const existing = (
           (await tx.execute(sql`select id from users where email = ${email} limit 1`)) as Array<{ id: string }>
         )[0];
+        // SECURITY: never attach a platform-staff account as a workspace member. Platform staff
+        // reach every workspace via isInternal already; a membership would only serve as the first
+        // step of the add-member → impersonate escalation chain.
+        if (existing) {
+          const isPlatform = (
+            (await tx.execute(sql`
+              select 1 from platform_members where user_id = ${existing.id}::uuid and is_active limit 1`)) as Array<unknown>
+          )[0];
+          if (isPlatform) throw new ForbiddenException("this account is platform staff and cannot be added as a workspace member");
+        }
         let userId = existing?.id;
         if (!userId) {
           const [u] = (await tx.execute(sql`

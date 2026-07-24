@@ -3,13 +3,19 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext, type Tx } from "../../db/db.service.js";
 
-export const setBasisSchema = z.object({
-  payerScenario: z.enum(["cash_client", "credit_client", "insurance"]),
-  insuranceCompanyId: z.string().uuid().optional(),
-  priceBasis: z.enum(["agency_price", "vendor_price", "calculated_margin"]),
-  adjustmentType: z.enum(["discount", "markup"]).default("markup"),
-  adjustmentPct: z.number().min(0).max(1000).default(0),
-});
+export const setBasisSchema = z
+  .object({
+    payerScenario: z.enum(["cash_client", "credit_client", "insurance"]),
+    insuranceCompanyId: z.string().uuid().optional(),
+    priceBasis: z.enum(["agency_price", "vendor_price", "calculated_margin"]),
+    adjustmentType: z.enum(["discount", "markup"]).default("markup"),
+    // fits numeric(5,2); a discount is further capped at 100% below (no negative prices).
+    adjustmentPct: z.number().min(0).max(999.99).default(0),
+  })
+  .superRefine((v, ctx) => {
+    if (v.adjustmentType === "discount" && v.adjustmentPct > 100)
+      ctx.addIssue({ code: "custom", path: ["adjustmentPct"], message: "a discount cannot exceed 100%" });
+  });
 export type SetBasisDto = z.infer<typeof setBasisSchema>;
 
 export interface PriceInputs {
@@ -63,13 +69,14 @@ export class PricingService {
    */
   async computeIn(tx: Tx, tenantId: string, inputs: PriceInputs) {
     const scenario = inputs.payerScenario ?? "cash_client";
+    // insurer-specific basis wins; fall back to the tenant-wide (NULL insurer) row for the scenario.
     const basis = (
       (await tx.execute(sql`
         select price_basis, adjustment_type, adjustment_pct
         from pricing_basis_settings
         where tenant_id = ${tenantId}::uuid and payer_scenario = ${scenario}
-          and insurance_company_id is not distinct from ${inputs.insuranceCompanyId ?? null}::uuid
-        order by updated_at desc limit 1`)) as Array<{ price_basis: string; adjustment_type: string; adjustment_pct: string }>
+          and (insurance_company_id = ${inputs.insuranceCompanyId ?? null}::uuid or insurance_company_id is null)
+        order by (insurance_company_id is not null) desc, updated_at desc limit 1`)) as Array<{ price_basis: string; adjustment_type: string; adjustment_pct: string }>
     )[0];
 
     let base = inputs.cost;
@@ -112,6 +119,7 @@ export class PricingService {
           and pc.brand_class_id = ${inputs.brandClassId}::uuid
           and ${inputs.cost} >= cr.lower_bound
           and (cr.upper_bound is null or ${inputs.cost} < cr.upper_bound)
+        order by cr.lower_bound desc, pm.updated_at desc
         limit 1`)) as Array<{ margin_pct: string }>
     )[0];
     return row ? Number(row.margin_pct) : 0;

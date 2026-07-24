@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
@@ -18,16 +18,23 @@ export class VendorAssignmentService {
 
   async createRule(ctx: RlsContext, dto: CreateRuleDto) {
     return this.dbService.withContext(ctx, async (tx) => {
-      const [rule] = await tx
-        .insert(schema.vendorSelectionRules)
-        .values({
-          tenantId: ctx.tenantId!,
-          workshopBranchId: dto.workshopBranchId,
-          partCategoryId: dto.partCategoryId,
-          cityId: dto.cityId,
-          automationMode: dto.automationMode,
-        })
-        .returning({ id: schema.vendorSelectionRules.id });
+      let rule: { id: string };
+      try {
+        [rule] = await tx
+          .insert(schema.vendorSelectionRules)
+          .values({
+            tenantId: ctx.tenantId!,
+            workshopBranchId: dto.workshopBranchId,
+            partCategoryId: dto.partCategoryId,
+            cityId: dto.cityId,
+            automationMode: dto.automationMode,
+          })
+          .returning({ id: schema.vendorSelectionRules.id });
+      } catch (e) {
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException("a vendor selection rule with this scope already exists");
+        throw e;
+      }
       await tx
         .insert(schema.vendorSelectionRuleVendors)
         .values(dto.vendorIds.map((v) => ({ tenantId: ctx.tenantId!, ruleId: rule.id, vendorId: v })))
@@ -63,7 +70,7 @@ export class VendorAssignmentService {
           and (r.part_category_id is null or r.part_category_id = i.part_category_id)
           and (r.city_id is null or r.city_id is not distinct from ${rfq.city_id})
         join vendor_selection_rule_vendors rv on rv.rule_id = r.id
-        join vendors v on v.id = rv.vendor_id
+        join vendors v on v.id = rv.vendor_id and v.is_active and v.activation_status = 'active'
         join tenant_vendors tv on tv.vendor_id = v.id and tv.tenant_id = ${ctx.tenantId}::uuid and tv.status = 'active'
         where i.rfq_id = ${rfqId}::uuid`)) as Array<{
         vendor_id: string;

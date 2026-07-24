@@ -75,6 +75,8 @@ export const profitCategories = pgTable(
     index("profit_categories_tenant_idx").on(t.tenantId),
     index("profit_categories_part_cat_idx").on(t.partCategoryId),
     index("profit_categories_brand_class_idx").on(t.brandClassId),
+    // UNIQUE (tenant, part_category, brand_class) NULLS NOT DISTINCT — deterministic margin lookup —
+    // added by hand migration 0037 (drizzle 0.36 can't emit NULLS NOT DISTINCT).
   ],
 );
 

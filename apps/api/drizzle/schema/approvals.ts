@@ -1,4 +1,5 @@
 import { boolean, integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 import { audit, isActive, pk } from "./_shared";
 import { approvalActionType, approvalLevelMode, approvalStatus } from "./enums";
 import { tenants } from "./tenancy";
@@ -75,6 +76,8 @@ export const approvalRequests = pgTable(
     index("approval_requests_policy_idx").on(t.policyId),
     index("approval_requests_entity_idx").on(t.tenantId, t.entityType, t.entityId),
     index("approval_requests_requested_by_idx").on(t.requestedBy),
+    // one OPEN request per entity (0037) — the service checks-then-inserts; 23505 → 409
+    uniqueIndex("approval_requests_pending_uq").on(t.tenantId, t.entityType, t.entityId).where(sql`overall_status = 'pending'`),
   ],
 );
 

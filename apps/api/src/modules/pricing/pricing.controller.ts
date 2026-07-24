@@ -12,6 +12,10 @@ const agencyPriceSchema = z.object({
   price: z.number().finite().nonnegative(),
   source: z.string().optional(),
 });
+const computeQuerySchema = z.object({
+  cost: z.coerce.number().finite().nonnegative(),
+  scenario: z.enum(["cash_client", "credit_client", "insurance"]).default("cash_client"),
+});
 
 /** Pricing engine (QNEW-30). Configuration is internal (pricing supervisor / platform). */
 @Controller("pricing")
@@ -42,11 +46,7 @@ export class PricingController {
   @Get("compute")
   @PlatformOnly()
   compute(@Req() req: Request, @Query("cost") cost: string, @Query("scenario") scenario?: string) {
-    const c = Number(cost);
-    if (!Number.isFinite(c)) throw new BadRequestException("cost must be a number");
-    return this.pricing.compute(this.ctx(req), {
-      cost: c,
-      payerScenario: (scenario as "cash_client" | "credit_client" | "insurance") ?? "cash_client",
-    });
+    const q = computeQuerySchema.parse({ cost, scenario });
+    return this.pricing.compute(this.ctx(req), { cost: q.cost, payerScenario: q.scenario });
   }
 }

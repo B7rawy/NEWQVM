@@ -56,6 +56,16 @@ export class AuthGuard implements CanActivate {
           | undefined;
         if (!user?.is_active) return { inactive: true } as const;
 
+        // an impersonation token (`imp`) must keep re-validating the REAL actor: if the impersonator
+        // is later deactivated the borrowed session dies immediately, not at TTL expiry.
+        if (impersonatorId) {
+          const actor = (await tx.execute(sql`
+            select is_active from users where id = ${impersonatorId}::uuid limit 1`))[0] as
+            | { is_active?: boolean }
+            | undefined;
+          if (!actor?.is_active) return { inactive: true } as const;
+        }
+
         const platform = (await tx.execute(sql`
           select role from platform_members where user_id = ${userId}::uuid and is_active = true limit 1`))[0] as
           | { role?: string }

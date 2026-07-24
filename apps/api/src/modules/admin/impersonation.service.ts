@@ -37,6 +37,17 @@ export class ImpersonationService {
       )[0];
       if (!target || !target.is_active) throw new NotFoundException("target user not found or inactive");
 
+      // SECURITY: a non-internal actor may NEVER impersonate platform staff. Without this, a
+      // company_admin could attach a platform account to their workspace (via add-member) and then
+      // impersonate it — becoming super_admin (the guard derives isInternal from the token's sub).
+      if (!actorIsInternal) {
+        const targetIsPlatform = (
+          (await tx.execute(sql`
+            select 1 from platform_members where user_id = ${targetUserId}::uuid and is_active limit 1`)) as Array<unknown>
+        )[0];
+        if (targetIsPlatform) throw new ForbiddenException("cannot view as platform staff");
+      }
+
       const allowed = actorIsInternal
         ? true
         : !!(

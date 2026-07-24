@@ -42,8 +42,10 @@ export class ShippingService {
 
   async createShipment(ctx: RlsContext, dto: z.infer<typeof createShipmentSchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // bind to the acting tenant explicitly — internal context bypasses RLS, so a bare id lookup
+      // would let a platform user attach a shipment to another workspace's order.
       const order = (
-        (await tx.execute(sql`select id from orders where id = ${dto.orderId}::uuid limit 1`)) as Array<{ id: string }>
+        (await tx.execute(sql`select id from orders where id = ${dto.orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string }>
       )[0];
       if (!order) throw new NotFoundException("order not found in this workspace");
       const tracking = "TRK-" + randomBytes(5).toString("hex").toUpperCase();
@@ -75,9 +77,9 @@ export class ShippingService {
   /** Broadcast a delivery to all active marketplace drivers (QNEW-55). */
   async broadcast(ctx: RlsContext, orderId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
-      // RLS-scoped ownership check (FK validation runs as owner and bypasses RLS)
+      // bind to the acting tenant explicitly (internal context bypasses RLS)
       const order = (
-        (await tx.execute(sql`select id from orders where id = ${orderId}::uuid limit 1`)) as Array<{ id: string }>
+        (await tx.execute(sql`select id from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string }>
       )[0];
       if (!order) throw new NotFoundException("order not found in this workspace");
       const drivers = (await tx.execute(sql`
@@ -95,7 +97,7 @@ export class ShippingService {
   async accept(ctx: RlsContext, requestId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
       const req = (
-        (await tx.execute(sql`select id, order_id, driver_id, status from driver_delivery_requests where id = ${requestId}::uuid limit 1`)) as Array<{ id: string; order_id: string; driver_id: string; status: string }>
+        (await tx.execute(sql`select id, order_id, driver_id, status from driver_delivery_requests where id = ${requestId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string; order_id: string; driver_id: string; status: string }>
       )[0];
       if (!req) throw new NotFoundException("delivery request not found");
       // is it still open (no one accepted for this order yet)?

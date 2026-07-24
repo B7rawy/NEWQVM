@@ -253,6 +253,20 @@
       "when": 1784919070863,
       "tag": "0035_snapshot_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1784919071863,
+      "tag": "0036_selfservice_submissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1784919072863,
+      "tag": "0037_sweep_backstops",
+      "breakpoints": true
     }
   ]
 }
