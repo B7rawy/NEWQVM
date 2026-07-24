@@ -121,6 +121,7 @@ export class AuthGuard implements CanActivate {
         active.tenant?.role ??
         (active.vendorAccess ? "vendor" : active.workshopAccess ? "workshop" : active.platformRole),
       isInternal,
+      platformRole: active.platformRole ?? null,
       environment: resolveEnvironment(req),
       impersonatorId,
     };

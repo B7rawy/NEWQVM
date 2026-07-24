@@ -8,6 +8,8 @@ export interface RequestContext {
   tenantId: string | null;
   role: string | null;
   isInternal: boolean;
+  /** The caller's PLATFORM tier role (super_admin | staff | …), null for non-staff. */
+  platformRole: string | null;
   /** Active data environment within the workspace (X-Environment header; default 'live'). */
   environment: "live" | "sandbox";
   /** The real actor's user id when this request is impersonating ('view as'); null otherwise. */
@@ -58,6 +60,7 @@ export function getContext(req: Request): RequestContext {
     tenantId: null,
     role: null,
     isInternal: false,
+    platformRole: null,
     environment: "live",
     impersonatorId: null,
   };

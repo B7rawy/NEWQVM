@@ -3,6 +3,7 @@ import { Plus, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../components/ui";
+import PlatformPeople from "./admin/PlatformPeople";
 
 interface Member {
   id: string;
@@ -96,6 +97,19 @@ export default function Users() {
   // unscoped Admin-workspace view there is no single workspace to manage, so prompt to pick one
   // instead of leaving the table on an endless spinner.
   if (!activeSlug) {
+    // Platform staff unscoped → the PLATFORM people surface (own team + global directory).
+    // Anyone else genuinely needs a workspace, since roles only exist inside one.
+    if (me?.persona === "platform") {
+      return (
+        <>
+          <PageHeader
+            title="Users & Permissions"
+            subtitle="Platform staff and everyone on the platform — workspace roles are managed inside each workspace"
+          />
+          <PlatformPeople />
+        </>
+      );
+    }
     return (
       <>
         <PageHeader title="Users & Permissions" subtitle="People with access to a workspace" />

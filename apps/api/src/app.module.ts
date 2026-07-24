@@ -13,6 +13,8 @@ import { ProvidersController } from "./modules/providers/providers.controller.js
 import { ProvidersService } from "./modules/providers/providers.service.js";
 import { UsersAdminController } from "./modules/admin/users-admin.controller.js";
 import { UsersAdminService } from "./modules/admin/users-admin.service.js";
+import { PlatformStaffController } from "./modules/admin/platform-staff.controller.js";
+import { PlatformStaffService } from "./modules/admin/platform-staff.service.js";
 import { ImpersonationController } from "./modules/admin/impersonation.controller.js";
 import { ImpersonationService } from "./modules/admin/impersonation.service.js";
 import { RfqController } from "./modules/rfq/rfq.controller.js";
@@ -88,6 +90,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     VendorsController,
     ProvidersController,
     UsersAdminController,
+    PlatformStaffController,
     ImpersonationController,
     CounterpartyController,
     AccountController,
@@ -117,6 +120,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     VendorsService,
     ProvidersService,
     UsersAdminService,
+    PlatformStaffService,
     ImpersonationService,
     CounterpartyService,
     AccountService,
