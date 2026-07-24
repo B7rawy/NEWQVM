@@ -7,6 +7,7 @@ import { getContext } from "../../common/request-context.js";
 import {
   approveSchema,
   CounterpartyService,
+  importSchema,
   mergeSchema,
   rejectSchema,
   submitCounterpartySchema,
@@ -38,6 +39,13 @@ export class CounterpartyController {
   @Roles("company_admin")
   listMine(@Req() req: Request) {
     return this.svc.listMine(this.ctx(req));
+  }
+
+  /** Workspace: bulk import (client parses the Excel/CSV → rows; server validates + stages a batch). */
+  @Post("import")
+  @Roles("company_admin")
+  importRows(@Req() req: Request, @Body() body: unknown) {
+    return this.svc.importRows(this.ctx(req), importSchema.parse(body));
   }
 
   /** Platform: the review queue (every pending submission across workspaces). */

@@ -37,6 +37,27 @@ export const submitCounterpartySchema = z
 export const approveSchema = z.object({ notes: z.string().optional(), classification: z.string().optional() });
 export const mergeSchema = z.object({ targetEntityId: z.string().uuid(), notes: z.string().optional() });
 export const rejectSchema = z.object({ notes: z.string().optional() });
+/** Bulk import — the client parses the Excel/CSV into rows and posts them (server validates + stages).
+ *  email is intentionally NOT .email() here: import data is messy; rows are validated per-row inline. */
+export const importSchema = z.object({
+  kind: z.enum(["vendor", "workshop"]),
+  filename: z.string().optional(),
+  tenantId: z.string().uuid().optional(),
+  rows: z
+    .array(
+      z.object({
+        counterpartyType: z.enum(["individual", "company"]).default("company"),
+        legalName: z.string().default(""),
+        taxNumber: z.string().optional(),
+        commercialRegistrationNumber: z.string().optional(),
+        mobile: z.string().optional(),
+        email: z.string().optional(),
+        classification: z.string().optional(),
+      }),
+    )
+    .min(1)
+    .max(1000),
+});
 
 interface Candidate {
   id: string;
@@ -136,54 +157,112 @@ export class CounterpartyService {
     }
   }
 
-  /** Workspace submits a proposed counterparty. Auto-links on an exact key, else queues for review. */
-  async submit(ctx: RlsContext, dto: z.infer<typeof submitCounterpartySchema>) {
-    const target = this.targetTenant(ctx, dto.tenantId);
-    // Type-normalise identifiers: tax_number / CR are company concepts; an individual is keyed by
-    // mobile. Drop the non-applicable ones so a stale client value can't pollute matching/storage.
-    const isCompany = dto.counterpartyType === "company";
-    const taxNumber = isCompany ? dto.taxNumber ?? null : null;
-    const cr = isCompany ? dto.commercialRegistrationNumber ?? null : null;
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
-      const candidates = await this.findCandidates(tx, dto.kind, {
-        taxNumber: taxNumber ?? undefined,
-        mobile: dto.mobile,
-        email: dto.email,
-        legalName: dto.legalName,
-      });
-      // Auto-link ONLY on an exact key match to a same-type identity (company↔tax, individual↔mobile).
-      const exact = candidates.find(
-        (c) =>
-          (isCompany && c.cpType === "company" && c.reasons.includes("tax")) ||
-          (!isCompany && c.cpType === "individual" && c.reasons.includes("mobile")),
-      );
-      const cand = JSON.stringify(candidates);
-      if (AUTO_LINK_ON_EXACT_KEY && exact) {
-        await this.linkEntity(tx, dto.kind, target, exact.id, dto.classification ?? null, ctx.userId);
-        const [s] = (await tx.execute(sql`
-          insert into counterparty_submissions
-            (tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
-             mobile, email, classification, source, status, match_candidates, resolved_entity_id,
-             submitted_by, reviewed_at, review_notes, created_by, updated_by)
-          values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${taxNumber},
-             ${cr}, ${dto.mobile ?? null}, ${dto.email ?? null},
-             ${dto.classification ?? null}, 'manual', 'merged', ${cand}::jsonb, ${exact.id}::uuid,
-             ${ctx.userId}::uuid, now(), 'auto-linked on exact key match', ${ctx.userId}::uuid, ${ctx.userId}::uuid)
-          returning id`)) as Array<{ id: string }>;
-        // NOTE: never echo candidate names/ids to the (non-internal) workspace — privacy boundary.
-        // Full candidates are persisted for the @PlatformOnly review queue only.
-        return { submissionId: s.id, status: "merged" as const, autoLinked: true, entityId: exact.id, matchCount: candidates.length };
-      }
+  /**
+   * Match + stage/auto-link ONE proposed counterparty. Shared by single submit and bulk import.
+   * MUST run inside a withContext({ isInternal: true }) tx (needs the global directory read + link write).
+   * Type-normalises identifiers (tax/CR are company concepts; an individual is keyed by mobile).
+   */
+  private async processRow(
+    tx: Tx,
+    target: string,
+    kind: "vendor" | "workshop",
+    row: {
+      counterpartyType: "individual" | "company";
+      legalName: string;
+      taxNumber?: string | null;
+      commercialRegistrationNumber?: string | null;
+      mobile?: string | null;
+      email?: string | null;
+      classification?: string | null;
+    },
+    source: "manual" | "excel_import",
+    batchId: string | null,
+    userId: string | null,
+  ): Promise<{ submissionId: string; status: "pending" | "merged"; autoLinked: boolean; entityId: string | null; matchCount: number }> {
+    const isCompany = row.counterpartyType === "company";
+    const taxNumber = isCompany ? row.taxNumber ?? null : null;
+    const cr = isCompany ? row.commercialRegistrationNumber ?? null : null;
+    const candidates = await this.findCandidates(tx, kind, {
+      taxNumber: taxNumber ?? undefined,
+      mobile: row.mobile ?? undefined,
+      email: row.email ?? undefined,
+      legalName: row.legalName,
+    });
+    // Auto-link ONLY on an exact key match to a same-type identity (company↔tax, individual↔mobile).
+    const exact = candidates.find(
+      (c) =>
+        (isCompany && c.cpType === "company" && c.reasons.includes("tax")) ||
+        (!isCompany && c.cpType === "individual" && c.reasons.includes("mobile")),
+    );
+    const cand = JSON.stringify(candidates);
+    if (AUTO_LINK_ON_EXACT_KEY && exact) {
+      await this.linkEntity(tx, kind, target, exact.id, row.classification ?? null, userId);
       const [s] = (await tx.execute(sql`
         insert into counterparty_submissions
           (tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
-           mobile, email, classification, source, status, match_candidates, submitted_by, created_by, updated_by)
-        values (${target}::uuid, ${dto.kind}, ${dto.counterpartyType}, ${dto.legalName}, ${taxNumber},
-           ${cr}, ${dto.mobile ?? null}, ${dto.email ?? null},
-           ${dto.classification ?? null}, 'manual', 'pending', ${cand}::jsonb, ${ctx.userId}::uuid,
-           ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+           mobile, email, classification, source, import_batch_id, status, match_candidates, resolved_entity_id,
+           submitted_by, reviewed_at, review_notes, created_by, updated_by)
+        values (${target}::uuid, ${kind}, ${row.counterpartyType}, ${row.legalName}, ${taxNumber},
+           ${cr}, ${row.mobile ?? null}, ${row.email ?? null}, ${row.classification ?? null}, ${source},
+           ${batchId}::uuid, 'merged', ${cand}::jsonb, ${exact.id}::uuid,
+           ${userId}::uuid, now(), 'auto-linked on exact key match', ${userId}::uuid, ${userId}::uuid)
         returning id`)) as Array<{ id: string }>;
-      return { submissionId: s.id, status: "pending" as const, autoLinked: false, matchCount: candidates.length };
+      return { submissionId: s.id, status: "merged", autoLinked: true, entityId: exact.id, matchCount: candidates.length };
+    }
+    const [s] = (await tx.execute(sql`
+      insert into counterparty_submissions
+        (tenant_id, kind, counterparty_type, legal_name, tax_number, commercial_registration_number,
+         mobile, email, classification, source, import_batch_id, status, match_candidates, submitted_by, created_by, updated_by)
+      values (${target}::uuid, ${kind}, ${row.counterpartyType}, ${row.legalName}, ${taxNumber},
+         ${cr}, ${row.mobile ?? null}, ${row.email ?? null}, ${row.classification ?? null}, ${source},
+         ${batchId}::uuid, 'pending', ${cand}::jsonb, ${userId}::uuid, ${userId}::uuid, ${userId}::uuid)
+      returning id`)) as Array<{ id: string }>;
+    return { submissionId: s.id, status: "pending", autoLinked: false, entityId: null, matchCount: candidates.length };
+  }
+
+  /** Workspace submits a single proposed counterparty. Auto-links on an exact key, else queues. */
+  async submit(ctx: RlsContext, dto: z.infer<typeof submitCounterpartySchema>) {
+    const target = this.targetTenant(ctx, dto.tenantId);
+    const r = await this.dbService.withContext(
+      { tenantId: target, userId: ctx.userId, isInternal: true },
+      (tx) => this.processRow(tx, target, dto.kind, dto, "manual", null, ctx.userId),
+    );
+    // never echo candidate names/ids to the (non-internal) workspace — privacy boundary.
+    return { submissionId: r.submissionId, status: r.status, autoLinked: r.autoLinked, entityId: r.entityId ?? undefined, matchCount: r.matchCount };
+  }
+
+  /**
+   * Bulk import — one batch → many staged submissions, each matched/auto-linked like a single submit.
+   * Rows failing basic validation (no name or no identifier) are counted as errors and skipped.
+   */
+  async importRows(ctx: RlsContext, dto: z.infer<typeof importSchema>) {
+    const target = this.targetTenant(ctx, dto.tenantId);
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const [batch] = (await tx.execute(sql`
+        insert into import_batches (tenant_id, kind, filename, status, total_rows, uploaded_by, created_by, updated_by)
+        values (${target}::uuid, ${dto.kind}, ${dto.filename ?? null}, 'submitted', ${dto.rows.length},
+          ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+        returning id`)) as Array<{ id: string }>;
+      let autoLinked = 0;
+      let pending = 0;
+      let errors = 0;
+      const perRow: Array<{ index: number; legalName: string; status: string; matchCount?: number; reason?: string }> = [];
+      for (const [i, row] of dto.rows.entries()) {
+        const hasIdentifier = !!(row.taxNumber || row.mobile || row.email);
+        if (!row.legalName || row.legalName.trim().length < 2 || !hasIdentifier) {
+          errors++;
+          perRow.push({ index: i, legalName: row.legalName ?? "", status: "error", reason: "missing name or identifier" });
+          continue;
+        }
+        const r = await this.processRow(tx, target, dto.kind, row, "excel_import", batch.id, ctx.userId);
+        r.autoLinked ? autoLinked++ : pending++;
+        perRow.push({ index: i, legalName: row.legalName, status: r.status, matchCount: r.matchCount });
+      }
+      await tx.execute(sql`
+        update import_batches set valid_rows = ${dto.rows.length - errors}, error_rows = ${errors},
+          status = 'completed', updated_by = ${ctx.userId}::uuid, updated_at = now()
+        where id = ${batch.id}::uuid`);
+      return { batchId: batch.id, total: dto.rows.length, autoLinked, pending, errors, perRow };
     });
   }
 
