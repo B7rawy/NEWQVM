@@ -35,10 +35,20 @@ export class MeController {
         const isWorkshop = !!(
           (await tx.execute(sql`select 1 from workshop_users where user_id = ${ctx.userId}::uuid limit 1`)) as Array<unknown>
         )[0];
+        // QNEW-71: the counterparty's own account lifecycle (pending self-registration → active).
+        const activationStatus = isVendor
+          ? ((await tx.execute(sql`
+              select v.activation_status from vendor_users vu join vendors v on v.id = vu.vendor_id
+              where vu.user_id = ${ctx.userId}::uuid limit 1`)) as Array<{ activation_status: string }>)[0]?.activation_status
+          : isWorkshop
+            ? ((await tx.execute(sql`
+                select w.activation_status from workshop_users wu join workshops w on w.id = wu.workshop_id
+                where wu.user_id = ${ctx.userId}::uuid limit 1`)) as Array<{ activation_status: string }>)[0]?.activation_status
+            : undefined;
         const impersonator = ctx.impersonatorId
           ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
           : undefined;
-        return { user, platformRole, isVendor, isWorkshop, impersonatorName: impersonator?.full_name ?? null };
+        return { user, platformRole, isVendor, isWorkshop, activationStatus, impersonatorName: impersonator?.full_name ?? null };
       },
     );
 
@@ -57,6 +67,7 @@ export class MeController {
       platformRole: info.platformRole ?? null,
       isVendor: info.isVendor,
       isWorkshop: info.isWorkshop,
+      activationStatus: info.activationStatus ?? null,
       persona,
       impersonating: !!ctx.impersonatorId,
       impersonatorName: info.impersonatorName,

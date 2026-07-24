@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { boolean, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, isActive, pk } from "./_shared";
-import { counterpartyType, orderCategory, tenantWorkshopStatus } from "./enums";
+import { activationStatus, counterpartyType, orderCategory, tenantWorkshopStatus } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { cities, regions } from "./reference";
@@ -21,6 +21,8 @@ export const workshops = pgTable(
     name: text("name").notNull(),
     // QNEW-71: individual|company classification; drives which dedup key applies.
     counterpartyType: counterpartyType("counterparty_type").notNull().default("company"),
+    // QNEW-71: self-registered rows start 'pending' until they provide their identifier.
+    activationStatus: activationStatus("activation_status").notNull().default("active"),
     commercialRegistrationNumber: text("commercial_registration_number"),
     taxNumber: text("tax_number"),
     primaryPhone: text("primary_phone"),

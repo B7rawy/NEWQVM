@@ -48,6 +48,8 @@ import { ShippingService } from "./modules/shipping/shipping.service.js";
 import { WorkspacesController } from "./modules/workspaces/workspaces.controller.js";
 import { CounterpartyController } from "./modules/counterparty/counterparty.controller.js";
 import { CounterpartyService } from "./modules/counterparty/counterparty.service.js";
+import { AccountController } from "./modules/account/account.controller.js";
+import { AccountService } from "./modules/account/account.service.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -80,6 +82,7 @@ import { CounterpartyService } from "./modules/counterparty/counterparty.service
     UsersAdminController,
     ImpersonationController,
     CounterpartyController,
+    AccountController,
   ],
   providers: [
     RfqService,
@@ -105,6 +108,7 @@ import { CounterpartyService } from "./modules/counterparty/counterparty.service
     UsersAdminService,
     ImpersonationService,
     CounterpartyService,
+    AccountService,
   ],
 })
 export class AppModule {}
