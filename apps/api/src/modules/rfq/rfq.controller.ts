@@ -1,18 +1,9 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Req,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly, Roles } from "../../common/roles.decorator.js";
-import { getContext } from "../../common/request-context.js";
+import { requireTenantCtx } from "../../common/request-context.js";
 import { z } from "zod";
 import { CreateRfqDto, createRfqSchema, RfqService } from "./rfq.service.js";
 import { sendRfqSchema, VendorRfqService } from "./vendor-rfq.service.js";
@@ -33,58 +24,35 @@ export class RfqController {
 
   @Get()
   list(@Req() req: Request) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     // scope the list to the ACTIVE workspace even for platform staff (isInternal:false) — the
     // "see all workspaces" privilege is the switcher, not a merged single-workspace view.
-    return this.rfq.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment });
+    return this.rfq.list({ ...requireTenantCtx(req), isInternal: false });
   }
 
   @Get(":id")
   detail(@Req() req: Request, @Param("id") id: string) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.rfq.detail(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment },
-      id,
-    );
+    return this.rfq.detail({ ...requireTenantCtx(req), isInternal: false }, id);
   }
 
   @Post()
   @Roles("company_admin", "branch_manager", "service_advisor")
   create(@Req() req: Request, @Body() body: unknown) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     const dto: CreateRfqDto = createRfqSchema.parse(body);
-    return this.rfq.create(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
-      dto,
-    );
+    return this.rfq.create(requireTenantCtx(req), dto);
   }
 
   /** Send the RFQ to vendors — internal (purchasing) action; each send is a guarded notification. */
   @Post(":id/send")
   @PlatformOnly()
   send(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.vendorRfq.send(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
-      id,
-      sendRfqSchema.parse(body),
-    );
+    return this.vendorRfq.send(requireTenantCtx(req), id, sendRfqSchema.parse(body));
   }
 
   /** Vendor-quote comparison view (purchasing). */
   @Get(":id/quotes")
   @PlatformOnly()
   quotes(@Req() req: Request, @Param("id") id: string) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.vendorRfq.getQuotes(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
-      id,
-    );
+    return this.vendorRfq.getQuotes(requireTenantCtx(req), id);
   }
 
   /** Pick the winning quote for an item (old cost_id) — purchasing. */
@@ -96,14 +64,7 @@ export class RfqController {
     @Param("itemId") itemId: string,
     @Body() body: unknown,
   ) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     const { quoteItemId } = selectWinnerSchema.parse(body);
-    return this.vendorRfq.selectWinner(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment },
-      id,
-      itemId,
-      quoteItemId,
-    );
+    return this.vendorRfq.selectWinner(requireTenantCtx(req), id, itemId, quoteItemId);
   }
 }

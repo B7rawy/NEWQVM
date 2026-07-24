@@ -19,7 +19,7 @@ import { VendorRfqService } from "./modules/rfq/vendor-rfq.service.js";
 import { QuoteAccessController } from "./modules/rfq/quote-access.controller.js";
 import { OrdersController } from "./modules/orders/orders.controller.js";
 import { OrdersService } from "./modules/orders/orders.service.js";
-import { PurchasingController } from "./modules/purchasing/purchasing.controller.js";
+import { PurchaseOrdersController, PurchasingController } from "./modules/purchasing/purchasing.controller.js";
 import { PurchasingService } from "./modules/purchasing/purchasing.service.js";
 import { DeliveryController } from "./modules/delivery/delivery.controller.js";
 import { DeliveryService } from "./modules/delivery/delivery.service.js";
@@ -68,6 +68,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     QuoteAccessController,
     OrdersController,
     PurchasingController,
+    PurchaseOrdersController,
     DeliveryController,
     InvoiceController,
     ReturnsController,

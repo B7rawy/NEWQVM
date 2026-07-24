@@ -37,32 +37,32 @@ export class VendorsController {
   @Get("available")
   @PlatformOnly()
   available(@Req() req: Request, @Query("tenantId") tenantId?: string) {
-    return this.svc.available(this.ctx(req), tenantId);
+    return this.svc.available(this.ctxOpen(req), tenantId);
   }
 
   // Directory identity writes are platform-only; a workspace onboards via POST /counterparty/submissions.
   @Post()
   @PlatformOnly()
   create(@Req() req: Request, @Body() body: unknown) {
-    return this.svc.create(this.ctx(req), createVendorSchema.parse(body));
+    return this.svc.create(this.ctxOpen(req), createVendorSchema.parse(body));
   }
 
   @Patch(":id")
   @PlatformOnly()
   update(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    return this.svc.update(this.ctx(req), id, updateVendorSchema.parse(body));
+    return this.svc.update(this.ctxOpen(req), id, updateVendorSchema.parse(body));
   }
 
   @Post(":id/status")
   @Roles("company_admin")
   setStatus(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    return this.svc.setStatus(this.ctx(req), id, vendorStatusSchema.parse(body));
+    return this.svc.setStatus(this.ctxOpen(req), id, vendorStatusSchema.parse(body));
   }
 
   @Post(":id/link")
   @PlatformOnly()
   link(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    return this.svc.link(this.ctx(req), id, linkVendorSchema.parse(body));
+    return this.svc.link(this.ctxOpen(req), id, linkVendorSchema.parse(body));
   }
 
   @Get(":id/branches")

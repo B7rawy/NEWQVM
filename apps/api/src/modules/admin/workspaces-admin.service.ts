@@ -30,10 +30,10 @@ export class WorkspacesAdminService {
     const rows = await this.dbService.withContext(INTERNAL, (tx) =>
       tx.execute(sql`
         select t.id, t.slug, t.name, t.is_sandbox, t.is_active, t.created_at,
-          (select count(*) from tenant_workshops tw join workshop_branches wb on wb.workshop_id = tw.workshop_id
+          (select count(*)::int from tenant_workshops tw join workshop_branches wb on wb.workshop_id = tw.workshop_id
             where tw.tenant_id = t.id and tw.status <> 'archived') as branches,
-          (select count(*) from tenant_vendors tv where tv.tenant_id = t.id and tv.status = 'active') as vendors,
-          (select count(*) from tenant_memberships m where m.tenant_id = t.id and m.is_active = true) as users
+          (select count(*)::int from tenant_vendors tv where tv.tenant_id = t.id and tv.status = 'active') as vendors,
+          (select count(*)::int from tenant_memberships m where m.tenant_id = t.id and m.is_active = true) as users
         from tenants t order by t.created_at desc`),
     );
     return { count: rows.length, workspaces: rows };
@@ -87,7 +87,7 @@ export class WorkspacesAdminService {
 
       const workshops = await tx.execute(sql`
         select w.id, w.name, w.tax_number,
-          (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches
+          (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches
         from tenant_workshops tw join workshops w on w.id = tw.workshop_id
         where tw.tenant_id = ${id}::uuid and tw.status <> 'archived' order by w.name`);
 
@@ -100,14 +100,14 @@ export class WorkspacesAdminService {
       // ---- operational sections (environment-scoped) ----
       const rfqs = await tx.execute(sql`
         select r.id, r.order_number, r.plate_number, s.label_en as status,
-               (select count(*) from rfq_items i where i.rfq_id = r.id) as items
+               (select count(*)::int from rfq_items i where i.rfq_id = r.id) as items
         from rfqs r left join item_statuses s on s.id = r.status_id
         where r.tenant_id = ${id}::uuid and r.environment = ${environment}
         order by r.created_at desc limit 25`);
 
       const orders = await tx.execute(sql`
         select o.id, o.order_number, s.label_en as status,
-               (select count(*) from order_items oi where oi.order_id = o.id) as items
+               (select count(*)::int from order_items oi where oi.order_id = o.id) as items
         from orders o left join item_statuses s on s.id = o.status_id
         where o.tenant_id = ${id}::uuid and o.environment = ${environment}
         order by o.created_at desc limit 25`);

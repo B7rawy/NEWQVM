@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { RfqService } from "../rfq/rfq.service.js";
+import { requireCounterparty } from "../../common/counterparty.helpers.js";
 
 /**
  * Workshop self-service portal (cross-workspace). A workshop is a GLOBAL customer linked to many
@@ -36,8 +37,7 @@ export class WorkshopPortalService {
   ) {}
 
   private async requireWorkshopUser(tx: Tx, userId: string | null) {
-    const r = (await tx.execute(sql`select 1 from workshop_users where user_id = ${userId}::uuid limit 1`))[0];
-    if (!r) throw new ForbiddenException("not a workshop account");
+    await requireCounterparty(tx, userId, "workshop");
   }
 
   /** KPI counts over the workshop's own requests (across every linked workspace). */
@@ -66,8 +66,8 @@ export class WorkshopPortalService {
       const rows = await tx.execute(sql`
         select r.id, r.order_number, r.plate_number, r.created_at,
           ist.code as status, ist.label_en as status_label, t.name as workspace, wb.name as branch,
-          (select count(*) from rfq_items ri where ri.rfq_id = r.id) as item_count,
-          (select count(*) from rfq_vendors rv where rv.rfq_id = r.id) as vendor_count
+          (select count(*)::int from rfq_items ri where ri.rfq_id = r.id) as item_count,
+          (select count(*)::int from rfq_vendors rv where rv.rfq_id = r.id) as vendor_count
         from rfqs r
         join workshop_branches wb on wb.id = r.workshop_branch_id
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
@@ -97,7 +97,7 @@ export class WorkshopPortalService {
         select id, part_number, part_description, quantity from rfq_items where rfq_id = ${rfqId}::uuid order by part_number`);
       const vendors = await tx.execute(sql`
         select v.legal_name as vendor, vs.code as status, vs.label_en as status_label,
-          (select count(*) from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_items
+          (select count(*)::int from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_items
         from rfq_vendors rv join vendors v on v.id = rv.vendor_id join vendor_statuses vs on vs.id = rv.status_id
         where rv.rfq_id = ${rfqId}::uuid order by v.legal_name`);
       return { ...(head as object), items, vendors };
@@ -149,7 +149,7 @@ export class WorkshopPortalService {
       const rows = await tx.execute(sql`
         select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code,
           t.name as workspace, wb.name as branch,
-          (select count(*) from order_items oi where oi.order_id = o.id) as items
+          (select count(*)::int from order_items oi where oi.order_id = o.id) as items
         from orders o
         join rfqs r on r.id = o.rfq_id
         join workshop_branches wb on wb.id = r.workshop_branch_id

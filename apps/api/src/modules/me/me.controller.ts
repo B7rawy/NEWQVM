@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
+import { resolveCounterparty } from "../../common/counterparty.helpers.js";
 import { DbService } from "../../db/db.service.js";
 
 @Controller("me")
@@ -29,22 +30,16 @@ export class MeController {
           (await tx.execute(sql`
             select role from platform_members where user_id = ${ctx.userId}::uuid and is_active = true limit 1`)) as Array<{ role: string }>
         )[0]?.role;
-        const isVendor = !!(
-          (await tx.execute(sql`select 1 from vendor_users where user_id = ${ctx.userId}::uuid limit 1`)) as Array<unknown>
-        )[0];
-        const isWorkshop = !!(
-          (await tx.execute(sql`select 1 from workshop_users where user_id = ${ctx.userId}::uuid limit 1`)) as Array<unknown>
-        )[0];
+        // ONE canonical counterparty lookup (shared with account/portals — vendor wins over workshop).
+        const cp = await resolveCounterparty(tx, ctx.userId);
+        const isVendor = cp?.kind === "vendor";
+        const isWorkshop = cp?.kind === "workshop";
         // QNEW-71: the counterparty's own entity — activation lifecycle + individual/company type.
-        const entity = isVendor
+        const entity = cp
           ? ((await tx.execute(sql`
-              select v.activation_status, v.counterparty_type from vendor_users vu join vendors v on v.id = vu.vendor_id
-              where vu.user_id = ${ctx.userId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
-          : isWorkshop
-            ? ((await tx.execute(sql`
-                select w.activation_status, w.counterparty_type from workshop_users wu join workshops w on w.id = wu.workshop_id
-                where wu.user_id = ${ctx.userId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
-            : undefined;
+              select activation_status, counterparty_type from ${sql.raw(cp.kind === "vendor" ? "vendors" : "workshops")}
+              where id = ${cp.entityId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
+          : undefined;
         const impersonator = ctx.impersonatorId
           ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
           : undefined;

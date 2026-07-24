@@ -18,6 +18,17 @@ export class InvoiceService {
    * selling_price, we fall back to the winning quote cost as a documented placeholder.
    */
   async issue(ctx: RlsContext, orderId: string) {
+    try {
+      return await this.issueInner(ctx, orderId);
+    } catch (e) {
+      // DB backstop (invoices_order_uq): concurrent double-issue races past check-then-insert.
+      if ((e as { code?: string })?.code === "23505")
+        throw new BadRequestException("invoice already issued for this order");
+      throw e;
+    }
+  }
+
+  private async issueInner(ctx: RlsContext, orderId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
       const order = (
         (await tx.execute(

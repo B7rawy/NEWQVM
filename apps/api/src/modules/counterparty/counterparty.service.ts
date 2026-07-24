@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
+import { targetTenant } from "../../common/tenant-target.js";
 
 /**
  * Counterparty governed onboarding — Slice 2 (QNEW-71).
@@ -84,13 +85,9 @@ type SubmissionRow = {
 export class CounterpartyService {
   constructor(private readonly dbService: DbService) {}
 
-  /** Resolve the workspace a submission is for: platform staff may target any; others use active. */
+  /** Resolve the workspace a submission is for via the shared helper (platform may target any). */
   private targetTenant(ctx: RlsContext, dtoTenantId?: string) {
-    if (dtoTenantId && dtoTenantId !== ctx.tenantId && !ctx.isInternal)
-      throw new ForbiddenException("only platform staff can submit on behalf of another workspace");
-    const target = ctx.isInternal ? dtoTenantId ?? ctx.tenantId : ctx.tenantId;
-    if (!target) throw new BadRequestException("no target workspace resolved (subdomain / X-Tenant)");
-    return target;
+    return targetTenant(ctx, dtoTenantId);
   }
 
   /** Score a proposed counterparty against the global directory (tax → mobile → email → name). */
@@ -334,8 +331,9 @@ export class CounterpartyService {
         }
       } catch (e) {
         // ONLY a scoped partial-unique violation (23505) means "already exists → merge"; surface anything else.
+        // 409 Conflict — consistent with every other unique-violation mapping in the codebase.
         if ((e as { code?: string })?.code === "23505")
-          throw new BadRequestException("an identity with this key already exists — use merge instead");
+          throw new ConflictException("an identity with this key already exists — use merge instead");
         throw e;
       }
       await this.linkEntity(tx, s.kind, s.tenant_id, entityId, dto.classification ?? s.classification, ctx.userId);

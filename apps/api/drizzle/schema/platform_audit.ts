@@ -6,8 +6,9 @@ import { tenants } from "./tenancy";
 /**
  * Platform-level audit trail for cross-workspace admin actions (impersonation, membership/vendor
  * status changes, workspace edits). Distinct from the tenant-scoped `audit_log` because these span
- * workspaces. `tenant_id` is nullable (impersonation isn't tied to one). Carries a nullable
- * tenant_id so the 0001 RLS loop applies tenant_isolation → internal-only visibility.
+ * workspaces. `tenant_id` is nullable (impersonation isn't tied to one). RLS is applied by
+ * migration 0034 (NOT the 0001 loop — that ran once and only covered then-existing tables):
+ * SELECT internal-only; INSERT internal or own-tenant; no UPDATE/DELETE policy → append-only.
  */
 export const platformAudit = pgTable(
   "platform_audit",

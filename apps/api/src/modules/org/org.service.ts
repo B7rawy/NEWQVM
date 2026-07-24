@@ -12,7 +12,8 @@ export const createBranchSchema = z.object({
   name: z.string().min(2),
   regionId: z.string().uuid().optional(),
   cityId: z.string().uuid().optional(),
-  orderCategory: z.enum(["regular", "insurance", "bulk"]).optional(),
+  // matches the pg enum order_category exactly ("insurance" is a payer_type on RFQs, not a branch category)
+  orderCategory: z.enum(["regular", "bulk"]).optional(),
   isBulk: z.boolean().optional(),
 });
 
@@ -29,13 +30,13 @@ export class OrgService {
         global
           ? tx.execute(sql`
               select w.id, w.name, w.tax_number, w.is_active,
-                (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches,
-                (select count(*) from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces
+                (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches,
+                (select count(*)::int from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces
               from workshops w
               order by w.name`)
           : tx.execute(sql`
               select w.id, w.name, w.tax_number, w.is_active,
-                (select count(*) from workshop_branches wb where wb.workshop_id = w.id) as branches
+                (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches
               from tenant_workshops tw
               join workshops w on w.id = tw.workshop_id
               where tw.status <> 'archived'

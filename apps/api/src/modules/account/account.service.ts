@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable } from "@nestjs/comm
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
+import { resolveCounterparty } from "../../common/counterparty.helpers.js";
 
 export const activateSchema = z.object({ mobile: z.string().trim().min(6) });
 export const upgradeSchema = z.object({ legalName: z.string().min(2), taxNumber: z.string().trim().min(1) });
@@ -18,17 +19,9 @@ export class AccountService {
    */
   async activate(ctx: RlsContext, dto: z.infer<typeof activateSchema>) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
-      const vu = (await tx.execute(sql`select vendor_id as id from vendor_users where user_id = ${ctx.userId}::uuid limit 1`))[0] as
-        | { id: string }
-        | undefined;
-      const wu = vu
-        ? undefined
-        : ((await tx.execute(sql`select workshop_id as id from workshop_users where user_id = ${ctx.userId}::uuid limit 1`))[0] as
-            | { id: string }
-            | undefined);
-      const kind = vu ? "vendor" : wu ? "workshop" : null;
-      const entityId = vu?.id ?? wu?.id;
-      if (!kind || !entityId) throw new BadRequestException("no counterparty account to activate");
+      const cp = await resolveCounterparty(tx, ctx.userId);
+      if (!cp) throw new BadRequestException("no counterparty account to activate");
+      const { kind, entityId } = cp;
       const table = kind === "vendor" ? "vendors" : "workshops";
       let rows: Array<{ id: string }>;
       try {
@@ -54,17 +47,9 @@ export class AccountService {
    */
   async upgrade(ctx: RlsContext, dto: z.infer<typeof upgradeSchema>) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
-      const vu = (await tx.execute(sql`select vendor_id as id from vendor_users where user_id = ${ctx.userId}::uuid limit 1`))[0] as
-        | { id: string }
-        | undefined;
-      const wu = vu
-        ? undefined
-        : ((await tx.execute(sql`select workshop_id as id from workshop_users where user_id = ${ctx.userId}::uuid limit 1`))[0] as
-            | { id: string }
-            | undefined);
-      const kind = vu ? "vendor" : wu ? "workshop" : null;
-      const oldId = vu?.id ?? wu?.id;
-      if (!kind || !oldId) throw new BadRequestException("no counterparty account to upgrade");
+      const cp = await resolveCounterparty(tx, ctx.userId);
+      if (!cp) throw new BadRequestException("no counterparty account to upgrade");
+      const { kind, entityId: oldId } = cp;
       const entityTable = kind === "vendor" ? "vendors" : "workshops";
       const nameCol = kind === "vendor" ? "legal_name" : "name";
       const cur = (await tx.execute(sql`select counterparty_type from ${sql.raw(entityTable)} where id = ${oldId}::uuid limit 1`))[0] as

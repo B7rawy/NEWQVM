@@ -1,6 +1,8 @@
 -- ============================================================================
 -- 0001_security_functions — RLS, audit triggers, atomic order numbering
--- Generic (loops over information_schema) — covers every current + future table.
+-- Generic (loops over information_schema) — ONE-SHOT: covers tables existing at THIS migration.
+-- Later migrations MUST apply RLS themselves (apply_tenant_rls/apply_global_rls or explicit
+-- policies); `pnpm --filter @qvm/api db:verify` asserts no table is ever left uncovered.
 -- Fixes old sins: RLS-off, author-from-body, MAX()+1 numbering.
 -- ============================================================================
 

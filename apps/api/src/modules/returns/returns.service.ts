@@ -49,12 +49,15 @@ export class ReturnsService {
         state.set(r.id, { delivered: Number(r.delivered), returned: Number(r.returned) });
       }
 
-      for (const it of dto.items) {
-        const s = state.get(it.orderItemId);
-        if (!s) throw new BadRequestException(`item ${it.orderItemId} is not in this order`);
-        if (it.qty + s.returned > s.delivered) {
+      // aggregate per order_item FIRST — duplicate lines in one payload must not bypass the cap
+      const requested = new Map<string, number>();
+      for (const it of dto.items) requested.set(it.orderItemId, (requested.get(it.orderItemId) ?? 0) + it.qty);
+      for (const [orderItemId, qty] of requested) {
+        const s = state.get(orderItemId);
+        if (!s) throw new BadRequestException(`item ${orderItemId} is not in this order`);
+        if (qty + s.returned > s.delivered) {
           throw new BadRequestException(
-            `cannot return ${it.qty} of item ${it.orderItemId} (delivered ${s.delivered}, already returned ${s.returned})`,
+            `cannot return ${qty} of item ${orderItemId} (delivered ${s.delivered}, already returned ${s.returned})`,
           );
         }
       }
@@ -172,7 +175,7 @@ export class ReturnsService {
   async listForOrder(ctx: RlsContext, orderId: string) {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
-        select r.id, s.code as status, count(rt.id) as items, coalesce(sum(rt.qty),0) as total_qty
+        select r.id, s.code as status, count(rt.id)::int as items, coalesce(sum(rt.qty),0)::int as total_qty
         from returns r
         left join item_statuses s on s.id = r.status_id
         left join return_items rt on rt.return_id = r.id

@@ -2,8 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { createHash, randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { DbService, schema, type RlsContext, type Tx } from "../../db/db.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
+import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
 
 const TOKEN_TTL_DAYS = 7;
 
@@ -137,56 +138,45 @@ export class VendorRfqService {
     }
 
     // 2) writes scoped to the token's tenant (RLS applies for that tenant)
-    return this.dbService.withContext(
-      { tenantId: rv.tenant_id, userId: null, isInternal: false },
-      async (tx) => {
-        // reject quoting on an RFQ that's already confirmed/closed (review #5)
-        const confirmed = (
-          (await tx.execute(
-            sql`select id from orders where rfq_id = ${rv.rfq_id}::uuid limit 1`,
-          )) as Array<{ id: string }>
-        )[0];
-        if (confirmed) throw new BadRequestException("this RFQ is already confirmed");
-
-        const pricedStatusId = (
-          (await tx.execute(
-            sql`select id from vendor_statuses where code = 'priced' limit 1`,
-          )) as Array<{ id: string }>
-        )[0].id;
-
-        // only items that actually belong to this RFQ
-        const validItemIds = new Set(
-          (
-            (await tx.execute(
-              sql`select id from rfq_items where rfq_id = ${rv.rfq_id}::uuid`,
-            )) as Array<{ id: string }>
-          ).map((r) => r.id),
-        );
-        const items = dto.items.filter((i) => validItemIds.has(i.rfqItemId));
-        if (items.length === 0) throw new BadRequestException("no valid items for this RFQ");
-
-        for (const it of items) {
-          await tx
-            .insert(schema.rfqVendorItems)
-            .values({
-              tenantId: rv.tenant_id,
-              rfqVendorId: rv.id,
-              rfqItemId: it.rfqItemId,
-              offeredCost: it.offeredCost.toFixed(2),
-              slaHours: it.slaHours,
-              availableQty: it.availableQty,
-              alternativePartNumber: it.alternativePartNumber,
-              notes: it.notes,
-              statusId: pricedStatusId,
-            })
-            .onConflictDoNothing();
-        }
-        await tx.execute(
-          sql`update rfq_vendors set status_id = ${pricedStatusId} where id = ${rv.id}::uuid`,
-        );
-        return { quoted: items.length };
-      },
+    return this.dbService.withContext({ tenantId: rv.tenant_id, userId: null, isInternal: false }, (tx) =>
+      this.writeQuoteItems(tx, { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id }, dto),
     );
+  }
+
+  /**
+   * The ONE quote-write path (shared by the public token flow and the authed vendor portal, so the
+   * two can never diverge): reject if the RFQ is confirmed, keep only items of this RFQ, UPSERT each
+   * line (a vendor may revise its quote until confirmation), flip rfq_vendors → 'priced'.
+   */
+  async writeQuoteItems(tx: Tx, ids: { tenantId: string; rfqVendorId: string; rfqId: string }, dto: SubmitQuoteDto) {
+    await assertRfqNotConfirmed(tx, ids.rfqId, "this RFQ is already confirmed");
+
+    const pricedStatusId = (
+      (await tx.execute(sql`select id from vendor_statuses where code = 'priced' limit 1`)) as Array<{ id: string }>
+    )[0].id;
+
+    // only items that actually belong to this RFQ
+    const validItemIds = new Set(
+      ((await tx.execute(sql`select id from rfq_items where rfq_id = ${ids.rfqId}::uuid`)) as Array<{ id: string }>).map(
+        (r) => r.id,
+      ),
+    );
+    const items = dto.items.filter((i) => validItemIds.has(i.rfqItemId));
+    if (items.length === 0) throw new BadRequestException("no valid items for this RFQ");
+
+    for (const it of items) {
+      await tx.execute(sql`
+        insert into rfq_vendor_items
+          (tenant_id, rfq_vendor_id, rfq_item_id, offered_cost, sla_hours, available_qty, alternative_part_number, notes, status_id)
+        values (${ids.tenantId}::uuid, ${ids.rfqVendorId}::uuid, ${it.rfqItemId}::uuid, ${it.offeredCost.toFixed(2)},
+          ${it.slaHours ?? null}, ${it.availableQty ?? null}, ${it.alternativePartNumber ?? null}, ${it.notes ?? null}, ${pricedStatusId}::uuid)
+        on conflict (rfq_vendor_id, rfq_item_id) do update set
+          offered_cost = excluded.offered_cost, sla_hours = excluded.sla_hours, available_qty = excluded.available_qty,
+          alternative_part_number = excluded.alternative_part_number, notes = excluded.notes,
+          status_id = excluded.status_id, updated_at = now()`);
+    }
+    await tx.execute(sql`update rfq_vendors set status_id = ${pricedStatusId}, updated_at = now() where id = ${ids.rfqVendorId}::uuid`);
+    return { quoted: items.length, status: "priced" as const };
   }
 
   /** Comparison view: every item with its vendor quotes (for purchasing to pick the winner). */
@@ -210,12 +200,7 @@ export class VendorRfqService {
   async selectWinner(ctx: RlsContext, rfqId: string, itemId: string, quoteItemId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
       // can't change winners after the RFQ is confirmed (order_items already snapshotted — review #4)
-      const confirmed = (
-        (await tx.execute(
-          sql`select id from orders where rfq_id = ${rfqId}::uuid limit 1`,
-        )) as Array<{ id: string }>
-      )[0];
-      if (confirmed) throw new BadRequestException("RFQ already confirmed — winners are locked");
+      await assertRfqNotConfirmed(tx, rfqId, "RFQ already confirmed — winners are locked");
 
       const ok = (
         (await tx.execute(sql`

@@ -1,4 +1,4 @@
-import { integer, pgTable, text, uuid, index } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, money, pk } from "./_shared";
 import { returnResponsibility } from "./enums";
 import { tenants } from "./tenancy";
@@ -40,6 +40,8 @@ export const purchaseOrders = pgTable(
     index("purchase_orders_payment_account_idx").on(t.paymentAccountId),
     index("purchase_orders_status_idx").on(t.statusId),
     index("purchase_orders_uploaded_by_idx").on(t.uploadedBy),
+    // DB backstop for "one PO per (order, vendor)" (createForOrder checks-then-inserts; 23505 → 400)
+    uniqueIndex("purchase_orders_order_vendor_uq").on(t.orderId, t.vendorId),
   ],
 );
 

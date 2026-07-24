@@ -1,9 +1,9 @@
-import { BadRequestException, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { Roles } from "../../common/roles.decorator.js";
-import { getContext } from "../../common/request-context.js";
+import { requireTenantCtx } from "../../common/request-context.js";
 import { OrdersService } from "./orders.service.js";
 
 @Controller()
@@ -15,19 +15,12 @@ export class OrdersController {
   @Post("rfqs/:id/confirm")
   @Roles("company_admin", "branch_manager", "service_advisor")
   confirm(@Req() req: Request, @Param("id") id: string) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return this.orders.confirm(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
-      id,
-    );
+    return this.orders.confirm(requireTenantCtx(req), id);
   }
 
   @Get("orders")
   list(@Req() req: Request) {
-    const ctx = getContext(req);
-    if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     // scope to the active workspace even for platform staff (see rfq.controller note)
-    return this.orders.list({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false, environment: ctx.environment });
+    return this.orders.list({ ...requireTenantCtx(req), isInternal: false });
   }
 }

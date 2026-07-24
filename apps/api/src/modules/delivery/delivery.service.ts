@@ -41,12 +41,15 @@ export class DeliveryService {
         state.set(r.id, { approved: Number(r.approved), delivered: Number(r.delivered) });
       }
 
-      for (const it of dto.items) {
-        const s = state.get(it.orderItemId);
-        if (!s) throw new BadRequestException(`item ${it.orderItemId} is not in this order`);
-        if (s.delivered + it.qty > s.approved) {
+      // aggregate per order_item FIRST — duplicate lines in one payload must not bypass the cap
+      const requested = new Map<string, number>();
+      for (const it of dto.items) requested.set(it.orderItemId, (requested.get(it.orderItemId) ?? 0) + it.qty);
+      for (const [orderItemId, qty] of requested) {
+        const s = state.get(orderItemId);
+        if (!s) throw new BadRequestException(`item ${orderItemId} is not in this order`);
+        if (s.delivered + qty > s.approved) {
           throw new BadRequestException(
-            `over-delivery on item ${it.orderItemId} (approved ${s.approved}, already ${s.delivered}, requested ${it.qty})`,
+            `over-delivery on item ${orderItemId} (approved ${s.approved}, already ${s.delivered}, requested ${qty})`,
           );
         }
       }
@@ -71,12 +74,12 @@ export class DeliveryService {
         })),
       );
 
-      // flip fully-delivered items to 'delivered'
-      for (const it of dto.items) {
-        const s = state.get(it.orderItemId)!;
-        if (s.delivered + it.qty >= s.approved) {
+      // flip fully-delivered items to 'delivered' (use the AGGREGATED qty per item)
+      for (const [orderItemId, qty] of requested) {
+        const s = state.get(orderItemId)!;
+        if (s.delivered + qty >= s.approved) {
           await tx.execute(
-            sql`update order_items set status_id = ${deliveredStatusId} where id = ${it.orderItemId}::uuid`,
+            sql`update order_items set status_id = ${deliveredStatusId} where id = ${orderItemId}::uuid`,
           );
         }
       }
@@ -88,7 +91,7 @@ export class DeliveryService {
   async listForOrder(ctx: RlsContext, orderId: string) {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
-        select d.id, d.delivered_at, count(di.id) as items, coalesce(sum(di.qty),0) as total_qty
+        select d.id, d.delivered_at, count(di.id)::int as items, coalesce(sum(di.qty),0)::int as total_qty
         from deliveries d
         left join delivery_items di on di.delivery_id = d.id
         where d.order_id = ${orderId}::uuid

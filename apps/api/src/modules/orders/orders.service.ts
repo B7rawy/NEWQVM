@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
 
 @Injectable()
 export class OrdersService {
@@ -20,12 +21,7 @@ export class OrdersService {
       )[0];
       if (!rfq) throw new NotFoundException("RFQ not found in this workspace");
 
-      const already = (
-        (await tx.execute(
-          sql`select id from orders where rfq_id = ${rfqId}::uuid limit 1`,
-        )) as Array<{ id: string }>
-      )[0];
-      if (already) throw new BadRequestException("RFQ already confirmed");
+      await assertRfqNotConfirmed(tx, rfqId);
 
       const winners = (await tx.execute(sql`
         select id, part_number, quantity, winning_vendor_quote_item_id
@@ -75,6 +71,13 @@ export class OrdersService {
       await tx.execute(sql`
         update rfq_items set status_id = ${confirmedStatusId}
         where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null`);
+      // advance the WINNING vendors' invitation to 'confirmed' (vendor-portal 'won' KPI + queue state)
+      await tx.execute(sql`
+        update rfq_vendors set status_id = (select id from vendor_statuses where code = 'confirmed'), updated_at = now()
+        where id in (
+          select distinct vi.rfq_vendor_id from rfq_vendor_items vi
+          where vi.id in (select winning_vendor_quote_item_id from rfq_items
+                          where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null))`);
 
       return { orderId: order.id, orderNumber: rfq.order_number, confirmedItems: winners.length };
     });
@@ -84,7 +87,7 @@ export class OrdersService {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select o.id, o.order_number, s.label_en as status,
-               (select count(*) from order_items oi where oi.order_id = o.id) as items
+               (select count(*)::int from order_items oi where oi.order_id = o.id) as items
         from orders o
         left join item_statuses s on s.id = o.status_id
         where o.environment = ${ctx.environment ?? "live"}

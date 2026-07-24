@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
-import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
+import { VendorRfqService, type SubmitQuoteDto } from "../rfq/vendor-rfq.service.js";
+import { requireCounterparty } from "../../common/counterparty.helpers.js";
 
 /**
  * Vendor self-service portal (cross-workspace). A vendor is a GLOBAL identity linked to many
@@ -9,32 +10,19 @@ import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
  * vendor's rows across every workspace it's linked to (run internal, then filtered by vendor_id) —
  * so a vendor never sees another vendor's data (unlike the tenant-wide /rfqs).
  */
-export const submitQuoteSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        rfqItemId: z.string().uuid(),
-        offeredCost: z.number().finite().nonnegative().max(100_000_000),
-        slaHours: z.number().int().positive().optional(),
-        availableQty: z.number().int().nonnegative().optional(),
-        alternativePartNumber: z.string().max(64).optional(),
-        notes: z.string().max(256).optional(),
-      }),
-    )
-    .min(1),
-});
+// ONE quote validation schema for both the token flow and the authed portal (no divergence).
+export { submitQuoteSchema } from "../rfq/vendor-rfq.service.js";
 
 @Injectable()
 export class VendorPortalService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly vendorRfq: VendorRfqService,
+  ) {}
 
   /** Resolve the signed-in user's vendor identity. 403 if the account is not a vendor. */
-  private async requireVendorId(tx: Tx, userId: string | null): Promise<string> {
-    const r = (await tx.execute(sql`select vendor_id from vendor_users where user_id = ${userId}::uuid limit 1`))[0] as
-      | { vendor_id: string }
-      | undefined;
-    if (!r) throw new ForbiddenException("not a vendor account");
-    return r.vendor_id;
+  private requireVendorId(tx: Tx, userId: string | null): Promise<string> {
+    return requireCounterparty(tx, userId, "vendor");
   }
 
   /** KPI counts over the vendor's quotation requests (across every linked workspace). */
@@ -70,8 +58,8 @@ export class VendorPortalService {
       const rows = await tx.execute(sql`
         select rv.id, r.order_number, r.plate_number, rv.sent_at, r.created_at,
           vs.code as status, vs.label_en as status_label, t.name as workspace,
-          (select count(*) from rfq_items ri where ri.rfq_id = r.id) as item_count,
-          (select count(*) from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_count
+          (select count(*)::int from rfq_items ri where ri.rfq_id = r.id) as item_count,
+          (select count(*)::int from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_count
         from rfq_vendors rv
         join rfqs r on r.id = rv.rfq_id
         join vendor_statuses vs on vs.id = rv.status_id
@@ -114,7 +102,7 @@ export class VendorPortalService {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rows = await tx.execute(sql`
         select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code, t.name as workspace,
-          count(oi.id) as items,
+          count(oi.id)::int as items,
           coalesce(sum(rvi.offered_cost * oi.approved_qty), 0) as total
         from orders o
         join order_items oi on oi.order_id = o.id
@@ -148,8 +136,9 @@ export class VendorPortalService {
     });
   }
 
-  /** Submit / update this vendor's quote for a request (reuses the token-quote write path). */
-  async submitQuote(ctx: RlsContext, rfqVendorId: string, dto: z.infer<typeof submitQuoteSchema>) {
+  /** Submit / update this vendor's quote. Ownership + live checks here; the WRITE is the shared
+   *  VendorRfqService.writeQuoteItems (same code the token flow uses — the paths cannot diverge). */
+  async submitQuote(ctx: RlsContext, rfqVendorId: string, dto: SubmitQuoteDto) {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rv = (await tx.execute(sql`
@@ -160,24 +149,7 @@ export class VendorPortalService {
         | undefined;
       if (!rv) throw new NotFoundException("quotation request not found");
       if (rv.environment !== "live") throw new BadRequestException("this request is not live");
-      const confirmed = (await tx.execute(sql`select 1 from orders where rfq_id = ${rv.rfq_id}::uuid limit 1`))[0];
-      if (confirmed) throw new BadRequestException("this RFQ is already confirmed");
-      const pricedStatusId = ((await tx.execute(sql`select id from vendor_statuses where code = 'priced' limit 1`))[0] as { id: string }).id;
-      const validItemIds = new Set(
-        ((await tx.execute(sql`select id from rfq_items where rfq_id = ${rv.rfq_id}::uuid`)) as Array<{ id: string }>).map((r) => r.id),
-      );
-      const items = dto.items.filter((i) => validItemIds.has(i.rfqItemId));
-      if (items.length === 0) throw new BadRequestException("no valid items for this RFQ");
-      for (const it of items) {
-        await tx.execute(sql`
-          insert into rfq_vendor_items (tenant_id, rfq_vendor_id, rfq_item_id, offered_cost, sla_hours, available_qty, alternative_part_number, notes, status_id)
-          values (${rv.tenant_id}::uuid, ${rv.id}::uuid, ${it.rfqItemId}::uuid, ${it.offeredCost.toFixed(2)}, ${it.slaHours ?? null}, ${it.availableQty ?? null}, ${it.alternativePartNumber ?? null}, ${it.notes ?? null}, ${pricedStatusId}::uuid)
-          on conflict (rfq_vendor_id, rfq_item_id) do update set
-            offered_cost = excluded.offered_cost, sla_hours = excluded.sla_hours, available_qty = excluded.available_qty,
-            alternative_part_number = excluded.alternative_part_number, notes = excluded.notes, status_id = excluded.status_id, updated_at = now()`);
-      }
-      await tx.execute(sql`update rfq_vendors set status_id = ${pricedStatusId}::uuid, updated_at = now() where id = ${rv.id}::uuid`);
-      return { quoted: items.length, status: "priced" as const };
+      return this.vendorRfq.writeQuoteItems(tx, { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id }, dto);
     });
   }
 }

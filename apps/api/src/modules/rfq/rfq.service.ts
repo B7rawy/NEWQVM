@@ -105,7 +105,7 @@ export class RfqService {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select r.id, r.order_number, r.plate_number, s.label_en as status,
-               (select count(*) from rfq_items i where i.rfq_id = r.id) as items
+               (select count(*)::int from rfq_items i where i.rfq_id = r.id) as items
         from rfqs r
         left join item_statuses s on s.id = r.status_id
         where r.environment = ${ctx.environment ?? "live"}
@@ -138,7 +138,7 @@ export class RfqService {
 
       const vendors = await tx.execute(sql`
         select rv.id, v.legal_name as vendor, rv.sent_at, vs.label_en as status,
-               (select count(*) from rfq_vendor_items vi
+               (select count(*)::int from rfq_vendor_items vi
                 where vi.rfq_vendor_id = rv.id and vi.offered_cost is not null) as quoted
         from rfq_vendors rv
         join vendors v on v.id = rv.vendor_id

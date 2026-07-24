@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
+import { targetTenant } from "../../common/tenant-target.js";
 
 export const createVendorSchema = z.object({
   legalName: z.string().min(2),
@@ -53,15 +54,15 @@ export class VendorsService {
                 case when v.is_active then 'active' else 'inactive' end as status,
                 null::text as classification,
                 (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id,
-                (select count(*) from vendor_branches vb where vb.vendor_id = v.id) as branches,
-                (select count(*) from tenant_vendors tv where tv.vendor_id = v.id and tv.status <> 'archived') as workspaces
+                (select count(*)::int from vendor_branches vb where vb.vendor_id = v.id) as branches,
+                (select count(*)::int from tenant_vendors tv where tv.vendor_id = v.id and tv.status <> 'archived') as workspaces
               from vendors v
               order by v.legal_name`)
           : tx.execute(sql`
               select v.id, v.legal_name, v.vendor_type, v.primary_email, v.primary_phone,
                 tv.status, tv.classification,
                 (select vu.user_id from vendor_users vu where vu.vendor_id = v.id order by vu.is_vendor_admin desc limit 1) as user_id,
-                (select count(*) from vendor_branches vb where vb.vendor_id = v.id) as branches
+                (select count(*)::int from vendor_branches vb where vb.vendor_id = v.id) as branches
               from tenant_vendors tv
               join vendors v on v.id = tv.vendor_id
               where tv.status <> 'archived'
@@ -72,13 +73,9 @@ export class VendorsService {
 
   /** Create a new global vendor AND link it to the active workspace. Needs is_internal (global
    *  write) + the active tenant_id (tenant_vendors isolation) — both satisfied here. */
-  /** Resolve the target workspace: super-admin may target any (dto.tenantId), others use active. */
+  /** Resolve the target workspace via the shared helper (platform may target any workspace). */
   private targetTenant(ctx: RlsContext, dtoTenantId?: string) {
-    if (dtoTenantId && dtoTenantId !== ctx.tenantId && !ctx.isInternal)
-      throw new ForbiddenException("only platform staff can target another workspace");
-    const target = ctx.isInternal ? dtoTenantId ?? ctx.tenantId : ctx.tenantId;
-    if (!target) throw new BadRequestException("no target workspace");
-    return target;
+    return targetTenant(ctx, dtoTenantId);
   }
 
   async create(ctx: RlsContext, dto: z.infer<typeof createVendorSchema>) {

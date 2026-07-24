@@ -45,7 +45,7 @@ export class DbService implements OnModuleDestroy {
         set_config('app.user_id', ${ctx.userId ?? ""}, true),
         set_config('app.is_internal', ${ctx.isInternal ? "true" : "false"}, true),
         set_config('app.environment', ${ctx.environment ?? "live"}, true),
-        set_config('app.impersonator_id', ${ctx.impersonatorId ?? ""}, true)`);
+        set_config('app.impersonator_id', ${ctx.impersonatorId ?? ""}, true)`); // reserved for DB-side audit triggers (no reader yet; the app writes impersonator_id explicitly)
       return work(tx as unknown as Tx);
     });
   }

@@ -1,4 +1,4 @@
-import { integer, pgTable, text, timestamp, uuid, index } from "drizzle-orm/pg-core";
+import { integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, money, pk } from "./_shared";
 import { tenants } from "./tenancy";
 import { itemStatuses, returnReasons } from "./reference";
@@ -34,6 +34,8 @@ export const invoices = pgTable(
     index("invoices_tenant_idx").on(t.tenantId),
     index("invoices_order_idx").on(t.orderId),
     index("invoices_status_idx").on(t.statusId),
+    // DB backstop for "one invoice per order" (services check-then-insert; 23505 → 400)
+    uniqueIndex("invoices_order_uq").on(t.orderId),
   ],
 );
 
