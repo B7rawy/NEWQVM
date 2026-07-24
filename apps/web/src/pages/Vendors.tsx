@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { Plus, Eye } from "lucide-react";
+import { Plus, Eye, KeyRound } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
+import CreateAccountDialog from "../components/CreateAccountDialog";
 
 interface Vendor {
   id: string;
@@ -40,6 +41,7 @@ export default function Vendors() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [pendingOnly, setPendingOnly] = useState(false);
+  const [acct, setAcct] = useState<{ id: string; name: string } | null>(null);
   const isCompany = f.counterpartyType === "company";
 
   const load = useCallback(async () => {
@@ -107,6 +109,9 @@ export default function Vendors() {
           ) : undefined
         }
       />
+      {acct && (
+        <CreateAccountDialog kind="vendor" entityId={acct.id} entityName={acct.name} onClose={() => setAcct(null)} />
+      )}
       {show && (
         <Card className="mb-5">
           <form onSubmit={create} className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -233,6 +238,11 @@ export default function Vendors() {
                         ) : (
                           <button className="btn btn-sm rounded-md" onClick={() => setStatus(v.id, "active")}>Reactivate</button>
                         ))}
+                      {isPlatform && !v.user_id && (
+                        <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: v.id, name: v.legal_name })}>
+                          <KeyRound className="h-3.5 w-3.5" /> Create account
+                        </button>
+                      )}
                       {canViewAs && v.user_id && (
                         <button className="btn btn-sm rounded-md" onClick={() => impersonate(v.user_id!)}>
                           <Eye className="h-3.5 w-3.5" /> View as

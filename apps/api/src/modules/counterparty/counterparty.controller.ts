@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
@@ -7,6 +7,7 @@ import { getContext } from "../../common/request-context.js";
 import {
   approveSchema,
   CounterpartyService,
+  createAccountSchema,
   importSchema,
   mergeSchema,
   rejectSchema,
@@ -74,5 +75,17 @@ export class CounterpartyController {
   @PlatformOnly()
   reject(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.reject(this.ctx(req), id, rejectSchema.parse(body));
+  }
+
+  /**
+   * Platform: give an EXISTING directory entity a login account (the access half of onboarding).
+   * kind ∈ vendor | workshop | service_provider.
+   */
+  @Post(":kind/:entityId/account")
+  @PlatformOnly()
+  createAccount(@Req() req: Request, @Param("kind") kind: string, @Param("entityId") entityId: string, @Body() body: unknown) {
+    if (kind !== "vendor" && kind !== "workshop" && kind !== "service_provider")
+      throw new BadRequestException("kind must be vendor | workshop | service_provider");
+    return this.svc.createAccount(this.ctx(req), kind, entityId, createAccountSchema.parse(body));
   }
 }

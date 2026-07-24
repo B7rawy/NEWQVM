@@ -1,5 +1,6 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
+import argon2 from "argon2";
 import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
@@ -39,6 +40,13 @@ export const submitCounterpartySchema = z
     if (d.counterpartyType === "individual" && !d.mobile)
       ctx.addIssue({ code: "custom", path: ["mobile"], message: "an individual requires a mobile number" });
   });
+/** Platform provisions a login for an existing directory entity (QNEW-71 access half). */
+export const createAccountSchema = z.object({
+  email: z.string().email(),
+  fullName: z.string().min(2).optional(), // defaults to the entity's own name
+  phone: z.string().optional(),
+  password: z.string().min(8).optional(), // omit → invited account (no password set yet)
+});
 export const approveSchema = z.object({ notes: z.string().optional(), classification: z.string().optional() });
 export const mergeSchema = z.object({ targetEntityId: z.string().uuid(), notes: z.string().optional() });
 export const rejectSchema = z.object({ notes: z.string().optional() });
@@ -311,6 +319,58 @@ export class CounterpartyService {
     if (!s) throw new NotFoundException("submission not found");
     if (s.status !== "pending") throw new BadRequestException(`submission already ${s.status}`);
     return s;
+  }
+
+  /**
+   * Provision a LOGIN account for an existing directory entity (platform-only). This is the other
+   * half of governed onboarding: the platform curates the directory, so the platform also grants
+   * access to it. The new user is linked to THAT entity (vendor_users / workshop_users /
+   * service_provider_users) as its admin, so they sign in straight into their own portal with all
+   * the entity's branches + workspace links already attached — unlike self-registration, which
+   * necessarily creates a fresh individual identity that an admin must later merge.
+   * An existing account (same email) is re-used and simply linked.
+   */
+  async createAccount(ctx: RlsContext, kind: "vendor" | "workshop" | "service_provider", entityId: string, dto: z.infer<typeof createAccountSchema>) {
+    const cfg = {
+      vendor: { table: "vendors", nameCol: "legal_name", linkTable: "vendor_users", fk: "vendor_id", adminCol: "is_vendor_admin" },
+      workshop: { table: "workshops", nameCol: "name", linkTable: "workshop_users", fk: "workshop_id", adminCol: "is_workshop_admin" },
+      service_provider: { table: "service_providers", nameCol: "legal_name", linkTable: "service_provider_users", fk: "service_provider_id", adminCol: "is_provider_admin" },
+    }[kind];
+    const email = dto.email.trim().toLowerCase();
+    const hash = dto.password ? await argon2.hash(dto.password) : null;
+
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+      const entity = (await tx.execute(sql`
+        select id, ${sql.raw(cfg.nameCol)} as name from ${sql.raw(cfg.table)} where id = ${entityId}::uuid limit 1`))[0] as
+        | { id: string; name: string }
+        | undefined;
+      if (!entity) throw new NotFoundException(`${kind} not found in the directory`);
+
+      const existing = (await tx.execute(sql`select id from users where email = ${email} limit 1`))[0] as { id: string } | undefined;
+      // SECURITY: never turn a platform-staff account into a counterparty login (escalation vector).
+      if (existing) {
+        const isPlatform = (await tx.execute(sql`
+          select 1 from platform_members where user_id = ${existing.id}::uuid and is_active limit 1`))[0];
+        if (isPlatform) throw new ForbiddenException("this account is platform staff and cannot be linked to a counterparty");
+      }
+      let userId = existing?.id;
+      if (!userId) {
+        const [u] = (await tx.execute(sql`
+          insert into users (email, full_name, phone, password_hash, created_by, updated_by)
+          values (${email}, ${dto.fullName ?? entity.name}, ${dto.phone ?? null}, ${hash}, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+          returning id`)) as Array<{ id: string }>;
+        userId = u.id;
+      }
+
+      const linked = (await tx.execute(sql`
+        insert into ${sql.raw(cfg.linkTable)} (${sql.raw(cfg.fk)}, user_id, ${sql.raw(cfg.adminCol)}, created_by, updated_by)
+        values (${entityId}::uuid, ${userId}::uuid, true, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
+        on conflict do nothing returning id`)) as Array<{ id: string }>;
+      if (!linked[0]) throw new ConflictException("this user already has an account for this counterparty");
+
+      await this.audit(tx, ctx, "counterparty.account_created", kind, entityId, { email, userId });
+      return { userId, entity: entity.name, invited: !dto.password && !existing };
+    });
   }
 
   /** Write a review decision to the platform audit trail (QNEW-71 §4.3). */

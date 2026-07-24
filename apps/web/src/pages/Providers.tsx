@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { Plus } from "lucide-react";
+import { Plus, KeyRound } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
+import CreateAccountDialog from "../components/CreateAccountDialog";
 
 /**
  * Service providers (QNEW-71 AC11) — the third counterparty family, now wired to the /providers API.
@@ -31,6 +32,7 @@ export default function Providers() {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [acct, setAcct] = useState<{ id: string; name: string } | null>(null);
   const [f, setF] = useState({ counterpartyType: "company", scope: "external" as Scope, legalName: "", taxNumber: "", serviceType: "", primaryPhone: "", primaryEmail: "" });
   const isCompany = f.counterpartyType === "company";
 
@@ -92,6 +94,9 @@ export default function Providers() {
         ) : undefined}
       />
 
+      {acct && (
+        <CreateAccountDialog kind="service_provider" entityId={acct.id} entityName={acct.name} onClose={() => setAcct(null)} />
+      )}
       {show && isPlatform && (
         <Card className="mb-5">
           <form onSubmit={create} className="grid grid-cols-1 gap-4 md:grid-cols-3">
@@ -180,6 +185,11 @@ export default function Providers() {
                     </div>
                   </td>
                   <td className="td text-right">
+                    {isPlatform && (
+                      <button className="btn btn-sm mr-1.5 rounded-md" onClick={() => setAcct({ id: p.id, name: p.legal_name })}>
+                        <KeyRound className="h-3.5 w-3.5" /> Create account
+                      </button>
+                    )}
                     {isPlatform && (p.status === "active" ? (
                       <button className="btn btn-sm rounded-md text-accent" onClick={() => setStatus(p.id, "suspended")}>Suspend</button>
                     ) : (

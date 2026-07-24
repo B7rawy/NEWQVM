@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Plus, KeyRound } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, Spinner, EmptyState, Field } from "../components/ui";
+import CreateAccountDialog from "../components/CreateAccountDialog";
 
 interface Workshop {
   id: string;
@@ -36,6 +37,7 @@ export default function Workshops() {
   const [bWorkshop, setBWorkshop] = useState("");
   const [bName, setBName] = useState("");
   const [bRegion, setBRegion] = useState("");
+  const [acct, setAcct] = useState<{ id: string; name: string } | null>(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
@@ -85,6 +87,9 @@ export default function Workshops() {
     <>
       <PageHeader title="Workshops & Branches" subtitle="The client company's workshops and their branches" />
       {err && <div className="mb-3 text-[13px] text-accent">{err}</div>}
+      {acct && (
+        <CreateAccountDialog kind="workshop" entityId={acct.id} entityName={acct.name} onClose={() => setAcct(null)} />
+      )}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         {/* Workshops */}
         <div>
@@ -101,6 +106,7 @@ export default function Workshops() {
                     <th className="th">Name</th>
                     <th className="th">Tax no.</th>
                     <th className="th">Branches</th>
+                    <th className="th" />
                   </tr>
                 </thead>
                 <tbody>
@@ -109,6 +115,13 @@ export default function Workshops() {
                       <td className="td font-medium text-ink">{w.name}</td>
                       <td className="td tnum text-muted">{w.tax_number ?? "—"}</td>
                       <td className="td tnum">{w.branches}</td>
+                      <td className="td text-right">
+                        {isPlatform && (
+                          <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: w.id, name: w.name })}>
+                            <KeyRound className="h-3.5 w-3.5" /> Create account
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
