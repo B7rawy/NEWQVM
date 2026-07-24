@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ChevronLeft, KeyRound, Plus, Building2, Users, Files, Upload } from "lucide-react";
+import { ChevronLeft, KeyRound, Plus, Building2, Users, Files, Upload, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
@@ -36,7 +36,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 
 export default function WorkshopDetail() {
   const { id } = useParams();
-  const { me } = useAuth();
+  const { me, impersonate } = useAuth();
   const isPlatform = me?.persona === "platform";
   const [d, setD] = useState<Detail | null>(null);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -69,6 +69,7 @@ export default function WorkshopDetail() {
   if (!d) return err ? <div className="text-[13px] text-accent">{err}</div> : <Spinner />;
   const w = d.workshop;
   const ready = d.branches.length > 0 && d.accounts.length > 0;
+  const admin = d.accounts.find((a) => a.is_workshop_admin) ?? d.accounts[0];
 
   return (
     <>
@@ -82,6 +83,11 @@ export default function WorkshopDetail() {
           <div className="flex items-center gap-2">
             <Badge tone={statusTone(w.activation_status)}>{w.activation_status}</Badge>
             {ready ? <Badge tone="green">ready</Badge> : <Badge tone="amber">setup incomplete</Badge>}
+            {isPlatform && admin && (
+              <button className="btn btn-sm rounded-md" onClick={() => impersonate(admin.id)}>
+                <Eye className="h-3.5 w-3.5" /> View as
+              </button>
+            )}
           </div>
         }
       />

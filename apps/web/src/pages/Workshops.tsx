@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, KeyRound, ChevronRight, ChevronDown, Search, Building2 } from "lucide-react";
+import { Plus, KeyRound, ChevronRight, ChevronDown, Search, Building2, Eye } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from "../components/ui";
@@ -25,6 +25,7 @@ interface Workshop {
   branches: number;
   workspaces: number;
   has_account: boolean;
+  user_id: string | null;
 }
 interface Branch {
   id: string;
@@ -40,7 +41,7 @@ type Filter = "all" | "pending" | "no_account" | "no_branch";
 
 export default function Workshops() {
   const nav = useNavigate();
-  const { activeSlug, me } = useAuth();
+  const { activeSlug, me, impersonate } = useAuth();
   const isPlatform = me?.persona === "platform"; // only platform staff write the global workshop directory
   const canRequest = me?.role === "company_admin"; // a workspace onboards via the submission flow
   const [workshops, setWorkshops] = useState<Workshop[] | null>(null);
@@ -222,6 +223,11 @@ export default function Workshops() {
                         {isPlatform && !w.has_account && (
                           <button className="btn btn-sm rounded-md" onClick={() => setAcct({ id: w.id, name: w.name })}>
                             <KeyRound className="h-3.5 w-3.5" /> Add user
+                          </button>
+                        )}
+                        {isPlatform && w.user_id && (
+                          <button className="btn btn-sm rounded-md" onClick={() => impersonate(w.user_id!)}>
+                            <Eye className="h-3.5 w-3.5" /> View as
                           </button>
                         )}
                         <button className="btn btn-sm rounded-md" onClick={() => nav(`/org/workshops/${w.id}`)}>Open</button>

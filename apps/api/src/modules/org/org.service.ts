@@ -49,7 +49,9 @@ export class OrgService {
                 w.primary_email, w.is_active,
                 (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches,
                 (select count(*)::int from tenant_workshops tw where tw.workshop_id = w.id and tw.status <> 'archived') as workspaces,
-                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account
+                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account,
+                (select wu.user_id from workshop_users wu where wu.workshop_id = w.id
+                   order by wu.is_workshop_admin desc limit 1) as user_id
               from workshops w
               order by w.name`)
           : tx.execute(sql`
@@ -57,7 +59,9 @@ export class OrgService {
                 w.primary_email, w.is_active,
                 (select count(*)::int from workshop_branches wb where wb.workshop_id = w.id) as branches,
                 1 as workspaces,
-                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account
+                exists (select 1 from workshop_users wu where wu.workshop_id = w.id) as has_account,
+                (select wu.user_id from workshop_users wu where wu.workshop_id = w.id
+                   order by wu.is_workshop_admin desc limit 1) as user_id
               from tenant_workshops tw
               join workshops w on w.id = tw.workshop_id
               where tw.status <> 'archived'
