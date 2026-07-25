@@ -33,6 +33,7 @@ import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import Workflows from "./pages/admin/Workflows";
 import MyWork from "./pages/MyWork";
+import Communications from "./pages/Communications";
 import WorkflowCanvas from "./pages/admin/WorkflowCanvas";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
@@ -65,6 +66,7 @@ function Placeholder() {
 
 const WIRED = new Set([
   "/my-work",
+  "/communications",
   "/overview",
   "/rfqs",
   "/orders",
@@ -120,6 +122,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/overview" element={systemMode ? <Navigate to="/admin/workspaces" replace /> : <Overview />} />
         <Route path="/my-work" element={<MyWork />} />
+        <Route path="/communications" element={<Communications />} />
         <Route path="/rfqs" element={<Rfqs />} />
         <Route path="/rfqs/:id" element={<RfqDetail />} />
         <Route path="/orders" element={<Orders />} />
