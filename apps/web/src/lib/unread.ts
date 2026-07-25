@@ -15,12 +15,20 @@ import { useEffect, useState } from "react";
  *   const r = await api.get<{ unread: number }>("/communications/unread");
  *   setCount(r.unread);
  */
+/**
+ * ⚠️ PLACEHOLDER — A COSMETIC NUMBER, NOT A REAL COUNT.
+ *
+ * Set so the badge can be seen while the portal is being designed. It corresponds to nothing: there
+ * are no inbound messages to be unread. DELETE THIS and return the real count the moment messaging
+ * is wired — a fake unread badge that outlives its purpose teaches people to ignore the real one.
+ */
+const DEMO_UNREAD = 3;
+
 export function useUnreadMessages(): number {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
-    // No source yet — see the note above. Left as an effect so adding the poll is a local edit.
-    setCount(0);
+    setCount(DEMO_UNREAD);
   }, []);
 
   return count;
