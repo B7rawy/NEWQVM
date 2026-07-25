@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import ErrorBoundary from "./ErrorBoundary";
+import { useUnreadMessages, unreadLabel } from "../lib/unread";
 import {
   ChevronsUpDown,
   Search,
@@ -49,6 +50,7 @@ export default function AppShell() {
   const [wsOpen, setWsOpen] = useState(false);
   const [theme, toggleTheme] = useTheme();
   const location = useLocation();
+  const unread = unreadLabel(useUnreadMessages());
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem("qvm_sidebar") === "1";
@@ -240,8 +242,15 @@ export default function AppShell() {
                 }`
               }
             >
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent text-white">
+              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent text-white">
                 <MessagesSquare className="h-[15px] w-[15px]" />
+                {/* Anchored to the tile, not the row, so it survives the collapsed sidebar where the
+                    label is gone and the tile is all that is left. */}
+                {unread && (
+                  <span className="absolute -right-1.5 -top-1.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-panel bg-navy px-1 text-[10px] font-bold leading-none text-white">
+                    {unread}
+                  </span>
+                )}
               </span>
               {!collapsed && (
                 <span className="min-w-0 flex-1">
@@ -253,7 +262,14 @@ export default function AppShell() {
                   </span>
                 </span>
               )}
-              {!collapsed && <ArrowUpRight className="h-4 w-4 shrink-0 text-faint group-hover:text-accent" />}
+              {!collapsed &&
+                (unread ? (
+                  <span className="shrink-0 rounded-full bg-navy px-1.5 py-0.5 text-[10.5px] font-bold leading-none text-white">
+                    {unread}
+                  </span>
+                ) : (
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
+                ))}
             </NavLink>
           </div>
           <NavLink
