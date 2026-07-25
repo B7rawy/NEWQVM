@@ -1,4 +1,5 @@
 import { integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { environmentType } from "./enums";
 import { audit, money, pk } from "./_shared";
 import { tenants } from "./tenancy";
 import { itemStatuses, returnReasons } from "./reference";
@@ -16,6 +17,7 @@ export const invoices = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -46,6 +48,7 @@ export const invoiceItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     invoiceId: uuid("invoice_id")
       .notNull()
       .references(() => invoices.id),
@@ -70,6 +73,7 @@ export const creditNotes = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -94,6 +98,7 @@ export const creditNoteItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     creditNoteId: uuid("credit_note_id")
       .notNull()
       .references(() => creditNotes.id),

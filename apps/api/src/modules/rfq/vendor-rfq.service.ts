@@ -5,6 +5,8 @@ import { z } from "zod";
 import { DbService, schema, type RlsContext, type Tx } from "../../db/db.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
 import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
+import { assertEnvironment } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 const TOKEN_TTL_DAYS = 7;
 
@@ -34,6 +36,7 @@ export class VendorRfqService {
   constructor(
     private readonly dbService: DbService,
     private readonly notifications: NotificationsService,
+    private readonly status: StatusService,
   ) {}
 
   /** Send an RFQ to selected vendors: create rfq_vendors (hashed token) + a guarded notification each. */
@@ -41,16 +44,15 @@ export class VendorRfqService {
     return this.dbService.withContext(ctx, async (tx) => {
       const rfq = (
         (await tx.execute(
-          sql`select id from rfqs where id = ${rfqId}::uuid limit 1`,
-        )) as Array<{ id: string }>
+          sql`select id, environment from rfqs where id = ${rfqId}::uuid limit 1`,
+        )) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!rfq) throw new NotFoundException("RFQ not found in this workspace");
+      // a Sandbox session may not send a Live RFQ to vendors, nor the reverse (ADR-0012)
+      assertEnvironment(ctx, rfq, "RFQ");
 
-      const isSandbox = (
-        (await tx.execute(
-          sql`select is_sandbox from tenants where id = ${ctx.tenantId}::uuid`,
-        )) as Array<{ is_sandbox: boolean }>
-      )[0].is_sandbox;
+      // Dispatch is suppressed by the ENVIRONMENT now (ADR-0012) — a workspace-level "sandbox"
+      // flag no longer exists, because it isolated nothing.
+      const isSandbox = rfq.environment === "sandbox";
 
       const sentStatusId = (
         (await tx.execute(
@@ -76,6 +78,7 @@ export class VendorRfqService {
 
         await tx.insert(schema.rfqVendors).values({
           tenantId: ctx.tenantId!,
+          environment: rfq.environment, // the invitation lives in the RFQ's environment
           rfqId,
           vendorId,
           statusId: sentStatusId,
@@ -90,8 +93,7 @@ export class VendorRfqService {
           tx,
           {
             tenantId: ctx.tenantId!,
-            isSandbox,
-            environment: ctx.environment,
+            environment: rfq.environment,
             channel: "email",
             recipient: link.primary_email ?? undefined,
             template: "vendor_rfq_invite",
@@ -118,29 +120,52 @@ export class VendorRfqService {
    * we resolve it as internal, then scope the writes to the resolved tenant so RLS still applies.
    */
   async submitQuoteByToken(rawToken: string, dto: SubmitQuoteDto) {
-    // 1) resolve token as internal (no tenant context yet) — the hash match is the secret gate
-    const rv = await this.dbService.withContext(
-      { tenantId: null, userId: null, isInternal: true },
-      async (tx) =>
-        (
-          (await tx.execute(sql`
-            select id, tenant_id, rfq_id, token_expires_at
-            from rfq_vendors where token_hash = ${hashToken(rawToken)} limit 1`)) as Array<{
-            id: string;
-            tenant_id: string;
-            rfq_id: string;
-            token_expires_at: string | null;
-          }>
-        )[0],
-    );
+    // 1) resolve the token as internal (no tenant context yet) — the hash match is the secret gate.
+    //
+    // A quote link is an EMAILED URL: it carries no X-Environment header, so we cannot know which
+    // environment it belongs to before we have read the row — and the restrictive policy (ADR-0012)
+    // filters by the environment GUC, which defaults to 'live'. A single lookup would therefore make
+    // every sandbox link 404 as "invalid token". So we look in each environment in turn. Two cheap
+    // reads on a rare path, and no SECURITY DEFINER escape hatch — the old system's 156 open
+    // definer functions are exactly the sin this rebuild exists to undo.
+    let rv:
+      | { id: string; tenant_id: string; rfq_id: string; token_expires_at: string | null; environment: "live" | "sandbox" }
+      | undefined;
+    for (const env of ["live", "sandbox"] as const) {
+      rv = await this.dbService.withContext(
+        { tenantId: null, userId: null, isInternal: true, environment: env },
+        async (tx) =>
+          (
+            (await tx.execute(sql`
+              select rv.id, rv.tenant_id, rv.rfq_id, rv.token_expires_at, r.environment
+              from rfq_vendors rv join rfqs r on r.id = rv.rfq_id
+              where rv.token_hash = ${hashToken(rawToken)} limit 1`)) as Array<{
+              id: string;
+              tenant_id: string;
+              rfq_id: string;
+              token_expires_at: string | null;
+              environment: "live" | "sandbox";
+            }>
+          )[0],
+      );
+      if (rv) break;
+    }
     if (!rv) throw new NotFoundException("invalid quote link");
     if (rv.token_expires_at && new Date(rv.token_expires_at) < new Date()) {
       throw new BadRequestException("quote link expired");
     }
 
     // 2) writes scoped to the token's tenant (RLS applies for that tenant)
-    return this.dbService.withContext({ tenantId: rv.tenant_id, userId: null, isInternal: false }, (tx) =>
-      this.writeQuoteItems(tx, { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id }, dto),
+    // the LINK carries no X-Environment header, so the RFQ's own environment is authoritative:
+    // a sandbox quote link can only ever write sandbox rows.
+    return this.dbService.withContext(
+      { tenantId: rv.tenant_id, userId: null, isInternal: false, environment: rv.environment },
+      (tx) =>
+        this.writeQuoteItems(
+          tx,
+          { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id, environment: rv.environment, actorUserId: null },
+          dto,
+        ),
     );
   }
 
@@ -149,7 +174,20 @@ export class VendorRfqService {
    * two can never diverge): reject if the RFQ is confirmed, keep only items of this RFQ, UPSERT each
    * line (a vendor may revise its quote until confirmation), flip rfq_vendors → 'priced'.
    */
-  async writeQuoteItems(tx: Tx, ids: { tenantId: string; rfqVendorId: string; rfqId: string }, dto: SubmitQuoteDto) {
+  async writeQuoteItems(
+    tx: Tx,
+    ids: {
+      tenantId: string;
+      rfqVendorId: string;
+      rfqId: string;
+      environment: "live" | "sandbox";
+      /** Who is quoting. NULL on the public token path — the vendor is not a logged-in user there,
+       *  and the token itself is the credential. status_logs records that honestly rather than
+       *  attributing the change to whoever happened to send the RFQ. */
+      actorUserId: string | null;
+    },
+    dto: SubmitQuoteDto,
+  ) {
     await assertRfqNotConfirmed(tx, ids.rfqId, "this RFQ is already confirmed");
 
     const pricedStatusId = (
@@ -168,15 +206,19 @@ export class VendorRfqService {
     for (const it of items) {
       await tx.execute(sql`
         insert into rfq_vendor_items
-          (tenant_id, rfq_vendor_id, rfq_item_id, offered_cost, sla_hours, available_qty, alternative_part_number, notes, status_id)
-        values (${ids.tenantId}::uuid, ${ids.rfqVendorId}::uuid, ${it.rfqItemId}::uuid, ${it.offeredCost.toFixed(2)},
+          (tenant_id, environment, rfq_vendor_id, rfq_item_id, offered_cost, sla_hours, available_qty, alternative_part_number, notes, status_id)
+        values (${ids.tenantId}::uuid, ${ids.environment}, ${ids.rfqVendorId}::uuid, ${it.rfqItemId}::uuid, ${it.offeredCost.toFixed(2)},
           ${it.slaHours ?? null}, ${it.availableQty ?? null}, ${it.alternativePartNumber ?? null}, ${it.notes ?? null}, ${pricedStatusId}::uuid)
         on conflict (rfq_vendor_id, rfq_item_id) do update set
           offered_cost = excluded.offered_cost, sla_hours = excluded.sla_hours, available_qty = excluded.available_qty,
           alternative_part_number = excluded.alternative_part_number, notes = excluded.notes,
           status_id = excluded.status_id, updated_at = now()`);
     }
-    await tx.execute(sql`update rfq_vendors set status_id = ${pricedStatusId}, updated_at = now() where id = ${ids.rfqVendorId}::uuid`);
+    await this.status.transitionMany(
+      tx,
+      { tenantId: ids.tenantId, userId: ids.actorUserId, environment: ids.environment },
+      { entity: "rfq_vendor", ids: [ids.rfqVendorId], toCode: "priced" },
+    );
     return { quoted: items.length, status: "priced" as const };
   }
 
@@ -219,9 +261,9 @@ export class VendorRfqService {
       )[0].id;
 
       await tx.execute(sql`
-        update rfq_items set winning_vendor_quote_item_id = ${quoteItemId}::uuid,
-               status_id = ${pricedStatusId}
+        update rfq_items set winning_vendor_quote_item_id = ${quoteItemId}::uuid
         where id = ${itemId}::uuid and rfq_id = ${rfqId}::uuid`);
+      await this.status.transition(tx, ctx, { entity: "rfq_item", id: itemId, toCode: "priced" });
       return { itemId, winningQuoteId: quoteItemId };
     });
   }

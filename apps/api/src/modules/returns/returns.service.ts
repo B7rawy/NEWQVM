@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { assertEnvironment } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 export const createReturnSchema = z.object({
   items: z
@@ -19,7 +21,10 @@ export type CreateReturnDto = z.infer<typeof createReturnSchema>;
 
 @Injectable()
 export class ReturnsService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   /**
    * Workshop returns delivered items. Can't return more than was delivered (net of prior returns).
@@ -28,12 +33,15 @@ export class ReturnsService {
    */
   async create(ctx: RlsContext, orderId: string, dto: CreateReturnDto) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // bind to the acting workspace explicitly: these are platform-staff routes, and an internal
+      // context satisfies the PERMISSIVE tenant policy — without this a staffer on workspace A could
+      // attach a document to workspace B's order, leaving a row invisible to both.
       const order = (
         (await tx.execute(
-          sql`select id from orders where id = ${orderId}::uuid limit 1`,
-        )) as Array<{ id: string }>
+          sql`select id, environment from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`,
+        )) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      assertEnvironment(ctx, order, "order");
 
       // delivered vs already-returned per order_item
       const state = new Map<string, { delivered: number; returned: number }>();
@@ -70,12 +78,13 @@ export class ReturnsService {
 
       const [ret] = await tx
         .insert(schema.returns)
-        .values({ tenantId: ctx.tenantId!, orderId, statusId: returnStatusId, returnedAt: new Date() })
+        .values({ tenantId: ctx.tenantId!, environment: order.environment, orderId, statusId: returnStatusId, returnedAt: new Date() })
         .returning({ id: schema.returns.id });
 
       await tx.insert(schema.returnItems).values(
         dto.items.map((it) => ({
           tenantId: ctx.tenantId!,
+          environment: order.environment,
           returnId: ret.id,
           orderItemId: it.orderItemId,
           qty: it.qty,
@@ -83,11 +92,11 @@ export class ReturnsService {
           responsibility: it.responsibility,
         })),
       );
-      for (const it of dto.items) {
-        await tx.execute(
-          sql`update order_items set status_id = ${returnStatusId} where id = ${it.orderItemId}::uuid`,
-        );
-      }
+      await this.status.transitionMany(tx, ctx, {
+        entity: "order_item",
+        ids: [...new Set(dto.items.map((it) => it.orderItemId))],
+        toCode: "return",
+      });
       return { returnId: ret.id, orderId, returnedItems: dto.items.length };
     });
   }
@@ -97,15 +106,16 @@ export class ReturnsService {
     return this.dbService.withContext(ctx, async (tx) => {
       const ret = (
         (await tx.execute(sql`
-          select r.id, r.order_id, s.code as status
+          select r.id, r.order_id, r.environment, s.code as status
           from returns r left join item_statuses s on s.id = r.status_id
           where r.id = ${returnId}::uuid limit 1`)) as Array<{
           id: string;
           order_id: string;
           status: string | null;
+          environment: "live" | "sandbox";
         }>
       )[0];
-      if (!ret) throw new NotFoundException("return not found in this workspace");
+      assertEnvironment(ctx, ret, "return");
       if (ret.status === "credit_note_issued") {
         throw new BadRequestException("credit note already issued for this return");
       }
@@ -136,7 +146,7 @@ export class ReturnsService {
       )[0].id;
       const cnNumber = (
         (await tx.execute(
-          sql`select public.next_order_number(${ctx.tenantId}::uuid, 'CN-', null) as n`,
+          sql`select public.next_order_number(${ctx.tenantId}::uuid, 'CN-', null, ${ret.environment}) as n`,
         )) as Array<{ n: string }>
       )[0].n;
 
@@ -144,6 +154,7 @@ export class ReturnsService {
         .insert(schema.creditNotes)
         .values({
           tenantId: ctx.tenantId!,
+          environment: ret.environment,
           orderId: ret.order_id,
           creditNoteNumber: cnNumber,
           issuedAt: new Date(),
@@ -155,6 +166,7 @@ export class ReturnsService {
       await tx.insert(schema.creditNoteItems).values(
         lines.map((l) => ({
           tenantId: ctx.tenantId!,
+          environment: ret.environment,
           creditNoteId: cn.id,
           orderItemId: l.order_item_id,
           qty: Number(l.qty),
@@ -162,12 +174,12 @@ export class ReturnsService {
         })),
       );
 
-      await tx.execute(sql`update returns set status_id = ${cnStatusId} where id = ${returnId}::uuid`);
-      for (const l of lines) {
-        await tx.execute(
-          sql`update order_items set status_id = ${cnStatusId} where id = ${l.order_item_id}::uuid`,
-        );
-      }
+      await this.status.transition(tx, ctx, { entity: "return", id: returnId, toCode: "credit_note_issued" });
+      await this.status.transitionMany(tx, ctx, {
+        entity: "order_item",
+        ids: [...new Set(lines.map((l) => l.order_item_id))],
+        toCode: "credit_note_issued",
+      });
       return { creditNoteId: cn.id, creditNoteNumber: cnNumber, total: m(total), items: lines.length };
     });
   }

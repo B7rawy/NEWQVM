@@ -1,6 +1,6 @@
 import { pgTable, text, timestamp, uuid, index } from "drizzle-orm/pg-core";
 import { audit, money, pct, pk } from "./_shared";
-import { financingStatus } from "./enums";
+import { environmentType, financingStatus } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { vendors } from "./vendors";
@@ -18,6 +18,7 @@ export const vendorPayments = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     vendorId: uuid("vendor_id")
       .notNull()
       .references(() => vendors.id),
@@ -40,6 +41,7 @@ export const vendorPaymentAllocations = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     paymentId: uuid("payment_id")
       .notNull()
       .references(() => vendorPayments.id),
@@ -63,6 +65,7 @@ export const vendorFinancingRequests = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     vendorId: uuid("vendor_id")
       .notNull()
       .references(() => vendors.id),

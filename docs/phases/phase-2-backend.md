@@ -34,7 +34,7 @@ ADR-0010 (قاعدة واحدة، رفض القاعدة-المنفصلة). `plat
 this workspace").
 
 ### Phase 2d — إرسال RFQ للموردين + بوابة التسعيرة + طبقة الإشعارات ✅ (هذا الكومِت)
-- **`NotificationsService`** = حدّ الآثار الجانبية الوحيد (ADR-0004 / CONVENTIONS §BE-3). لا شيء
+- **`NotificationsService`** = حدّ الآثار الجانبية الوحيد (ADR-0012 / CONVENTIONS §BE-3). لا شيء
   يبعت email/whatsapp/webhook إلا عبره. في tenant sandbox (أو provider مقفول/non-prod) يسجّل
   الرسالة `suppressed` ولا يلمس أي provider حقيقي. كل محاولة تُكتب في **`notification_log`**
   (جدول جديد، tenant-scoped + RLS، 0005/0006) = السجل والبرهان.

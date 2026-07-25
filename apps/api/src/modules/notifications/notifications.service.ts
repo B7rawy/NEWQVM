@@ -5,9 +5,13 @@ export type Channel = "email" | "whatsapp" | "webhook";
 
 export interface NotifyInput {
   tenantId: string;
-  isSandbox: boolean;
-  /** Sandbox DATA environment within a live workspace also suppresses real dispatch (ADR-0012). */
-  environment?: "live" | "sandbox";
+  /**
+   * Sandbox environment suppresses real dispatch — the ONE sandbox mechanism (ADR-0012). REQUIRED,
+   * not defaulted: a default of 'live' inside a sandbox transaction writes a live notification_log
+   * row, the RESTRICTIVE WITH CHECK rejects it, and the enclosing business transaction rolls back —
+   * a failure that only ever appears in Sandbox, so Live tests never catch it.
+   */
+  environment: "live" | "sandbox";
   channel: Channel;
   recipient?: string;
   template?: string;
@@ -16,8 +20,8 @@ export interface NotifyInput {
 
 /**
  * The single side-effect boundary (ADR-0004 / CONVENTIONS §BE-3). NOTHING sends email/whatsapp/
- * webhooks except through here. In a sandbox tenant — or when a provider is disabled by env — the
- * message is recorded as 'suppressed' and NO real provider is called. Every attempt is written to
+ * webhooks except through here. In the sandbox environment — or when a provider is disabled by env —
+ * the message is recorded as 'suppressed' and NO real provider is called. Every attempt is written to
  * notification_log (the audit trail + the proof sandbox isolation held).
  *
  * Must be called inside a tenant-scoped tx (RLS) — takes the tx so the log row is written in the
@@ -38,7 +42,6 @@ export class NotificationsService {
     secret?: Record<string, unknown>,
   ): Promise<{ status: "sent" | "suppressed" }> {
     const providerLive =
-      !input.isSandbox &&
       input.environment !== "sandbox" &&
       process.env.NODE_ENV === "production" &&
       this.providerEnabled(input.channel);
@@ -47,6 +50,7 @@ export class NotificationsService {
 
     await tx.insert(schema.notificationLog).values({
       tenantId: input.tenantId,
+      environment: input.environment, // the log belongs to the environment that triggered it
       channel: input.channel,
       recipient: input.recipient,
       template: input.template,
@@ -61,7 +65,7 @@ export class NotificationsService {
     } else {
       this.logger.log(
         `SUPPRESSED ${input.channel} → ${input.recipient} [${input.template}]` +
-          (input.isSandbox ? " (sandbox tenant)" : " (provider off / non-prod)"),
+          (input.environment === "sandbox" ? " (sandbox environment)" : " (provider off / non-prod)"),
       );
     }
     return { status };

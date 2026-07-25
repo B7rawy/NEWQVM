@@ -74,6 +74,7 @@ export const rfqItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqId: uuid("rfq_id")
       .notNull()
       .references(() => rfqs.id),
@@ -118,6 +119,7 @@ export const rfqVendors = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqId: uuid("rfq_id")
       .notNull()
       .references(() => rfqs.id),
@@ -149,6 +151,7 @@ export const rfqVendorItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqVendorId: uuid("rfq_vendor_id")
       .notNull()
       .references(() => rfqVendors.id),

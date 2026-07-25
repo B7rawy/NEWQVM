@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
+import { assertEnvironment } from "../../common/env-guards.js";
 
 export const createInsurerSchema = z.object({
   name: z.string().min(1).max(120),
@@ -82,9 +83,9 @@ export class InsuranceService {
       // lock the RFQ row alone (FOR UPDATE can't touch the outer-joined item_statuses), then read its status.
       const rfq = (
         (await tx.execute(sql`
-          select id, payer_type, status_id from rfqs where id = ${rfqId}::uuid limit 1 for update`)) as Array<{ id: string; payer_type: string; status_id: string | null }>
+          select id, payer_type, status_id, environment from rfqs where id = ${rfqId}::uuid limit 1 for update`)) as Array<{ id: string; payer_type: string; status_id: string | null; environment: "live" | "sandbox" }>
       )[0];
-      if (!rfq) throw new NotFoundException("RFQ not found in this workspace");
+      assertEnvironment(ctx, rfq, "RFQ");
       const statusRow = rfq.status_id
         ? ((await tx.execute(sql`select code from item_statuses where id = ${rfq.status_id}::uuid limit 1`))[0] as { code: string } | undefined)
         : undefined;

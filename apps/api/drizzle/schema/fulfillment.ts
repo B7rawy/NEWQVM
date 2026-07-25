@@ -1,6 +1,6 @@
 import { integer, pgTable, text, timestamp, uuid, index } from "drizzle-orm/pg-core";
 import { audit, money, pk } from "./_shared";
-import { returnIssueType, returnResponsibility } from "./enums";
+import { environmentType, returnIssueType, returnResponsibility } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { itemStatuses, returnReasons } from "./reference";
@@ -23,6 +23,7 @@ export const signatures = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     imageKey: text("image_key").notNull(),
     signedBy: text("signed_by"),
     ...audit,
@@ -37,6 +38,7 @@ export const deliveries = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -68,6 +70,7 @@ export const deliveryItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     deliveryId: uuid("delivery_id")
       .notNull()
       .references(() => deliveries.id),
@@ -94,6 +97,7 @@ export const returns = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -120,6 +124,7 @@ export const returnItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     returnId: uuid("return_id")
       .notNull()
       .references(() => returns.id),
@@ -149,6 +154,7 @@ export const returnIssues = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderItemId: uuid("order_item_id")
       .notNull()
       .references(() => orderItems.id),

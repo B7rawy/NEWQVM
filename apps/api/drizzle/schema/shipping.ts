@@ -1,13 +1,7 @@
 import { integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { audit, isActive, money, pk } from "./_shared";
-import {
-  carrierModel,
-  carrierOwnerType,
-  driverOwnerType,
-  driverRequestStatus,
-  shipmentStatus,
-} from "./enums";
+import { carrierModel, carrierOwnerType, driverOwnerType, driverRequestStatus, environmentType, shipmentStatus } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { orders } from "./orders";
@@ -77,6 +71,7 @@ export const shipments = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -103,6 +98,7 @@ export const driverDeliveryRequests = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),

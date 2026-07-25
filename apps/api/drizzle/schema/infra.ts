@@ -1,4 +1,5 @@
 import { date, integer, jsonb, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { environmentType } from "./enums";
 import { audit, pk } from "./_shared";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
@@ -15,6 +16,7 @@ export const auditLog = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     entityType: text("entity_type").notNull(),
     entityId: uuid("entity_id"),
     actorUserId: uuid("actor_user_id").references(() => users.id),

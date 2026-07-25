@@ -1,9 +1,9 @@
 /**
- * Seed — realistic fake data for local dev + the sandbox tenant (ADR-0007 / ADR-0004).
+ * Seed — realistic fake data for local dev (ADR-0007 / ADR-0004).
  * Runs as internal staff (app.is_internal = true) so RLS lets it write across tenants.
  * Idempotent-ish: truncates app data first (dev only), then re-seeds.
  *
- * This is a FOUNDATION seed (Phase 1c): reference vocabulary + plans + tenants (incl. a sandbox)
+ * This is a FOUNDATION seed (Phase 1c): reference vocabulary + plans + tenants
  * + org + a global vendor with links + one full RFQ→order chain, enough to prove the schema,
  * RLS isolation, and the atomic order-number function end to end. It grows in later phases.
  */
@@ -11,11 +11,32 @@ import postgres from "postgres";
 import argon2 from "argon2";
 import { ITEM_STATUSES, VENDOR_STATUSES } from "./reference-data";
 
-const sql = postgres(
-  process.env.DATABASE_URL ??
-    "postgresql://qvm:change_me_in_local_env@localhost:5434/qvm_platform",
-  { max: 1 },
-);
+const DSN =
+  process.env.DATABASE_URL ?? "postgresql://qvm:change_me_in_local_env@localhost:5434/qvm_platform";
+
+/**
+ * This script TRUNCATES every table and reseeds fixtures with publicly-known passwords. The repo is
+ * rsynced to the server, so both this file and a production .env sit on the prod box — one
+ * `pnpm db:seed` in the wrong directory would replace production with fixtures. Refuse anything that
+ * is not unmistakably a local database, unless the operator says so out loud.
+ */
+const host = (() => {
+  try {
+    return new URL(DSN).hostname;
+  } catch {
+    return "";
+  }
+})();
+const isLocal = ["localhost", "127.0.0.1", "::1", "0.0.0.0", "host.docker.internal"].includes(host);
+if (!isLocal && process.env.SEED_I_KNOW_THIS_IS_NOT_LOCAL !== "yes") {
+  console.error(
+    `\nREFUSING TO SEED: '${host}' is not a local database, and seeding TRUNCATES everything.\n` +
+      `If you really mean it, re-run with SEED_I_KNOW_THIS_IS_NOT_LOCAL=yes\n`,
+  );
+  process.exit(1);
+}
+
+const sql = postgres(DSN, { max: 1 });
 
 async function main() {
   await sql`select set_config('app.is_internal','true',false)`;
@@ -117,13 +138,12 @@ async function main() {
     values ('multi@qparts.local','Multi Workspace User',${multiHash}) returning id`;
   await sql`select set_config('app.user_id', ${admin.id}, false)`;
 
-  // ---- tenants: two real workspaces + one sandbox ----
-  const [t1] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
-    values ('Qparts Riyadh','riyadh',${pro.id},false) returning id`;
-  const [t2] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
-    values ('Qparts Jeddah','jeddah',${pro.id},false) returning id`;
-  const [tSandbox] = await sql`insert into tenants (name,slug,plan_id,is_sandbox)
-    values ('Sandbox Workspace','sandbox',${pro.id},true) returning id`;
+  // ---- tenants: two workspaces. There is deliberately no "sandbox workspace": every workspace
+  // has a Live/Sandbox environment toggle instead, which is a real DB-enforced boundary (ADR-0012).
+  const [t1] = await sql`insert into tenants (name,slug,plan_id)
+    values ('Qparts Riyadh','riyadh',${pro.id}) returning id`;
+  const [t2] = await sql`insert into tenants (name,slug,plan_id)
+    values ('Qparts Jeddah','jeddah',${pro.id}) returning id`;
 
   // ---- org: global workshops + branches, linked to workspaces via tenant_workshops (ADR-0011) ----
   const [ws] = await sql`insert into workshops (name) values ('Al Faisal Motors') returning id`;
@@ -164,23 +184,16 @@ async function main() {
   await sql`insert into tenant_memberships (tenant_id,user_id,role,workshop_branch_id)
     values (${t2.id},${multi.id},'service_advisor',${branch2.id})`;
 
-  // ---- global vendor linked to t1 AND the sandbox (same global identity, per ADR-0008) ----
+  // ---- global vendor linked to t1 (same global identity across workspaces, per ADR-0008) ----
   const [vendor] = await sql`insert into vendors (legal_name,vendor_type,primary_email)
     values ('Gulf Auto Parts Co.','commercial','vendor@gulf.example') returning id`;
   await sql`insert into vendor_branches (vendor_id,name,region_id) values (${vendor.id},'Riyadh Depot',${central.id})`;
   await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${t1.id},${vendor.id},'active')`;
-  await sql`insert into tenant_vendors (tenant_id,vendor_id,status) values (${tSandbox.id},${vendor.id},'active')`;
   // vendor-portal login: vendor@qparts.local is an admin of the Gulf vendor (persona = vendor)
   await sql`insert into vendor_users (vendor_id,user_id,is_vendor_admin) values (${vendor.id},${vendorUser.id},true)`;
   // workshop-portal login: workshop@qparts.local is an admin of Al Faisal Motors (persona = workshop);
   // that workshop is linked to BOTH riyadh + jeddah, so this user can switch between those workspaces.
   await sql`insert into workshop_users (workshop_id,user_id,is_workshop_admin) values (${ws.id},${workshopUser.id},true)`;
-
-  // ---- sandbox org so the sandbox guard can be exercised end-to-end ----
-  const [sbWs] = await sql`insert into workshops (name) values ('Sandbox Motors') returning id`;
-  await sql`insert into workshop_branches (workshop_id,name,region_id)
-    values (${sbWs.id},'Sandbox Branch',${central.id})`;
-  await sql`insert into tenant_workshops (tenant_id,workshop_id,status) values (${tSandbox.id},${sbWs.id},'active')`;
 
   // ---- one RFQ chain in t1, using the atomic order-number function ----
   const [num] = await sql`select public.next_order_number(${t1.id},'RYD-',${central.id}) as n`;
@@ -224,7 +237,7 @@ async function main() {
     (select count(*) from rfqs) rfqs,
     (select order_number from rfqs limit 1) sample_order_number`;
   console.log("seed complete:", counts[0]);
-  console.log("tenant t1:", t1.id, "sandbox:", tSandbox.id);
+  console.log("tenant t1:", t1.id, "t2:", t2.id);
   await sql.end();
 }
 

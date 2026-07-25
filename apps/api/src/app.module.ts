@@ -2,6 +2,9 @@ import { Module } from "@nestjs/common";
 import { DbModule } from "./db/db.module.js";
 import { AuthModule } from "./modules/auth/auth.module.js";
 import { NotificationsModule } from "./modules/notifications/notifications.module.js";
+import { StatusModule } from "./common/status.module.js";
+import { AiModule } from "./common/ai.module.js";
+import { WorkflowModule } from "./modules/workflow/workflow.module.js";
 import { MeController } from "./modules/me/me.controller.js";
 import { WorkspacesAdminController } from "./modules/admin/workspaces-admin.controller.js";
 import { WorkspacesAdminService } from "./modules/admin/workspaces-admin.service.js";
@@ -66,7 +69,10 @@ import { ProviderPortalService } from "./modules/provider-portal/provider-portal
  * DbModule + NotificationsModule are global; AuthModule provides JWT + AuthGuard + RolesGuard.
  */
 @Module({
-  imports: [DbModule, NotificationsModule, AuthModule],
+  imports: [DbModule, NotificationsModule,
+    StatusModule,
+    AiModule,
+    WorkflowModule, AuthModule],
   controllers: [
     MeController,
     RfqController,

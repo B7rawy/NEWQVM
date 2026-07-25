@@ -1,7 +1,7 @@
 import { boolean, integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { audit, isActive, pk } from "./_shared";
-import { approvalActionType, approvalLevelMode, approvalStatus } from "./enums";
+import { approvalActionType, approvalLevelMode, approvalStatus, environmentType } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 
@@ -61,6 +61,7 @@ export const approvalRequests = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     policyId: uuid("policy_id")
       .notNull()
       .references(() => approvalPolicies.id),
@@ -88,6 +89,7 @@ export const approvalActions = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     requestId: uuid("request_id")
       .notNull()
       .references(() => approvalRequests.id),

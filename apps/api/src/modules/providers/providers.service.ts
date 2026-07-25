@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
+import { envOf } from "../../common/env-guards.js";
 
 export const createProviderSchema = z
   .object({
@@ -60,7 +61,7 @@ export class ProvidersService {
   /** Create a global provider + link it to the target workspace (internal / global write). */
   async create(ctx: RlsContext, dto: z.infer<typeof createProviderSchema>) {
     const target = targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       let sp: { id: string };
       try {
         [sp] = (await tx.execute(sql`
@@ -84,7 +85,7 @@ export class ProvidersService {
   /** Suspend / archive / reactivate a provider's link to a workspace (tenant_service_providers.status). */
   async setStatus(ctx: RlsContext, id: string, dto: z.infer<typeof providerStatusSchema>) {
     const target = targetTenant(ctx);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: ctx.isInternal }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: ctx.isInternal, environment: envOf(ctx) }, async (tx) => {
       const rows = (await tx.execute(sql`
         update tenant_service_providers set status = ${dto.status}, updated_by = ${ctx.userId}::uuid, updated_at = now()
         where service_provider_id = ${id}::uuid and tenant_id = ${target}::uuid returning id`)) as Array<{ id: string }>;
@@ -96,7 +97,7 @@ export class ProvidersService {
   /** Link an existing global provider to the target workspace (dedupe, no new row). */
   async link(ctx: RlsContext, id: string, dto: z.infer<typeof linkProviderSchema>) {
     const target = targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await tx.execute(sql`
         insert into tenant_service_providers (tenant_id, service_provider_id, status, classification, linked_by, created_by, updated_by)
         values (${target}::uuid, ${id}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)

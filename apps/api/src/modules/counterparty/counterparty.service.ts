@@ -4,6 +4,7 @@ import argon2 from "argon2";
 import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
+import { envOf } from "../../common/env-guards.js";
 
 /**
  * Counterparty governed onboarding — Slice 2 (QNEW-71).
@@ -262,7 +263,7 @@ export class CounterpartyService {
    */
   async importRows(ctx: RlsContext, dto: z.infer<typeof importSchema>) {
     const target = this.targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const [batch] = (await tx.execute(sql`
         insert into import_batches (tenant_id, kind, filename, status, total_rows, uploaded_by, created_by, updated_by)
         values (${target}::uuid, ${dto.kind}, ${dto.filename ?? null}, 'submitted', ${dto.rows.length},
@@ -353,7 +354,7 @@ export class CounterpartyService {
     const email = dto.email.trim().toLowerCase();
     const hash = dto.password ? await argon2.hash(dto.password) : null;
 
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const entity = (await tx.execute(sql`
         select id, ${sql.raw(cfg.nameCol)} as name from ${sql.raw(cfg.table)} where id = ${entityId}::uuid limit 1`))[0] as
         | { id: string; name: string }
@@ -451,7 +452,7 @@ export class CounterpartyService {
 
   /** Approve: create a NEW directory identity + link it to the requesting workspace. */
   async approve(ctx: RlsContext, id: string, dto: z.infer<typeof approveSchema>) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const s = await this.loadPending(tx, id);
       let entityId: string;
       try {
@@ -493,7 +494,7 @@ export class CounterpartyService {
 
   /** Merge: link an EXISTING directory identity to the requesting workspace (dedupe, no new row). */
   async merge(ctx: RlsContext, id: string, dto: z.infer<typeof mergeSchema>) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const s = await this.loadPending(tx, id);
       const table = s.kind === "vendor" ? "vendors" : "workshops";
       const ex = (await tx.execute(
@@ -519,7 +520,7 @@ export class CounterpartyService {
 
   /** Reject: leave the directory untouched; record the decision. */
   async reject(ctx: RlsContext, id: string, dto: z.infer<typeof rejectSchema>) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const s = await this.loadPending(tx, id);
       await tx.execute(sql`
         update counterparty_submissions set status = 'rejected', reviewed_by = ${ctx.userId}::uuid,

@@ -26,7 +26,8 @@ export class RfqController {
   list(@Req() req: Request) {
     // scope the list to the ACTIVE workspace even for platform staff (isInternal:false) — the
     // "see all workspaces" privilege is the switcher, not a merged single-workspace view.
-    return this.rfq.list({ ...requireTenantCtx(req), isInternal: false });
+    // ?queue= is OPT-IN: without it the query is byte-identical to before routing existed.
+    return this.rfq.list({ ...requireTenantCtx(req), isInternal: false }, req.query.queue as string | undefined);
   }
 
   @Get(":id")

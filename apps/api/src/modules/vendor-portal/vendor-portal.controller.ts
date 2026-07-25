@@ -14,7 +14,7 @@ export class VendorPortalController {
   constructor(private readonly svc: VendorPortalService) {}
   private ctx(req: Request) {
     const c = getContext(req);
-    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
+    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
 
   @Get("overview")

@@ -21,7 +21,7 @@ export default function Orders() {
     setOrders(null);
     setErr("");
     api
-      .get<{ orders: Order[] }>("/orders")
+      .get<{ orders: Order[] }>("/orders?queue=orders")
       .then((r) => setOrders(r.orders))
       .catch((e) => {
         setErr((e as Error).message);

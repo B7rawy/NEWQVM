@@ -14,13 +14,13 @@ export class AccountController {
   @Post("activate")
   activate(@Req() req: Request, @Body() body: unknown) {
     const c = getContext(req);
-    return this.svc.activate({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal }, activateSchema.parse(body));
+    return this.svc.activate({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId }, activateSchema.parse(body));
   }
 
   /** Upgrade an Individual account to a Company (creates the company + re-parents all history). */
   @Post("upgrade")
   upgrade(@Req() req: Request, @Body() body: unknown) {
     const c = getContext(req);
-    return this.svc.upgrade({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal }, upgradeSchema.parse(body));
+    return this.svc.upgrade({ tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId }, upgradeSchema.parse(body));
   }
 }

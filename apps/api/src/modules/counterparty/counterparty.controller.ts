@@ -26,7 +26,7 @@ export class CounterpartyController {
   constructor(private readonly svc: CounterpartyService) {}
   private ctx(req: Request) {
     const c = getContext(req);
-    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
+    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
 
   /** Workspace: propose a counterparty (auto-links on exact key, else queues for review). */

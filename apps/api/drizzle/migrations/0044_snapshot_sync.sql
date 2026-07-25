@@ -1,0 +1,17 @@
+-- 0044_snapshot_sync — INTENTIONAL NO-OP (same pattern as 0035_snapshot_sync).
+--
+-- Purpose: refresh drizzle's snapshot so a future `drizzle-kit generate` diffs against the CURRENT
+-- schema. The chain had stalled at meta/0035_snapshot.json while 0036-0043 were hand-written
+-- (service_providers, name snapshots, and the ADR-0012 environment work). Left stale, the next
+-- generate would have emitted a migration that CANNOT run on any database at 0043: a bare
+-- `CREATE TYPE "provider_scope"` and 28 bare `ADD COLUMN "environment"`, none guarded by
+-- IF NOT EXISTS - hard errors on objects that already exist.
+--
+-- Verified before emptying: every statement drizzle wanted to emit is already applied in the live
+-- database - 48 additions, plus exactly three removals, each checked directly:
+--   * order_number_counters_scope_uq     -> already UNIQUE (tenant_id, prefix, environment)  [0040]
+--   * counterparty_submissions.tenant_id -> already nullable                                 [0036]
+--   * tenants.is_sandbox                 -> already dropped                                  [0042]
+-- Zero unexplained DROPs; the schema .ts and the live DB are in lockstep.
+-- The snapshot is the deliverable of this migration, not DDL.
+SELECT 1;

@@ -22,4 +22,4 @@
 
 ## النتائج
 - composite indexes إلزامية `(tenant_id, …)` (انظر CONVENTIONS §DB).
-- الـ sandbox يصبح مجرد tenant (ADR-0004) — ميزة مجانية من هذا النموذج.
+- ~~الـ sandbox يصبح مجرد tenant (ADR-0004)~~ — أُلغي: البيئة صارت عموداً على الصف (ADR-0012).

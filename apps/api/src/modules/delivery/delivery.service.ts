@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { assertEnvironment } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 export const createDeliverySchema = z.object({
   items: z
@@ -12,7 +14,10 @@ export type CreateDeliveryDto = z.infer<typeof createDeliverySchema>;
 
 @Injectable()
 export class DeliveryService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   /**
    * Deliver a set of confirmed items (supports PARTIAL / SPLIT delivery — old flat delivery_notes
@@ -21,12 +26,15 @@ export class DeliveryService {
    */
   async create(ctx: RlsContext, orderId: string, dto: CreateDeliveryDto) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // bind to the acting workspace explicitly: these are platform-staff routes, and an internal
+      // context satisfies the PERMISSIVE tenant policy — without this a staffer on workspace A could
+      // attach a document to workspace B's order, leaving a row invisible to both.
       const order = (
         (await tx.execute(
-          sql`select id from orders where id = ${orderId}::uuid limit 1`,
-        )) as Array<{ id: string }>
+          sql`select id, environment from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`,
+        )) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      assertEnvironment(ctx, order, "order");
 
       // approved + already-delivered per order_item of this order
       const state = new Map<string, { approved: number; delivered: number }>();
@@ -62,12 +70,13 @@ export class DeliveryService {
 
       const [delivery] = await tx
         .insert(schema.deliveries)
-        .values({ tenantId: ctx.tenantId!, orderId, statusId: deliveredStatusId, deliveredAt: new Date() })
+        .values({ tenantId: ctx.tenantId!, environment: order.environment, orderId, statusId: deliveredStatusId, deliveredAt: new Date() })
         .returning({ id: schema.deliveries.id });
 
       await tx.insert(schema.deliveryItems).values(
         dto.items.map((it) => ({
           tenantId: ctx.tenantId!,
+          environment: order.environment,
           deliveryId: delivery.id,
           orderItemId: it.orderItemId,
           qty: it.qty,
@@ -75,14 +84,10 @@ export class DeliveryService {
       );
 
       // flip fully-delivered items to 'delivered' (use the AGGREGATED qty per item)
-      for (const [orderItemId, qty] of requested) {
-        const s = state.get(orderItemId)!;
-        if (s.delivered + qty >= s.approved) {
-          await tx.execute(
-            sql`update order_items set status_id = ${deliveredStatusId} where id = ${orderItemId}::uuid`,
-          );
-        }
-      }
+      const fullyDelivered = [...requested]
+        .filter(([orderItemId, qty]) => state.get(orderItemId)!.delivered + qty >= state.get(orderItemId)!.approved)
+        .map(([orderItemId]) => orderItemId);
+      await this.status.transitionMany(tx, ctx, { entity: "order_item", ids: fullyDelivered, toCode: "delivered" });
 
       return { deliveryId: delivery.id, orderId, deliveredItems: dto.items.length };
     });

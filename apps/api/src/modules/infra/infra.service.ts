@@ -17,10 +17,17 @@ export class AuditService {
       action: string;
       oldValue?: unknown;
       newValue?: unknown;
+      /**
+       * Environment of the action being audited. REQUIRED, not defaulted: a default of 'live' would
+       * write a live row inside a sandbox transaction, and the restrictive WITH CHECK (ADR-0012)
+       * would reject it — rolling back whatever action was being audited. Make the caller decide.
+       */
+      environment: "live" | "sandbox";
     },
   ) {
     await tx.insert(schema.auditLog).values({
       tenantId,
+      environment: e.environment,
       entityType: e.entityType,
       entityId: e.entityId ?? null,
       actorUserId: e.actorUserId ?? null,

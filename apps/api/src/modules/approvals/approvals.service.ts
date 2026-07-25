@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { envOf } from "../../common/env-guards.js";
 
 export const createPolicySchema = z.object({
   name: z.string().min(1),
@@ -56,6 +57,7 @@ export class ApprovalsService {
           .insert(schema.approvalRequests)
           .values({
             tenantId: ctx.tenantId!,
+            environment: envOf(ctx),
             policyId: policy.id,
             entityType: dto.entityType,
             entityId: dto.entityId,
@@ -113,6 +115,7 @@ export class ApprovalsService {
 
       await tx.insert(schema.approvalActions).values({
         tenantId: ctx.tenantId!,
+        environment: envOf(ctx),
         requestId,
         actorUserId: ctx.userId!,
         action: dto.action,

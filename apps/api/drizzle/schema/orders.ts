@@ -43,6 +43,7 @@ export const orderItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),

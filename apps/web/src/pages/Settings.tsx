@@ -4,7 +4,7 @@ import { useAuth } from "../lib/auth";
 import { PageHeader, Card, Badge, Field, EmptyState } from "../components/ui";
 
 export default function Settings() {
-  const { workspaces, activeSlug, me } = useAuth();
+  const { workspaces, activeSlug, me, environment } = useAuth();
   const ws = workspaces.find((w) => w.slug === activeSlug);
   const [name, setName] = useState(ws?.name ?? "");
   const [msg, setMsg] = useState("");
@@ -41,7 +41,7 @@ export default function Settings() {
             <Field label="Subdomain">
               <div className="flex items-center gap-2">
                 <input className="input" value={ws.slug} disabled />
-                <span className="whitespace-nowrap text-[13px] text-muted">.qparts.app</span>
+                <span className="whitespace-nowrap text-[13px] text-muted">.easycarty.store</span>
               </div>
               <p className="mt-1 text-[11px] text-faint">
                 Locally we resolve the workspace via the switcher (X-Tenant header). In production each
@@ -62,7 +62,13 @@ export default function Settings() {
           <dl className="space-y-3 text-[13px]">
             <div className="flex justify-between">
               <dt className="text-muted">Environment</dt>
-              <dd>{ws.is_sandbox ? <Badge tone="amber">sandbox</Badge> : <Badge tone="green">live</Badge>}</dd>
+              <dd>
+                {environment === "sandbox" ? (
+                  <Badge tone="amber">sandbox — test data</Badge>
+                ) : (
+                  <Badge tone="green">live</Badge>
+                )}
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-muted">Your role</dt>

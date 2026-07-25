@@ -1,6 +1,6 @@
 import { bigint, boolean, integer, jsonb, pgTable, text, uuid, index, unique } from "drizzle-orm/pg-core";
 import { audit, pk, timestamps } from "./_shared";
-import { entityType, statusDomain } from "./enums";
+import { entityType, environmentType, statusDomain } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { regions } from "./reference";
@@ -21,6 +21,7 @@ export const attachments = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     entityType: entityType("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     fileKey: text("file_key").notNull(),
@@ -45,6 +46,7 @@ export const statusLogs = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     entityType: entityType("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     /**
@@ -73,6 +75,7 @@ export const notes = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     entityType: entityType("entity_type").notNull(),
     entityId: uuid("entity_id").notNull(),
     body: text("body").notNull(),
@@ -98,6 +101,7 @@ export const notificationLog = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     channel: text("channel").notNull(), // email | whatsapp | webhook
     recipient: text("recipient"),
     template: text("template"),
@@ -124,15 +128,17 @@ export const orderNumberCounters = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     regionId: uuid("region_id").references(() => regions.id),
     prefix: text("prefix").notNull(),
     nextValue: integer("next_value").notNull().default(1),
     ...timestamps,
   },
   (t) => [
-    // Key on (tenant, prefix): prefix already encodes the region/scope, and this keeps
+    // Key on (tenant, prefix, environment): prefix already encodes the region/scope, and this keeps
     // ON CONFLICT working (region_id is nullable and NULLs break a unique conflict target).
-    unique("order_number_counters_scope_uq").on(t.tenantId, t.prefix),
+    // environment is part of the key so a sandbox test can never burn a live document number.
+    unique("order_number_counters_scope_uq").on(t.tenantId, t.prefix, t.environment),
     index("order_number_counters_tenant_idx").on(t.tenantId),
     index("order_number_counters_region_idx").on(t.regionId),
   ],

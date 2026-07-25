@@ -21,6 +21,7 @@ export class OrdersController {
   @Get("orders")
   list(@Req() req: Request) {
     // scope to the active workspace even for platform staff (see rfq.controller note)
-    return this.orders.list({ ...requireTenantCtx(req), isInternal: false });
+    // ?queue= is OPT-IN: without it the query is byte-identical to before routing existed.
+    return this.orders.list({ ...requireTenantCtx(req), isInternal: false }, req.query.queue as string | undefined);
   }
 }

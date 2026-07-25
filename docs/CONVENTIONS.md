@@ -33,7 +33,7 @@ end-to-end وكل feature مُثبَت عملها — انظر [phases/phase-6](
 
 1. **موديول لكل مجال** (`rfq`, `orders`, `vendors`, …) — ممنوع god-module أو god-service. حد إرشادي: ملف > 400 سطر = راجع تقسيمه.
 2. **كل endpoint خلف guard صريح** (auth + role + tenant) — لا يوجد endpoint "مفتوح افتراضياً".
-3. **الآثار الجانبية (إيميل/واتساب/دفع/webhooks) عبر موديول `notifications` فقط**، وكلها تمرّ على sandbox guard (`tenant.is_sandbox`). ممنوع استدعاء provider خارجي مباشرة من أي service آخر.
+3. **الآثار الجانبية (إيميل/واتساب/دفع/webhooks) عبر موديول `notifications` فقط**، وكلها تمرّ على sandbox guard (`environment = 'sandbox'` — ADR-0012). ممنوع استدعاء provider خارجي مباشرة من أي service آخر.
 4. **DTOs بـ zod** على الحدود + أنواع Drizzle من السكيما — **ممنوع `any`** في طبقة الداتا. (القديم: 788 `any`.)
 5. **الأخطاء لا تُبلَع**: ممنوع `catch {}` فارغ. إمّا معالجة حقيقية أو إعادة رمي مع سياق. (القديم: 63 catch فارغ.)
 6. لا `console.log` — استخدم logger الـ NestJS.

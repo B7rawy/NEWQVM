@@ -1,6 +1,6 @@
 import { jsonb, pgTable, text, timestamp, uuid, index } from "drizzle-orm/pg-core";
 import { audit, money, pct, pk, timestamps } from "./_shared";
-import { pricingSource } from "./enums";
+import { environmentType, pricingSource } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { brandClasses, carBrands, costRanges, partCategories } from "./reference";
@@ -22,6 +22,7 @@ export const costLogs = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqItemId: uuid("rfq_item_id").references(() => rfqItems.id),
     vendorId: uuid("vendor_id").references(() => vendors.id),
     cost: money("cost"),
@@ -45,6 +46,7 @@ export const pricingLogs = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     rfqItemId: uuid("rfq_item_id").references(() => rfqItems.id),
     price: money("price"),
     pricingSource: pricingSource("pricing_source"),
@@ -156,6 +158,7 @@ export const stockFiles = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     fileDate: timestamp("file_date", { withTimezone: true }),
     partNumber: text("part_number"),
     brandClassId: uuid("brand_class_id").references(() => brandClasses.id),

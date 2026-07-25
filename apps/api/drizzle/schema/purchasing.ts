@@ -1,6 +1,6 @@
 import { integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { audit, money, pk } from "./_shared";
-import { returnResponsibility } from "./enums";
+import { environmentType, returnResponsibility } from "./enums";
 import { tenants } from "./tenancy";
 import { users } from "./identity";
 import { paymentAccounts, returnReasons, vendorStatuses } from "./reference";
@@ -20,6 +20,7 @@ export const purchaseOrders = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     orderId: uuid("order_id")
       .notNull()
       .references(() => orders.id),
@@ -53,6 +54,7 @@ export const purchaseItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     purchaseOrderId: uuid("purchase_order_id")
       .notNull()
       .references(() => purchaseOrders.id),
@@ -81,6 +83,7 @@ export const pickups = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     purchaseOrderId: uuid("purchase_order_id")
       .notNull()
       .references(() => purchaseOrders.id),
@@ -103,6 +106,7 @@ export const pickupItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     pickupId: uuid("pickup_id")
       .notNull()
       .references(() => pickups.id),
@@ -131,6 +135,7 @@ export const vendorCreditNotes = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     purchaseOrderId: uuid("purchase_order_id")
       .notNull()
       .references(() => purchaseOrders.id),
@@ -153,6 +158,7 @@ export const vendorCreditNoteItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     vendorCreditNoteId: uuid("vendor_credit_note_id")
       .notNull()
       .references(() => vendorCreditNotes.id),

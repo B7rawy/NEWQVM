@@ -17,7 +17,7 @@ export class InvoiceController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.invoice.issue(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }
@@ -27,7 +27,7 @@ export class InvoiceController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.invoice.getForOrder(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }

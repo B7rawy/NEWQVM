@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { RfqService } from "../rfq/rfq.service.js";
 import { requireCounterparty } from "../../common/counterparty.helpers.js";
+import { envOf } from "../../common/env-guards.js";
 
 /**
  * Workshop self-service portal (cross-workspace). A workshop is a GLOBAL customer linked to many
@@ -42,7 +43,8 @@ export class WorkshopPortalService {
 
   /** KPI counts over the workshop's own requests (across every linked workspace). */
   async overview(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const c = (await tx.execute(sql`
         select
@@ -54,14 +56,15 @@ export class WorkshopPortalService {
         join workshop_branches wb on wb.id = r.workshop_branch_id
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         left join item_statuses ist on ist.id = r.status_id
-        where r.environment = 'live'`))[0] as { total: number; open: number; ordered: number };
+        where r.environment = ${env}::environment_type`))[0] as { total: number; open: number; ordered: number };
       return { total: Number(c.total), open: Number(c.open), ordered: Number(c.ordered) };
     });
   }
 
   /** The workshop's requests (RFQs) across workspaces. */
   async requests(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const rows = await tx.execute(sql`
         select r.id, r.order_number, r.plate_number, r.created_at,
@@ -73,7 +76,7 @@ export class WorkshopPortalService {
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         join tenants t on t.id = r.tenant_id
         left join item_statuses ist on ist.id = r.status_id
-        where r.environment = 'live'
+        where r.environment = ${env}::environment_type
         order by r.created_at desc`);
       return { count: rows.length, requests: rows };
     });
@@ -81,7 +84,8 @@ export class WorkshopPortalService {
 
   /** One request: header + items + invited-vendor progress (names + responded, NO prices). */
   async requestDetail(ctx: RlsContext, rfqId: string) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const head = (await tx.execute(sql`
         select r.id, r.order_number, r.plate_number, r.vin, r.model, r.created_at,
@@ -91,7 +95,7 @@ export class WorkshopPortalService {
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         join tenants t on t.id = r.tenant_id
         left join item_statuses ist on ist.id = r.status_id
-        where r.id = ${rfqId}::uuid and r.environment = 'live' limit 1`))[0] as { id: string } | undefined;
+        where r.id = ${rfqId}::uuid and r.environment = ${env}::environment_type limit 1`))[0] as { id: string } | undefined;
       if (!head) throw new NotFoundException("request not found");
       const items = await tx.execute(sql`
         select id, part_number, part_description, quantity from rfq_items where rfq_id = ${rfqId}::uuid order by part_number`);
@@ -106,7 +110,7 @@ export class WorkshopPortalService {
 
   /** Data for the New Request form: the workshop's linked workspaces + its branches. */
   async context(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const workspaces = await tx.execute(sql`
         select distinct t.id, t.name from tenant_workshops tw
@@ -124,7 +128,7 @@ export class WorkshopPortalService {
 
   /** The workshop's branches + the workspaces it works with (read-only account page). */
   async branches(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const branches = await tx.execute(sql`
         select wb.id, wb.name, w.name as workshop, r.label_en as region, wb.order_category
@@ -144,7 +148,8 @@ export class WorkshopPortalService {
 
   /** The workshop's confirmed orders (across linked workspaces). */
   async orders(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const rows = await tx.execute(sql`
         select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code,
@@ -156,7 +161,7 @@ export class WorkshopPortalService {
         join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
         join tenants t on t.id = o.tenant_id
         left join item_statuses s on s.id = o.status_id
-        where o.environment = 'live'
+        where o.environment = ${env}::environment_type
         order by o.created_at desc`);
       return { count: rows.length, orders: rows };
     });
@@ -165,7 +170,7 @@ export class WorkshopPortalService {
   /** Create a request (RFQ) in a chosen linked workspace, for one of the workshop's own branches. */
   async createRequest(ctx: RlsContext, dto: z.infer<typeof createRequestSchema>) {
     // ownership + link check (internal read)
-    await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
       const ok = (await tx.execute(sql`
         select w.activation_status from workshop_users wu
@@ -177,9 +182,11 @@ export class WorkshopPortalService {
       // QNEW-71 §3.4: gate transactional actions until the account is activated.
       if (ok.activation_status !== "active") throw new ForbiddenException("activate your account before creating requests");
     });
-    // reuse the workspace RFQ-create (atomic order number + header + items) in the chosen tenant
+    // reuse the workspace RFQ-create (atomic order number + header + items) in the chosen tenant.
+    // The request is created in the environment the WORKSHOP is working in — hard-coding "live" here
+    // meant a workshop testing in Sandbox silently filed a real request (ADR-0012).
     return this.rfqService.create(
-      { tenantId: dto.tenantId, userId: ctx.userId, isInternal: false, environment: "live" },
+      { tenantId: dto.tenantId, userId: ctx.userId, isInternal: false, environment: envOf(ctx) },
       {
         workshopBranchId: dto.workshopBranchId,
         plateNumber: dto.plateNumber,

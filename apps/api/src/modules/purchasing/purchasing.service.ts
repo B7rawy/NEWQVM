@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { assertEnvironment } from "../../common/env-guards.js";
 
 @Injectable()
 export class PurchasingService {
@@ -26,12 +27,16 @@ export class PurchasingService {
 
   private async createForOrderInner(ctx: RlsContext, orderId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // bind to the acting workspace explicitly: these are platform-staff routes, and an internal
+      // context satisfies the PERMISSIVE tenant policy — without this a staffer on workspace A could
+      // attach a document to workspace B's order, leaving a row invisible to both.
       const order = (
         (await tx.execute(
-          sql`select id from orders where id = ${orderId}::uuid limit 1`,
-        )) as Array<{ id: string }>
+          sql`select id, environment from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`,
+        )) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      // a Sandbox session may not raise POs against a Live order, nor the reverse (ADR-0012)
+      assertEnvironment(ctx, order, "order");
 
       const existing = (
         (await tx.execute(
@@ -74,6 +79,7 @@ export class PurchasingService {
           .insert(schema.purchaseOrders)
           .values({
             tenantId: ctx.tenantId!,
+            environment: order.environment,
             orderId,
             vendorId,
             statusId: confirmedStatusId,
@@ -84,6 +90,7 @@ export class PurchasingService {
         await tx.insert(schema.purchaseItems).values(
           vendorItems.map((it) => ({
             tenantId: ctx.tenantId!,
+            environment: order.environment,
             purchaseOrderId: po.id,
             orderItemId: it.order_item_id,
             vendorQuoteItemId: it.quote_id,
@@ -129,10 +136,10 @@ export class PurchasingService {
         where id = ${poId}::uuid and invoice_amount is null
         returning id`)) as Array<{ id: string }>;
       if (!rows[0]) {
-        const exists = (await tx.execute(sql`select invoice_amount from purchase_orders where id = ${poId}::uuid limit 1`))[0] as
-          | { invoice_amount: string | null }
+        const exists = (await tx.execute(sql`select invoice_amount, environment from purchase_orders where id = ${poId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`))[0] as
+          | { invoice_amount: string | null; environment: "live" | "sandbox" }
           | undefined;
-        if (!exists) throw new NotFoundException("purchase order not found in this workspace");
+        assertEnvironment(ctx, exists, "purchase order");
         throw new BadRequestException(`invoice already recorded (${exists.invoice_amount})`);
       }
       return { purchaseOrderId: poId, invoiceAmount: amount.toFixed(2) };

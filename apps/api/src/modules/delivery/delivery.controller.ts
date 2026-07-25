@@ -17,7 +17,7 @@ export class DeliveryController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.delivery.create(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
       createDeliverySchema.parse(body),
     );
@@ -28,7 +28,7 @@ export class DeliveryController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.delivery.listForOrder(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }

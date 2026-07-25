@@ -12,7 +12,6 @@ export const createWorkspaceSchema = z.object({
     .min(2)
     .max(40)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "slug must be lowercase letters, numbers and single hyphens"),
-  isSandbox: z.boolean().optional().default(false),
 });
 export const linkCounterpartySchema = z.object({ classification: z.string().optional() });
 export const updateWorkspaceSchema = z.object({
@@ -30,7 +29,7 @@ export class WorkspacesAdminService {
   async list() {
     const rows = await this.dbService.withContext(INTERNAL, (tx) =>
       tx.execute(sql`
-        select t.id, t.slug, t.name, t.is_sandbox, t.is_active, t.created_at,
+        select t.id, t.slug, t.name, t.is_active, t.created_at,
           (select count(*)::int from tenant_workshops tw join workshop_branches wb on wb.workshop_id = tw.workshop_id
             where tw.tenant_id = t.id and tw.status <> 'archived') as branches,
           (select count(*)::int from tenant_vendors tv where tv.tenant_id = t.id and tv.status = 'active') as vendors,
@@ -47,8 +46,8 @@ export class WorkspacesAdminService {
       )[0];
       if (clash) throw new ConflictException(`workspace slug '${dto.slug}' is already taken`);
       const [t] = (await tx.execute(sql`
-        insert into tenants (name, slug, is_sandbox, created_by, updated_by)
-        values (${dto.name}, ${dto.slug}, ${dto.isSandbox}, ${actorUserId}::uuid, ${actorUserId}::uuid)
+        insert into tenants (name, slug, created_by, updated_by)
+        values (${dto.name}, ${dto.slug}, ${actorUserId}::uuid, ${actorUserId}::uuid)
         returning id, slug`)) as Array<{ id: string; slug: string }>;
       return { id: t.id, slug: t.slug };
     });
@@ -57,7 +56,7 @@ export class WorkspacesAdminService {
   async get(id: string) {
     const row = (
       await this.dbService.withContext(INTERNAL, (tx) =>
-        tx.execute(sql`select id, slug, name, is_sandbox, is_active, settings from tenants where id = ${id}::uuid limit 1`),
+        tx.execute(sql`select id, slug, name, is_active, settings from tenants where id = ${id}::uuid limit 1`),
       )
     )[0];
     if (!row) throw new NotFoundException("workspace not found");
@@ -70,10 +69,12 @@ export class WorkspacesAdminService {
    * active environment so the Live/Sandbox toggle switches them.
    */
   async detail(id: string, environment: "live" | "sandbox" = "live") {
-    return this.dbService.withContext(INTERNAL, async (tx) => {
+    // the GUC must agree with the predicates below, or the restrictive environment policy
+    // (migration 0041) would silently filter the operational sections to the wrong environment
+    return this.dbService.withContext({ ...INTERNAL, environment }, async (tx) => {
       const workspace = (
         (await tx.execute(sql`
-          select t.id, t.slug, t.name, t.is_sandbox, t.is_active, t.settings, t.logo_url, t.created_at,
+          select t.id, t.slug, t.name, t.is_active, t.settings, t.logo_url, t.created_at,
             p.name as plan, p.code as plan_code
           from tenants t left join plans p on p.id = t.plan_id
           where t.id = ${id}::uuid limit 1`)) as Array<Record<string, unknown>>

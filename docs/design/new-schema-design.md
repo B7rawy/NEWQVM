@@ -43,8 +43,8 @@ tenants (workspace — المشغّل مثل Qparts)
 ```
 
 ### `tenants` — الـ workspace
-`id, name, slug (unique — subdomain), logo_url, settings jsonb, plan_id, is_sandbox bool, is_active bool, created_at, updated_at`
-> **`is_sandbox`** يقود عزل الآثار الجانبية (ADR-0004).
+`id, name, slug (unique — subdomain), logo_url, settings jsonb, plan_id, is_active bool, created_at, updated_at`
+> ~~**`is_sandbox`** يقود عزل الآثار الجانبية (ADR-0004).~~ العمود حُذف؛ العزل الآن بـ `environment` على الصف (ADR-0012).
 
 ### `users` — عالمي (بلا tenant_id)
 `id, email (unique), password_hash (argon2), full_name, phone, is_active, created_at, updated_at`

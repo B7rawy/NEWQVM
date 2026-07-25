@@ -16,7 +16,7 @@ export class ProviderPortalController {
 
   private ctx(req: Request) {
     const c = getContext(req);
-    return { tenantId: null, userId: c.userId, isInternal: c.isInternal };
+    return { tenantId: null, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
 
   @Get("overview")

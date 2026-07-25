@@ -1,4 +1,5 @@
 import {
+  GitBranch,
   LayoutDashboard,
   FilePlus2,
   Files,
@@ -31,8 +32,7 @@ import {
   ClipboardCheck,
   UserPlus,
   Settings,
-  type LucideIcon,
-} from "lucide-react";
+  type LucideIcon, Inbox,} from "lucide-react";
 
 export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider";
 
@@ -54,6 +54,7 @@ export const platformNav: NavGroup[] = [
   {
     heading: "Workspace",
     items: [
+      { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes },
       { label: "Management Overview", path: "/management-overview", icon: Gauge },
@@ -88,6 +89,7 @@ export const platformNav: NavGroup[] = [
     heading: "Admin",
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
+      { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
       { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
@@ -105,6 +107,7 @@ export const platformSystemNav: NavGroup[] = [
   {
     heading: "Platform",
     items: [
+      { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Management Overview", path: "/management-overview", icon: Gauge },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes },
     ],
@@ -113,6 +116,7 @@ export const platformSystemNav: NavGroup[] = [
     heading: "Control tower",
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
+      { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
     ],

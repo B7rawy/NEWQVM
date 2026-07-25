@@ -35,7 +35,7 @@
 **اتنفّذ (Phase 1a — الأساس):**
 - أدوات `apps/api`: package.json (drizzle-orm/drizzle-kit/postgres/tsx)، tsconfig، drizzle.config.ts.
 - `drizzle/schema/`: `_shared` (helpers: pk/audit/money/pct)، `enums` (10 enums)، `reference`
-  (13 جدول مرجعي)، `tenancy` (plans/tenants + is_sandbox)، `identity` (users عالمي + tenant_memberships)،
+  (13 جدول مرجعي)، `tenancy` (plans/tenants)، `identity` (users عالمي + tenant_memberships)،
   `org` (workshops/workshop_branches — العميل صعد للرأس).
 - `drizzle/seed/reference-data.ts`: **مفردات الحالات كاملة زي القديم** (item_status 24 قيمة، vendor_status 14)
   مع `legacyId` للترحيل؛ دمج `Canceled/Cancelled` في `cancelled` واحد يحمل الـ id القديمين [18,268].

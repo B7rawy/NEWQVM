@@ -18,7 +18,7 @@ export class ReturnsController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.returns.create(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
       createReturnSchema.parse(body),
     );
@@ -29,7 +29,7 @@ export class ReturnsController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.returns.listForOrder(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }
@@ -41,7 +41,7 @@ export class ReturnsController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.returns.issueCreditNote(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       returnId,
     );
   }

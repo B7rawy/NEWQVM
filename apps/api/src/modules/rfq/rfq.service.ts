@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
+import { queuePredicate } from "../workflow/routing.js";
 import { z } from "zod";
 import { DbService } from "../../db/db.service.js";
 import { schema } from "../../db/db.service.js";
@@ -37,6 +38,7 @@ export class RfqService {
    * customer lives at the header (workshop_branch_id), the winning-quote wiring comes later.
    */
   async create(ctx: RlsContext, dto: CreateRfqDto) {
+    const env = ctx.environment ?? "live";
     return this.dbService.withContext(ctx, async (tx) => {
       // branch's workshop must be LINKED to THIS workspace (workshops are global now, ADR-0011).
       // tenant_workshops is tenant-scoped, so the join enforces the branch belongs to a linked workshop.
@@ -58,7 +60,7 @@ export class RfqService {
         : "RFQ-";
       const orderNumber = (
         (await tx.execute(
-          sql`select public.next_order_number(${ctx.tenantId}::uuid, ${prefix}, ${branch.region_id}) as n`,
+          sql`select public.next_order_number(${ctx.tenantId}::uuid, ${prefix}, ${branch.region_id}, ${env}) as n`,
         )) as Array<{ n: string }>
       )[0].n;
 
@@ -72,7 +74,7 @@ export class RfqService {
         .insert(schema.rfqs)
         .values({
           tenantId: ctx.tenantId!,
-          environment: ctx.environment ?? "live",
+          environment: env,
           orderNumber,
           workshopBranchId: dto.workshopBranchId,
           plateNumber: dto.plateNumber,
@@ -89,6 +91,7 @@ export class RfqService {
       await tx.insert(schema.rfqItems).values(
         dto.items.map((it) => ({
           tenantId: ctx.tenantId!,
+          environment: env, // a line always lives in the same environment as its RFQ
           rfqId: rfq.id,
           partNumber: it.partNumber,
           partDescription: it.partDescription,
@@ -103,7 +106,7 @@ export class RfqService {
     });
   }
 
-  async list(ctx: RlsContext) {
+  async list(ctx: RlsContext, queue?: string) {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select r.id, r.order_number, r.plate_number, s.label_en as status,
@@ -111,6 +114,7 @@ export class RfqService {
         from rfqs r
         left join item_statuses s on s.id = r.status_id
         where r.environment = ${ctx.environment ?? "live"}
+          and ${queuePredicate(sql`s.code`, queue)}
         order by r.created_at desc
         limit 50`),
     );

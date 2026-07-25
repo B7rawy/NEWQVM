@@ -168,6 +168,11 @@ export const returnIssueType = pgEnum("return_issue_type", [
 /** Status vocabulary a status_log row refers to (item lifecycle vs vendor lifecycle). */
 export const statusDomain = pgEnum("status_domain", ["item", "vendor"]);
 
+/** Flow lifecycle (QNEW-64). draft = editable; active = frozen and records may enter; retired =
+ *  no new records, existing ones finish on it. An enum, not text: M4/M5/M6 all key on 'active',
+ *  and a stray 'Active' would silently escape every one of those guards. */
+export const workflowFlowStatus = pgEnum("workflow_flow_status", ["draft", "active", "retired"]);
+
 /**
  * Counterparty Identity & Governed Onboarding (QNEW-71 + onboarding pipeline).
  * `counterpartyType` = QNEW-71's individual/company classification (named `counterparty_type` to

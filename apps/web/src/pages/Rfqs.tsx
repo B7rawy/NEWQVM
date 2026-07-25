@@ -30,7 +30,9 @@ export default function Rfqs() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await api.get<{ rfqs: Rfq[] }>("/rfqs");
+    // ?queue= lets the workspace's workflow decide which statuses belong on this screen. A status
+    // the flow routes nowhere still appears here, so an unconfigured workspace sees no change.
+    const res = await api.get<{ rfqs: Rfq[] }>("/rfqs?queue=rfqs");
     setRfqs(res.rfqs);
     try {
       const b = await api.get<{ branches: Branch[] }>("/workspaces/branches");

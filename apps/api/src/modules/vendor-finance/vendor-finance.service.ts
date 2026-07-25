@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { envOf } from "../../common/env-guards.js";
 
 const FINANCING_INTEREST_PCT = 2.5; // single system-wide fixed rate (QNEW-52)
 
@@ -55,6 +56,7 @@ export class VendorFinanceService {
         .insert(schema.vendorPayments)
         .values({
           tenantId: ctx.tenantId!,
+          environment: envOf(ctx),
           vendorId: dto.vendorId,
           amount: dto.amount.toFixed(2),
           reference: dto.reference,
@@ -64,6 +66,7 @@ export class VendorFinanceService {
         await tx.insert(schema.vendorPaymentAllocations).values(
           dto.allocations.map((a) => ({
             tenantId: ctx.tenantId!,
+            environment: envOf(ctx),
             paymentId: p.id,
             purchaseOrderId: a.purchaseOrderId,
             allocatedAmount: a.amount.toFixed(2),
@@ -106,6 +109,7 @@ export class VendorFinanceService {
         .insert(schema.vendorFinancingRequests)
         .values({
           tenantId: ctx.tenantId!,
+          environment: envOf(ctx),
           vendorId: dto.vendorId,
           requestedAmount: dto.requestedAmount.toFixed(2),
           interestRatePct: FINANCING_INTEREST_PCT.toFixed(2),

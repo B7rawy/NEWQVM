@@ -31,6 +31,9 @@ import WorkshopNewRequest from "./pages/workshop/WorkshopNewRequest";
 import WorkshopRequestDetail from "./pages/workshop/WorkshopRequestDetail";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
+import Workflows from "./pages/admin/Workflows";
+import MyWork from "./pages/MyWork";
+import WorkflowCanvas from "./pages/admin/WorkflowCanvas";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
 import { platformNav, workspaceNav, vendorNav, workshopNav, providerNav, navForPersona } from "./nav";
@@ -61,6 +64,7 @@ function Placeholder() {
 }
 
 const WIRED = new Set([
+  "/my-work",
   "/overview",
   "/rfqs",
   "/orders",
@@ -71,6 +75,7 @@ const WIRED = new Set([
   "/management-overview",
   "/admin/users",
   "/admin/workspaces",
+  "/admin/workflows",
   "/onboarding",
   "/onboarding/review",
   "/vendor",
@@ -110,8 +115,11 @@ export default function App() {
 
   return (
     <Routes>
+      {/* full-screen: the builder owns the viewport, so it sits OUTSIDE AppShell */}
+      <Route path="/admin/workflows/:id" element={<WorkflowCanvas />} />
       <Route element={<AppShell />}>
         <Route path="/overview" element={systemMode ? <Navigate to="/admin/workspaces" replace /> : <Overview />} />
+        <Route path="/my-work" element={<MyWork />} />
         <Route path="/rfqs" element={<Rfqs />} />
         <Route path="/rfqs/:id" element={<RfqDetail />} />
         <Route path="/orders" element={<Orders />} />
@@ -137,6 +145,7 @@ export default function App() {
         <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />
         <Route path="/workshop/branches" element={<WorkshopBranches />} />
         <Route path="/workshop/orders" element={<WorkshopOrders />} />
+        <Route path="/admin/workflows" element={<Workflows />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/settings" element={<Settings />} />

@@ -32,8 +32,16 @@ export const auth = {
     else localStorage.removeItem(WS_KEY);
     setSharedCookie(WS_KEY, slug); // per-origin storage alone would carry the ADMIN's workspace over
   },
-  environment: (): "live" | "sandbox" => (localStorage.getItem(ENV_KEY) === "sandbox" ? "sandbox" : "live"),
-  setEnvironment: (e: "live" | "sandbox") => localStorage.setItem(ENV_KEY, e),
+  // Same rule as the rest: cookie-first, so choosing Sandbox on the apex is still Sandbox after the
+  // hop to <slug>.easycarty.store. A localStorage-only copy silently reverted to Live on every hop —
+  // and reverting to Live is the one direction that must never happen by accident (ADR-0012).
+  environment: (): "live" | "sandbox" =>
+    (getCookie(ENV_KEY) ?? localStorage.getItem(ENV_KEY)) === "sandbox" ? "sandbox" : "live",
+  setEnvironment: (e: "live" | "sandbox" | null) => {
+    if (e) localStorage.setItem(ENV_KEY, e);
+    else localStorage.removeItem(ENV_KEY);
+    setSharedCookie(ENV_KEY, e);
+  },
   // "view as": the real admin token is stashed while impersonating so we can return to it. It MUST
   // live in the cross-subdomain cookie too — impersonation routinely moves you between the apex and
   // a workspace subdomain, and a localStorage-only copy would be lost on the way (making "Back to
@@ -52,11 +60,22 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/**
+ * `opts.tenant` targets ONE request at a workspace without switching the app into it. Platform staff
+ * administer many workspaces from one screen (the flow builder is the first), and making them hop
+ * into each workspace to configure it — losing the admin sidebar every time — is the wrong shape.
+ * The server already authorises this: AuthGuard lets internal staff name any workspace via X-Tenant
+ * and still requires a real membership/link for everyone else, so this widens no access.
+ */
+export interface ReqOpts {
+  tenant?: string | null;
+}
+
+async function request<T>(method: string, path: string, body?: unknown, opts?: ReqOpts): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   const token = auth.token();
   if (token) headers.authorization = `Bearer ${token}`;
-  const ws = auth.workspace();
+  const ws = opts?.tenant ?? auth.workspace();
   if (ws) headers["x-tenant"] = ws;
   headers["x-environment"] = auth.environment();
 
@@ -74,7 +93,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  get: <T>(p: string) => request<T>("GET", p),
-  post: <T>(p: string, body?: unknown) => request<T>("POST", p, body),
-  patch: <T>(p: string, body?: unknown) => request<T>("PATCH", p, body),
+  get: <T>(p: string, o?: ReqOpts) => request<T>("GET", p, undefined, o),
+  post: <T>(p: string, body?: unknown, o?: ReqOpts) => request<T>("POST", p, body, o),
+  put: <T>(p: string, body?: unknown, o?: ReqOpts) => request<T>("PUT", p, body, o),
+  patch: <T>(p: string, body?: unknown, o?: ReqOpts) => request<T>("PATCH", p, body, o),
+  del: <T>(p: string, o?: ReqOpts) => request<T>("DELETE", p, undefined, o),
 };

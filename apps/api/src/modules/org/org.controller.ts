@@ -14,12 +14,12 @@ export class OrgController {
   private ctx(req: Request) {
     const c = getContext(req);
     if (!c.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
-    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
+    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
   /** Read-only ctx that allows no active workspace (platform staff → global list). */
   private ctxOpen(req: Request) {
     const c = getContext(req);
-    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal };
+    return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
 
   @Get("workshops")

@@ -1,12 +1,11 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, auth } from "./api";
+import { api, ApiError, auth } from "./api";
 import { subdomainMode, currentSubdomain, workspaceUrl, apexUrl, subdomainReachable } from "./tenant";
 
 export interface Workspace {
   id: string;
   slug: string;
   name: string;
-  is_sandbox: boolean;
   role: string | null;
   /** how this workspace is reachable: platform | membership | vendor | workshop */
   via?: string;
@@ -16,6 +15,8 @@ import type { Persona } from "../nav";
 interface Me {
   user: { id: string; email: string; full_name: string } | null;
   role: string | null;
+  /** The environment the SERVER resolved for this request — the authority, not the browser's belief. */
+  environment: "live" | "sandbox";
   isInternal: boolean;
   platformRole: string | null;
   isVendor: boolean;
@@ -66,6 +67,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadMe() {
     const m = await api.get<Me>("/me");
+    // The server is the authority on which environment it actually applied. If the browser's belief
+    // disagrees — a cookie that expired mid-session, a proxy that stripped the header, another tab
+    // that toggled — trust the server, so the banner can never say Sandbox while writes go to Live.
+    if (m.environment && m.environment !== auth.environment()) {
+      auth.setEnvironment(m.environment);
+      setEnvironmentState(m.environment);
+    }
     setMe(m);
     return m;
   }
@@ -134,9 +142,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const slug = await loadWorkspaces(m.isInternal);
         await settleHome(m, slug);
       })
-      .catch(() => {
-        // A failed boot is usually "this session cannot use THIS HOST", not "these credentials are
-        // bad" — so recover in that order instead of destroying the session:
+      .catch(async (e: unknown) => {
+        // NEVER destroy a session because the SERVER had a moment. A 502/503 during a deploy, or a
+        // dropped connection, is not "your credentials are bad" — but this used to fall straight
+        // through to logout(), so an API restart signed everyone out mid-session and (since the
+        // environment is part of the session) silently dropped them back to Live. Reported from
+        // production on 2026-07-25 while the API was restarting.
+        const status = e instanceof ApiError ? e.status : 0; // 0 = fetch never reached the server
+        const serverIsDown = status === 0 || status >= 500;
+        if (serverIsDown) {
+          // keep the session and retry — the server is coming back, the user has done nothing wrong
+          for (let attempt = 0; attempt < 5; attempt++) {
+            await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+            try {
+              const m = await loadMe();
+              const slug = await loadWorkspaces(m.isInternal);
+              await settleHome(m, slug);
+              return;
+            } catch (retryErr) {
+              const s = retryErr instanceof ApiError ? retryErr.status : 0;
+              if (s !== 0 && s < 500) break; // it answered, and the answer is about US → fall through
+            }
+          }
+          return; // still unreachable: stay signed in rather than throw the session away
+        }
+        // From here it IS an auth/authorization failure. Recover in the least destructive order:
         if (auth.realToken()) return stopImpersonating(); // borrowed session → back to the admin
         if (subdomainMode() && currentSubdomain()) {
           // stuck on a workspace subdomain we have no access to → drop it and retry on the apex
@@ -176,10 +206,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     auth.setToken(null);
     auth.setWorkspace(null);
     auth.setRealToken(null);
+    // the environment is part of the session too: the next person to sign in on this browser must
+    // start in Live, never inherit someone else's Sandbox and mistake test data for real data
+    auth.setEnvironment(null);
     setAuthed(false);
     setMe(null);
     setWorkspaces([]);
     setActiveSlug(null);
+    setEnvironmentState("live");
   }
   async function switchWorkspace(slug: string | null) {
     // slug === null → unscoped "All workspaces" / system view (platform staff).

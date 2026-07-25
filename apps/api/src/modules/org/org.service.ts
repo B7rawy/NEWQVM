@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
+import { envOf } from "../../common/env-guards.js";
 
 /** Scope org reads/writes to the ACTIVE workspace even for platform staff. */
 const scoped = (ctx: RlsContext): RlsContext => ({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: false });
@@ -76,8 +77,9 @@ export class OrgService {
    * and ITS OWN requests — a shared global counterparty must not leak another tenant's relationship.
    */
   async workshopDetail(ctx: RlsContext, id: string) {
+    const env = envOf(ctx);
     const global = ctx.isInternal && !ctx.tenantId;
-    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const w = (await tx.execute(sql`
         select id, name, counterparty_type, activation_status, tax_number, commercial_registration_number,
           primary_phone, primary_email, is_active, created_at
@@ -119,7 +121,7 @@ export class OrgService {
         join workshop_branches wb on wb.id = r.workshop_branch_id and wb.workshop_id = ${id}::uuid
         join tenants t on t.id = r.tenant_id
         left join item_statuses s on s.id = r.status_id
-        where r.environment = 'live' ${global ? sql`` : sql`and r.tenant_id = ${ctx.tenantId}::uuid`}
+        where r.environment = ${env}::environment_type ${global ? sql`` : sql`and r.tenant_id = ${ctx.tenantId}::uuid`}
         order by r.created_at desc limit 10`);
 
       return { workshop: w, branches, accounts, workspaces, requests };

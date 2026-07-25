@@ -4,8 +4,11 @@ import { Field } from "../components/ui";
 
 export default function Login() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("admin@qparts.local");
-  const [password, setPassword] = useState("admin1234");
+  // NEVER prefill credentials. These defaults used to be the seeded Platform Admin's email AND
+  // password, and they shipped in the production bundle — opening the site and pressing Sign in
+  // handed anyone the most privileged account on the platform.
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 

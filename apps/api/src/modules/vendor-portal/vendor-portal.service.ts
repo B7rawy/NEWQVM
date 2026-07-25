@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { VendorRfqService, type SubmitQuoteDto } from "../rfq/vendor-rfq.service.js";
 import { requireCounterparty } from "../../common/counterparty.helpers.js";
+import { assertEnvironment, envOf } from "../../common/env-guards.js";
 
 /**
  * Vendor self-service portal (cross-workspace). A vendor is a GLOBAL identity linked to many
@@ -27,7 +28,8 @@ export class VendorPortalService {
 
   /** KPI counts over the vendor's quotation requests (across every linked workspace). */
   async overview(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const c = (await tx.execute(sql`
         select
@@ -38,7 +40,7 @@ export class VendorPortalService {
         from rfq_vendors rv
         join vendor_statuses vs on vs.id = rv.status_id
         join rfqs r on r.id = rv.rfq_id
-        where rv.vendor_id = ${vid}::uuid and r.environment = 'live'`))[0] as { total: number; open: number; priced: number; won: number };
+        where rv.vendor_id = ${vid}::uuid and r.environment = ${env}::environment_type`))[0] as { total: number; open: number; priced: number; won: number };
       const total = Number(c.total);
       const responded = Number(c.priced) + Number(c.won);
       return {
@@ -53,7 +55,8 @@ export class VendorPortalService {
 
   /** The vendor's quotation-request queue (across workspaces). */
   async quotations(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rows = await tx.execute(sql`
         select rv.id, r.order_number, r.plate_number, rv.sent_at, r.created_at,
@@ -64,7 +67,7 @@ export class VendorPortalService {
         join rfqs r on r.id = rv.rfq_id
         join vendor_statuses vs on vs.id = rv.status_id
         join tenants t on t.id = rv.tenant_id
-        where rv.vendor_id = ${vid}::uuid and r.environment = 'live'
+        where rv.vendor_id = ${vid}::uuid and r.environment = ${env}::environment_type
         order by coalesce(rv.sent_at, r.created_at) desc`);
       return { count: rows.length, quotations: rows };
     });
@@ -72,7 +75,8 @@ export class VendorPortalService {
 
   /** One quotation request: header + line items with THIS vendor's quote (if any). */
   async quotationDetail(ctx: RlsContext, rfqVendorId: string) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const head = (await tx.execute(sql`
         select rv.id, rv.rfq_id, rv.tenant_id, r.order_number, r.plate_number, rv.sent_at,
@@ -81,7 +85,7 @@ export class VendorPortalService {
         join rfqs r on r.id = rv.rfq_id
         join vendor_statuses vs on vs.id = rv.status_id
         join tenants t on t.id = rv.tenant_id
-        where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid and r.environment = 'live' limit 1`))[0] as
+        where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid and r.environment = ${env}::environment_type limit 1`))[0] as
         | { rfq_id: string; status: string }
         | undefined;
       if (!head) throw new NotFoundException("quotation request not found");
@@ -98,7 +102,8 @@ export class VendorPortalService {
 
   /** Orders this vendor won — derived via order_items → winning rfq_vendor_item → rfq_vendors.vendor_id. */
   async orders(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rows = await tx.execute(sql`
         select o.id, o.order_number, o.created_at, s.label_en as status, s.code as status_code, t.name as workspace,
@@ -110,7 +115,7 @@ export class VendorPortalService {
         join rfq_vendors rv on rv.id = rvi.rfq_vendor_id
         join tenants t on t.id = o.tenant_id
         left join item_statuses s on s.id = o.status_id
-        where rv.vendor_id = ${vid}::uuid and o.environment = 'live'
+        where rv.vendor_id = ${vid}::uuid and o.environment = ${env}::environment_type
         group by o.id, o.order_number, o.created_at, s.label_en, s.code, t.name
         order by o.created_at desc`);
       return { count: rows.length, orders: rows };
@@ -119,7 +124,7 @@ export class VendorPortalService {
 
   /** The vendor's own profile: identity + branches + the workspaces it supplies (read-only). */
   async profile(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const v = (await tx.execute(sql`
         select legal_name, counterparty_type, activation_status, vendor_type, primary_email, primary_phone,
@@ -139,22 +144,26 @@ export class VendorPortalService {
   /** Submit / update this vendor's quote. Ownership + live checks here; the WRITE is the shared
    *  VendorRfqService.writeQuoteItems (same code the token flow uses — the paths cannot diverge). */
   async submitQuote(ctx: RlsContext, rfqVendorId: string, dto: SubmitQuoteDto) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
       const rv = (await tx.execute(sql`
         select rv.id, rv.rfq_id, rv.tenant_id, r.environment from rfq_vendors rv
         join rfqs r on r.id = rv.rfq_id
         where rv.id = ${rfqVendorId}::uuid and rv.vendor_id = ${vid}::uuid limit 1`))[0] as
-        | { id: string; rfq_id: string; tenant_id: string; environment: string }
+        | { id: string; rfq_id: string; tenant_id: string; environment: "live" | "sandbox" }
         | undefined;
-      if (!rv) throw new NotFoundException("quotation request not found");
-      if (rv.environment !== "live") throw new BadRequestException("this request is not live");
+      // the request must belong to the environment the vendor is currently working in (ADR-0012)
+      assertEnvironment(ctx, rv, "quotation request");
       // QNEW-71 §3.4: transactional actions are gated until the account is activated.
       const act = (await tx.execute(sql`select activation_status from vendors where id = ${vid}::uuid limit 1`))[0] as
         | { activation_status: string }
         | undefined;
       if (act?.activation_status !== "active") throw new ForbiddenException("activate your account before submitting quotes");
-      return this.vendorRfq.writeQuoteItems(tx, { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id }, dto);
+      return this.vendorRfq.writeQuoteItems(
+        tx,
+        { tenantId: rv.tenant_id, rfqVendorId: rv.id, rfqId: rv.rfq_id, environment: rv.environment, actorUserId: ctx.userId },
+        dto,
+      );
     });
   }
 }

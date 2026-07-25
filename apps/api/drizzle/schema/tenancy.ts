@@ -28,7 +28,6 @@ export const tenants = pgTable(
     settings: jsonb("settings").notNull().default({}),
     planId: uuid("plan_id").references(() => plans.id),
     /** Drives side-effect isolation (ADR-0004): sandbox tenants never hit real providers. */
-    isSandbox: boolean("is_sandbox").notNull().default(false),
     isActive: isActive(),
     ...audit,
   },

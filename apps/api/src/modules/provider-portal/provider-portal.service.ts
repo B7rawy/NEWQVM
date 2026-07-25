@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { requireCounterparty } from "../../common/counterparty.helpers.js";
+import { envOf } from "../../common/env-guards.js";
 
 /**
  * Service-provider self-service portal (cross-workspace), the third counterparty portal. A provider
@@ -19,7 +20,7 @@ export class ProviderPortalService {
 
   /** The provider's own record + the workspaces it serves. */
   async overview(ctx: RlsContext) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const id = await this.requireProviderId(tx, ctx.userId);
       const provider = (await tx.execute(sql`
         select legal_name, scope, service_type, counterparty_type, activation_status,

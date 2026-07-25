@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { sql } from "drizzle-orm";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 import { PricingService } from "../pricing/pricing.service.js";
+import { assertEnvironment } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 const VAT_RATE = 0.15; // KSA VAT
 
@@ -10,6 +12,7 @@ export class InvoiceService {
   constructor(
     private readonly dbService: DbService,
     private readonly pricing: PricingService,
+    private readonly status: StatusService,
   ) {}
 
   /**
@@ -30,12 +33,15 @@ export class InvoiceService {
 
   private async issueInner(ctx: RlsContext, orderId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
+      // bind to the acting workspace explicitly: these are platform-staff routes, and an internal
+      // context satisfies the PERMISSIVE tenant policy — without this a staffer on workspace A could
+      // attach a document to workspace B's order, leaving a row invisible to both.
       const order = (
         (await tx.execute(
-          sql`select id, order_number from orders where id = ${orderId}::uuid limit 1`,
-        )) as Array<{ id: string; order_number: string }>
+          sql`select id, order_number, environment from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`,
+        )) as Array<{ id: string; order_number: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      assertEnvironment(ctx, order, "order");
 
       const existing = (
         (await tx.execute(
@@ -99,7 +105,7 @@ export class InvoiceService {
 
       const invoiceNumber = (
         (await tx.execute(
-          sql`select public.next_order_number(${ctx.tenantId}::uuid, 'INV-', null) as n`,
+          sql`select public.next_order_number(${ctx.tenantId}::uuid, 'INV-', null, ${order.environment}) as n`,
         )) as Array<{ n: string }>
       )[0].n;
 
@@ -107,6 +113,7 @@ export class InvoiceService {
         .insert(schema.invoices)
         .values({
           tenantId: ctx.tenantId!,
+          environment: order.environment,
           orderId,
           invoiceNumber,
           issuedAt: new Date(),
@@ -120,6 +127,7 @@ export class InvoiceService {
       await tx.insert(schema.invoiceItems).values(
         lines.map((l) => ({
           tenantId: ctx.tenantId!,
+          environment: order.environment,
           invoiceId: invoice.id,
           orderItemId: l.order_item_id,
           qty: Number(l.qty),
@@ -127,7 +135,7 @@ export class InvoiceService {
         })),
       );
 
-      await tx.execute(sql`update orders set status_id = ${invoiceStatusId} where id = ${orderId}::uuid`);
+      await this.status.transition(tx, ctx, { entity: "order", id: orderId, toCode: "invoice_issued" });
 
       return {
         invoiceId: invoice.id,

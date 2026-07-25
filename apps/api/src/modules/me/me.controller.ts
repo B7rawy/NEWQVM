@@ -63,6 +63,10 @@ export class MeController {
       user: info.user,
       tenant: { slug: ctx.tenantSlug, id: ctx.tenantId },
       role: ctx.role,
+      // Echo back the environment the SERVER actually resolved. resolveEnvironment() fails open to
+      // 'live' on an absent/misspelled/proxy-stripped header, so a client that believes it is in
+      // Sandbox has no other way to discover it is really writing to Live.
+      environment: ctx.environment,
       isInternal: ctx.isInternal,
       platformRole: info.platformRole ?? null,
       isVendor: info.isVendor,

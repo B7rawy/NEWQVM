@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import argon2 from "argon2";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
+import { envOf } from "../../common/env-guards.js";
 
 /** Platform-tier roles (ADR-0010). These are NOT workspace roles — they span every workspace. */
 export const PLATFORM_ROLES = ["super_admin", "staff", "account_manager", "purchasing", "part_extractor", "finance_manager", "pricing_supervisor"] as const; // MUST match the pg enum platform_role exactly
@@ -35,7 +36,7 @@ export class PlatformStaffService {
 
   /** Everyone on the platform team, with their role + account state. */
   async list(ctx: RlsContext) {
-    const rows = await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, (tx) =>
+    const rows = await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, (tx) =>
       tx.execute(sql`
         select pm.id, pm.role, pm.is_active, pm.created_at,
           u.id as user_id, u.full_name, u.email, u.is_active as user_active
@@ -50,7 +51,7 @@ export class PlatformStaffService {
     this.requireSuperAdmin(ctx);
     const email = dto.email.trim().toLowerCase();
     const hash = dto.password ? await argon2.hash(dto.password) : null;
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const existing = (await tx.execute(sql`select id from users where email = ${email} limit 1`))[0] as
         | { id: string }
         | undefined;
@@ -79,7 +80,7 @@ export class PlatformStaffService {
   /** Change a platform role or deactivate the membership. */
   async update(ctx: RlsContext & { platformRole?: string | null }, memberId: string, dto: z.infer<typeof updatePlatformStaffSchema>) {
     this.requireSuperAdmin(ctx);
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const m = (await tx.execute(sql`
         select id, user_id, role, is_active from platform_members where id = ${memberId}::uuid limit 1`))[0] as
         | { id: string; user_id: string; role: string; is_active: boolean }
@@ -117,7 +118,7 @@ export class PlatformStaffService {
    */
   async globalUsers(ctx: RlsContext, q?: string) {
     const needle = q?.trim() ? `%${q.trim().replace(/[%_\\]/g, (c) => "\\" + c)}%` : null;
-    const rows = await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, (tx) =>
+    const rows = await this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, (tx) =>
       tx.execute(sql`
         select u.id, u.full_name, u.email, u.is_active,
           (select pm.role from platform_members pm where pm.user_id = u.id and pm.is_active limit 1) as platform_role,

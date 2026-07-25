@@ -1,7 +1,7 @@
 import { integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 // (uniqueIndex used for the pricing-policy scope constraint below)
 import { audit, money, pct, pk } from "./_shared";
-import { adjustmentType, pricingScopeType } from "./enums";
+import { adjustmentType, environmentType, pricingScopeType } from "./enums";
 import { tenants } from "./tenancy";
 import { vendors } from "./vendors";
 import { cities, regions } from "./reference";
@@ -18,6 +18,7 @@ export const vendorStockItems = pgTable(
     tenantId: uuid("tenant_id")
       .notNull()
       .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
     vendorId: uuid("vendor_id")
       .notNull()
       .references(() => vendors.id),

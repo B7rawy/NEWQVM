@@ -8,7 +8,7 @@ import LinkCounterpartyDialog from "../../components/LinkCounterpartyDialog";
 import { Link as RouterLink } from "react-router-dom";
 
 interface WsDetail {
-  workspace: { id: string; slug: string; name: string; is_sandbox: boolean; is_active: boolean; created_at: string; plan: string | null; plan_code: string | null; logo_url: string | null; settings: Record<string, unknown> };
+  workspace: { id: string; slug: string; name: string; is_active: boolean; created_at: string; plan: string | null; plan_code: string | null; logo_url: string | null; settings: Record<string, unknown> };
   environment: "live" | "sandbox";
   users: Array<{ id: string; full_name: string; email: string; role: string; branch: string | null; is_active: boolean }>;
   workshops: Array<{ id: string; name: string; tax_number: string | null; branches: number }>;
@@ -81,10 +81,9 @@ export default function WorkspaceDetail() {
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-[20px] font-semibold tracking-tight text-ink">{w.name}</h1>
-            {w.is_sandbox && <Badge tone="amber">sandbox</Badge>}
             <Badge tone={w.is_active ? "green" : "gray"}>{w.is_active ? "active" : "inactive"}</Badge>
           </div>
-          <div className="text-[12.5px] text-muted tnum">{w.slug}.qparts.app</div>
+          <div className="text-[12.5px] text-muted tnum">{w.slug}.easycarty.store</div>
         </div>
         <div className="ml-auto flex items-center gap-2">
           {submissions.length > 0 && (
@@ -152,10 +151,10 @@ export default function WorkspaceDetail() {
           <Card>
             <h3 className="mb-3 text-[14px] font-semibold text-ink">Workspace details</h3>
             <dl className="divide-y divide-line-2 text-[13px]">
-              <div className="flex justify-between py-1.5"><dt className="text-muted">Subdomain</dt><dd className="font-medium tnum">{w.slug}.qparts.app</dd></div>
+              <div className="flex justify-between py-1.5"><dt className="text-muted">Subdomain</dt><dd className="font-medium tnum">{w.slug}.easycarty.store</dd></div>
               <div className="flex justify-between py-1.5"><dt className="text-muted">Slug</dt><dd className="font-medium tnum">{w.slug}</dd></div>
               <div className="flex justify-between py-1.5"><dt className="text-muted">Plan</dt><dd className="font-medium">{w.plan ?? "—"}</dd></div>
-              <div className="flex justify-between py-1.5"><dt className="text-muted">Data mode</dt><dd><Badge tone={w.is_sandbox ? "amber" : "gray"}>{w.is_sandbox ? "sandbox workspace" : "live workspace"}</Badge></dd></div>
+              
               <div className="flex justify-between py-1.5"><dt className="text-muted">Status</dt><dd><Badge tone={w.is_active ? "green" : "gray"}>{w.is_active ? "active" : "suspended"}</Badge></dd></div>
               <div className="flex justify-between py-1.5"><dt className="text-muted">Workspace id</dt><dd className="font-medium tnum text-[11.5px]">{w.id}</dd></div>
             </dl>

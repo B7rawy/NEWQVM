@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { assertEnvironment } from "../../common/env-guards.js";
 
 export const createCarrierSchema = z.object({
   carrierName: z.string().min(1),
@@ -45,14 +46,15 @@ export class ShippingService {
       // bind to the acting tenant explicitly — internal context bypasses RLS, so a bare id lookup
       // would let a platform user attach a shipment to another workspace's order.
       const order = (
-        (await tx.execute(sql`select id from orders where id = ${dto.orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string }>
+        (await tx.execute(sql`select id, environment from orders where id = ${dto.orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      assertEnvironment(ctx, order, "order");
       const tracking = "TRK-" + randomBytes(5).toString("hex").toUpperCase();
       const [s] = await tx
         .insert(schema.shipments)
         .values({
           tenantId: ctx.tenantId!,
+          environment: order.environment,
           orderId: dto.orderId,
           entityCarrierSettingId: dto.carrierSettingId,
           trackingNumber: tracking,
@@ -79,15 +81,15 @@ export class ShippingService {
     return this.dbService.withContext(ctx, async (tx) => {
       // bind to the acting tenant explicitly (internal context bypasses RLS)
       const order = (
-        (await tx.execute(sql`select id from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string }>
+        (await tx.execute(sql`select id, environment from orders where id = ${orderId}::uuid and tenant_id = ${ctx.tenantId}::uuid limit 1`)) as Array<{ id: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!order) throw new NotFoundException("order not found in this workspace");
+      assertEnvironment(ctx, order, "order");
       const drivers = (await tx.execute(sql`
         select id from drivers where tenant_id = ${ctx.tenantId}::uuid and owner_type = 'marketplace' and is_active`)) as Array<{ id: string }>;
       if (drivers.length === 0) throw new BadRequestException("no marketplace drivers available");
       await tx
         .insert(schema.driverDeliveryRequests)
-        .values(drivers.map((d) => ({ tenantId: ctx.tenantId!, orderId, driverId: d.id, status: "pending" as const })))
+        .values(drivers.map((d) => ({ tenantId: ctx.tenantId!, environment: order.environment, orderId, driverId: d.id, status: "pending" as const })))
         .onConflictDoNothing();
       return { orderId, broadcastTo: drivers.length };
     });

@@ -46,7 +46,7 @@ export class WorkspacesController {
         tx.execute(sql`
           with accessible as (
             -- platform staff → all active workspaces
-            select t.id, t.slug, t.name, t.is_sandbox, 'platform'::text as via,
+            select t.id, t.slug, t.name, 'platform'::text as via,
                    (select p.role::text from platform_members p
                     where p.user_id = ${ctx.userId}::uuid and p.is_active = true limit 1) as role
             from tenants t
@@ -55,26 +55,26 @@ export class WorkspacesController {
                           where p.user_id = ${ctx.userId}::uuid and p.is_active = true)
             union
             -- workshop membership
-            select t.id, t.slug, t.name, t.is_sandbox, 'membership'::text as via, m.role::text
+            select t.id, t.slug, t.name, 'membership'::text as via, m.role::text
             from tenant_memberships m
             join tenants t on t.id = m.tenant_id and t.is_active = true
             where m.user_id = ${ctx.userId}::uuid and m.is_active = true
             union
             -- vendor user → linked workspaces
-            select t.id, t.slug, t.name, t.is_sandbox, 'vendor'::text as via, 'vendor'::text as role
+            select t.id, t.slug, t.name, 'vendor'::text as via, 'vendor'::text as role
             from vendor_users vu
             join tenant_vendors tv on tv.vendor_id = vu.vendor_id and tv.status = 'active'
             join tenants t on t.id = tv.tenant_id and t.is_active = true
             where vu.user_id = ${ctx.userId}::uuid
             union
             -- workshop user → linked workspaces (tenant_workshops)
-            select t.id, t.slug, t.name, t.is_sandbox, 'workshop'::text as via, 'workshop'::text as role
+            select t.id, t.slug, t.name, 'workshop'::text as via, 'workshop'::text as role
             from workshop_users wu
             join tenant_workshops tw on tw.workshop_id = wu.workshop_id and tw.status = 'active'
             join tenants t on t.id = tw.tenant_id and t.is_active = true
             where wu.user_id = ${ctx.userId}::uuid
           )
-          select distinct id, slug, name, is_sandbox, via, role from accessible order by name`),
+          select distinct id, slug, name, via, role from accessible order by name`),
     );
     return { count: rows.length, workspaces: rows };
   }

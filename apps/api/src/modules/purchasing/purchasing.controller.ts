@@ -21,7 +21,7 @@ export class PurchasingController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.purchasing.createForOrder(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }
@@ -32,7 +32,7 @@ export class PurchasingController {
     const ctx = getContext(req);
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return this.purchasing.listForOrder(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       id,
     );
   }
@@ -51,7 +51,7 @@ export class PurchaseOrdersController {
     if (!ctx.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     const dto = recordInvoiceSchema.parse(body);
     return this.purchasing.recordInvoice(
-      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal },
+      { tenantId: ctx.tenantId, userId: ctx.userId, isInternal: ctx.isInternal, environment: ctx.environment, impersonatorId: ctx.impersonatorId },
       poId,
       dto.amount,
     );

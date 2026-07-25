@@ -8,7 +8,6 @@ interface Ws {
   id: string;
   slug: string;
   name: string;
-  is_sandbox: boolean;
   is_active: boolean;
   branches: number;
   vendors: number;
@@ -21,7 +20,6 @@ export default function Workspaces() {
   const [show, setShow] = useState(false);
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
-  const [sandbox, setSandbox] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -38,10 +36,9 @@ export default function Workspaces() {
     setErr("");
     setBusy(true);
     try {
-      await api.post("/admin/workspaces", { name, slug, isSandbox: sandbox });
+      await api.post("/admin/workspaces", { name, slug });
       setName("");
       setSlug("");
-      setSandbox(false);
       setShow(false);
       await load();
     } catch (e) {
@@ -75,13 +72,10 @@ export default function Workspaces() {
                 onChange={(e) => setSlug(e.target.value.toLowerCase())}
                 placeholder="dammam"
               />
-              <p className="mt-1 text-[11px] text-faint">{slug || "slug"}.qparts.app</p>
+              <p className="mt-1 text-[11px] text-faint">{slug || "slug"}.easycarty.store</p>
             </Field>
             <div className="flex items-end gap-3">
-              <label className="mb-2 flex items-center gap-2 text-[13px] text-sub">
-                <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} />
-                Sandbox
-              </label>
+              {/* No "sandbox workspace" option: every workspace has a Live/Sandbox toggle (ADR-0012). */}
               <button className="btn-primary mb-0.5 rounded-md" disabled={busy || !name || !slug}>
                 {busy ? "Creating…" : "Create"}
               </button>
@@ -112,7 +106,7 @@ export default function Workspaces() {
               {rows.map((w) => (
                 <tr key={w.id} className="trow cursor-pointer" onClick={() => nav(`/admin/workspaces/${w.id}`)}>
                   <td className="td font-medium text-ink">
-                    {w.name} {w.is_sandbox && <Badge tone="amber">sandbox</Badge>}
+                    {w.name}
                   </td>
                   <td className="td tnum text-muted">{w.slug}</td>
                   <td className="td tnum">{w.branches}</td>

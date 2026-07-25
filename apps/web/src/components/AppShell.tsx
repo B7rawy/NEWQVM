@@ -13,6 +13,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Globe,
+  FlaskConical,
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
@@ -132,7 +133,7 @@ export default function AppShell() {
                     {activeSlug ? active?.name ?? "Workspace" : persona === "platform" ? "Admin workspace" : `${portalLabel} account`}
                   </span>
                   <span className="block text-[10.5px] text-faint">
-                    {activeSlug ? (active?.is_sandbox ? "Sandbox" : "Workspace") : persona === "platform" ? "Platform · system" : "Self-service"}
+                    {activeSlug ? "Workspace" : persona === "platform" ? "Platform · system" : "Self-service"}
                   </span>
                 </span>
                 <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-faint" />
@@ -239,6 +240,25 @@ export default function AppShell() {
       </aside>
 
       <div className="flex min-w-0 flex-col">
+        {/* Sandbox must be impossible to miss: the whole point is that nothing here is real, and the
+            expensive mistake is believing test data is production data (or the reverse). */}
+        {environment === "sandbox" && (
+          <div className="flex items-center gap-2.5 bg-amber-400 px-6 py-2 text-[13px] font-semibold text-[#5a4300]">
+            <FlaskConical className="h-4 w-4" />
+            <span>
+              Sandbox — this is test data. Nothing you do here reaches real vendors, workshops or invoices.
+            </span>
+            <button
+              onClick={() => {
+                setEnvironment("live");
+                window.location.reload();
+              }}
+              className="ml-auto rounded-md bg-[#5a4300]/15 px-3 py-1 text-[12px] font-semibold hover:bg-[#5a4300]/25"
+            >
+              Back to Live
+            </button>
+          </div>
+        )}
         {me?.impersonating && (
           <div className="flex items-center gap-3 bg-[#0a2540] px-6 py-2 text-[13px] text-white">
             <Eye className="h-4 w-4" />

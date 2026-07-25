@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# smoke.sh — comprehensive end-to-end regression suite (46 checks) for the backend:
+# smoke.sh — comprehensive end-to-end regression suite (88 checks) for the backend:
 # schema/dedup, counterparty submission/match/review, bulk import, governance guards,
-# individual-read privacy RLS. Run against a FRESHLY SEEDED local stack:
+# individual-read privacy RLS, Live/Sandbox environment isolation. Run against a FRESHLY SEEDED local stack:
 #   pnpm --filter @qvm/api db:seed && bash apps/api/scripts/smoke.sh
 # Requires: local API on $B, docker container qvm_postgres. Exits non-zero on any FAIL.
 B=${SMOKE_BASE:-http://localhost:4000}
@@ -12,6 +12,20 @@ psql(){ docker exec qvm_postgres psql -U qvm -d qvm_platform -tA -c "$1"; }
 appsql(){ docker exec -e PGPASSWORD=qvm_app_local_dev qvm_postgres psql -U qvm_app -d qvm_platform -tA -c "$1"; }
 
 MTOK=$(curl -s -X POST $B/api/auth/login -H 'Content-Type: application/json' -d '{"email":"manager@qparts.local","password":"manager1234"}' | jf token)
+
+# The API dev server does NOT hot-reload (it is `node --import @swc-node/register src/main.ts`).
+# Running this suite against a process started before the last edit produces green results for code
+# that is not running — which has already happened once. Refuse to report on a stale server.
+PID=$(/usr/sbin/lsof -ti tcp:${B##*:} -sTCP:LISTEN 2>/dev/null | /usr/bin/head -1)
+if [ -n "$PID" ]; then
+  API_EPOCH=$(/bin/ps -o lstart= -p "$PID" | { read -r l; /bin/date -j -f '%a %b %d %T %Y' "$l" +%s 2>/dev/null || echo 0; })
+  SRC_EPOCH=$(/usr/bin/find src drizzle -name '*.ts' -exec /usr/bin/stat -f '%m' {} + 2>/dev/null | /usr/bin/sort -rn | /usr/bin/head -1)
+  if [ "${API_EPOCH:-0}" -gt 0 ] && [ "${SRC_EPOCH:-0}" -gt "${API_EPOCH:-0}" ]; then
+    echo "ABORT: the running API started before the newest source edit — restart it, or these results are fiction."
+    exit 1
+  fi
+fi
+
 ATOK=$(curl -s -X POST $B/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@qparts.local","password":"admin1234"}' | jf token)
 M=(-H "Authorization: Bearer $MTOK" -H "X-Tenant: riyadh" -H 'Content-Type: application/json')
 A=(-H "Authorization: Bearer $ATOK" -H 'Content-Type: application/json')
@@ -142,6 +156,157 @@ ok 1 "$(appsql "select set_config('app.is_internal','true',false); select count(
 ok 1 "$(appsql "select set_config('app.is_internal','false',false),set_config('app.tenant_id','$RIY',false); select count(*) from vendors where primary_phone='0561110001'" | /usr/bin/tail -1)" "linked workspace (riyadh) sees the individual"
 ok 0 "$(appsql "select set_config('app.is_internal','false',false),set_config('app.tenant_id','$JED',false); select count(*) from vendors where primary_phone='0561110001'" | /usr/bin/tail -1)" "UNLINKED workspace (jeddah) does NOT see the individual"
 ok 1 "$(appsql "select set_config('app.is_internal','false',false),set_config('app.tenant_id','$JED',false); select count(*) from vendors where tax_number='NEWTAX1'" | /usr/bin/tail -1)" "any workspace still sees a COMPANY (global)"
+
+echo "############ SECTION 6 — LIVE/SANDBOX ISOLATION (ADR-0012) ############"
+# The boundary must hold in the DATABASE, not merely in the queries: a session that forgets the
+# predicate has to get nothing, not the other environment's rows.
+RIY=$(psql "select id from tenants where slug='riyadh'")
+envq(){ appsql "select set_config('app.tenant_id','$RIY',false),set_config('app.is_internal','$2',false),set_config('app.environment','$1',false); select count(*) from rfqs" | /usr/bin/tail -1; }
+LIVE_N=$(envq live false)
+# assert the live corpus is NON-EMPTY: comparing the command to itself can never fail, and if the
+# seed ever stops creating an RFQ the two "sees zero" checks below would pass vacuously.
+ok 1 "$([ "${LIVE_N:-0}" -gt 0 ] && echo 1 || echo 0)" "live session sees at least one live RFQ (=$LIVE_N)"
+ok 0 "$(envq sandbox false)"        "sandbox session sees ZERO live RFQs"
+ok 0 "$(envq sandbox true)"         "app_is_internal() does NOT reopen the boundary (restrictive policy)"
+
+# A sandbox session must not be able to forge a row labelled live.
+FORGED=$(appsql "select set_config('app.tenant_id','$RIY',false),set_config('app.is_internal','false',false),set_config('app.environment','sandbox',false);
+  insert into rfqs (tenant_id,environment,order_number,workshop_branch_id)
+  values ('$RIY','live','SMOKE-FORGE',(select id from workshop_branches limit 1))" 2>&1 | grep -c 'row-level security')
+ok 1 "$FORGED" "a sandbox session CANNOT insert a row labelled live"
+
+# Document numbering is per-environment: a sandbox test must never burn a live order number.
+SBXNUM=$(psql "select public.next_order_number('$RIY','SMOKE-',null,'sandbox')")
+LIVENUM=$(psql "select public.next_order_number('$RIY','SMOKE-',null,'live')")
+ok "SMOKE-SBX-1" "$SBXNUM"  "sandbox numbers are marked and counted separately"
+ok "SMOKE-1"     "$LIVENUM" "the live sequence is untouched by the sandbox one"
+psql "delete from order_number_counters where prefix='SMOKE-'" > /dev/null
+
+# Every environment-scoped table must be protected, and the flag it replaced must be gone.
+ok 0  "$(psql "select count(*) from information_schema.columns where column_name='is_sandbox'")" "tenants.is_sandbox retired (one sandbox mechanism, not two)"
+ok 0 "$(psql "select count(*) from information_schema.columns c
+  where c.table_schema='public' and c.column_name='environment' and c.table_name <> 'order_number_counters'
+    and not exists (select 1 from pg_policies p where p.tablename=c.table_name
+                    and p.policyname='environment_isolation' and p.permissive='RESTRICTIVE')")" "every environment table carries the RESTRICTIVE policy (no magic count)"
+
+# --- regressions found by auditing the boundary itself ---
+# An emailed quote link carries no X-Environment header, so the token lookup must search BOTH
+# environments; a single 'live' lookup made every sandbox link 404 as "invalid token".
+BR=$(psql "select id from workshop_branches limit 1")
+VID=$(psql "select vendor_id from tenant_vendors limit 1")
+SR=$(curl -s "${AR[@]}" -H 'X-Environment: sandbox' -X POST $B/api/rfqs -d "{\"workshopBranchId\":\"$BR\",\"plateNumber\":\"SMOKE-ENV\",\"items\":[{\"partNumber\":\"P1\",\"quantity\":1}]}")
+SRID=$(echo "$SR" | jf id)
+STOK=$(curl -s "${AR[@]}" -H 'X-Environment: sandbox' -X POST $B/api/rfqs/$SRID/send -d "{\"vendorIds\":[\"$VID\"]}" | /usr/bin/python3 -c "import sys,json;print(json.load(sys.stdin)['results'][0]['token'])")
+SITEM=$(psql "select id from rfq_items where rfq_id='$SRID' limit 1")
+QPAY=$(/usr/bin/python3 -c "import json,sys;print(json.dumps({'items':[{'rfqItemId':sys.argv[1],'offeredCost':50}]}))" "$SITEM")
+ok 201 "$(scode POST /api/quote-access/$STOK/quote -H 'Content-Type: application/json' -d "$QPAY")" "a SANDBOX quote link resolves (not 404)"
+ok sandbox "$(psql "select environment from rfq_vendor_items where rfq_item_id='$SITEM'")" "and its quote is stored as sandbox"
+ok 404 "$(scode POST /api/quote-access/deadbeefdeadbeefdeadbeefdeadbeef/quote -H 'Content-Type: application/json' -d '{"items":[{"rfqItemId":"00000000-0000-0000-0000-000000000000","offeredCost":1}]}')" "a bogus token is still rejected"
+
+# A workshop filing a request from its portal must land in the environment it is working in.
+ok sandbox "$(psql "select environment from rfqs where id='$SRID'")" "a sandbox-created RFQ is stored as sandbox"
+
+# Platform-staff write routes run as internal, which satisfies the PERMISSIVE tenant policy — so they
+# must bind the parent document to the ACTING workspace themselves, or a staffer on workspace A can
+# hang an invoice/PO/delivery/return off workspace B's order.
+OID=$(psql "select id from orders limit 1")
+OWNER=$(psql "select t.slug from orders o join tenants t on t.id=o.tenant_id limit 1")
+ok 404 "$(scode POST /api/orders/$OID/purchase-orders -H "Authorization: Bearer $ATOK" -H 'X-Tenant: jeddah' -H 'Content-Type: application/json')" "a PO cannot be raised on ANOTHER workspace's order"
+
+echo "############ SECTION 7 — AUTHORIZATION PRECONDITIONS & PII FLOOR ############"
+# A winning quote is not sufficient to confirm: the winner id survives a later status change, so
+# without a pre-approval-state check a CANCELLED item became a real order line (proven 25/07/2026).
+CB=$(psql "select id from workshop_branches limit 1")
+CV=$(psql "select vendor_id from tenant_vendors limit 1")
+CPAY=$(/usr/bin/python3 -c "import json,sys;print(json.dumps({'workshopBranchId':sys.argv[1],'plateNumber':'SMOKE-PRECOND','items':[{'partNumber':'PC1','quantity':1}]}))" "$CB")
+CRID=$(curl -s "${AR[@]}" -X POST $B/api/rfqs -d "$CPAY" | jf id)
+CTOK=$(curl -s "${AR[@]}" -X POST $B/api/rfqs/$CRID/send -d "{\"vendorIds\":[\"$CV\"]}" | /usr/bin/python3 -c "import sys,json;print(json.load(sys.stdin)['results'][0]['token'])")
+CIT=$(psql "select id from rfq_items where rfq_id='$CRID' limit 1")
+QP=$(/usr/bin/python3 -c "import json,sys;print(json.dumps({'items':[{'rfqItemId':sys.argv[1],'offeredCost':50}]}))" "$CIT")
+curl -s -o /dev/null -X POST $B/api/quote-access/$CTOK/quote -H 'Content-Type: application/json' -d "$QP"
+CQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$CIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST $B/api/rfqs/$CRID/items/$CIT/winning-quote -d "{\"quoteItemId\":\"$CQI\"}"
+ok priced "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$CIT'")" "picking a winner moves the item to 'priced'"
+psql "update rfq_items set status_id=(select id from item_statuses where code='cancelled') where id='$CIT'" > /dev/null
+ok 400 "$(scode POST /api/rfqs/$CRID/confirm -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json')" "a CANCELLED item cannot be confirmed into an order"
+ok 0 "$(psql "select count(*) from order_items where rfq_item_id='$CIT'")" "and no order line was created from it"
+
+# RLS is the floor under the API: an ordinary session must not be able to enumerate people.
+RIY2=$(psql "select id from tenants where slug='riyadh'")
+piiq(){ appsql "select set_config('app.tenant_id','$RIY2',false),set_config('app.is_internal','false',false),set_config('app.environment','live',false); select count(*) from $1" | /usr/bin/tail -1; }
+ok 0 "$(piiq users)"            "a non-internal session cannot read the users table"
+ok 0 "$(piiq platform_members)" "a non-internal session cannot enumerate platform staff"
+ok 1 "$(appsql "select set_config('app.is_internal','true',false); select count(*) > 0 from users" | /usr/bin/tail -1 | /usr/bin/sed 's/t/1/;s/f/0/')" "internal staff CAN still read users"
+
+# THE SINGLE STATUS-WRITE ENTRY POINT (QNEW-75). status_logs was designed and had zero writers, so
+# stage-speed reporting, early/late cancellation and "reject → restore previous status" had no data.
+ok 1 "$([ "$(psql "select count(*) from status_logs where entity_type='rfq_item' and entity_id='$CIT'")" -ge 1 ] && echo 1 || echo 0)" "picking a winner is recorded in status_logs"
+ok priced "$(psql "select s.code from status_logs l join item_statuses s on s.id=l.to_status_id where l.entity_type='rfq_item' and l.entity_id='$CIT' order by l.created_at desc limit 1")" "and it records the status it moved TO"
+ok new_rfq "$(psql "select s.code from status_logs l join item_statuses s on s.id=l.from_status_id where l.entity_type='rfq_item' and l.entity_id='$CIT' order by l.created_at desc limit 1")" "and the status it moved FROM"
+ok 1 "$([ -n "$(psql "select changed_by from status_logs where entity_id='$CIT' limit 1")" ] && echo 1 || echo 0)" "and WHO moved it (from the JWT, never a request body)"
+ok live "$(psql "select environment from status_logs where entity_id='$CIT' limit 1")" "history is environment-scoped like the record it describes"
+
+# release the winner FK before deleting the quote rows it points at, or the cleanup half-fails
+psql "delete from status_logs where entity_id in (select id from rfq_items where rfq_id='$CRID') or entity_id='$CRID';
+      update rfq_items set winning_vendor_quote_item_id = null where rfq_id='$CRID';
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id='$CRID');
+      delete from rfq_vendors where rfq_id='$CRID'; delete from rfq_items where rfq_id='$CRID';
+      delete from notification_log where template='vendor_rfq_invite'; delete from rfqs where id='$CRID'" > /dev/null
+
+
+# cleanup
+psql "delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id='$SRID');
+      delete from rfq_vendors where rfq_id='$SRID'; delete from rfq_items where rfq_id='$SRID';
+      delete from notification_log where environment='sandbox'; delete from rfqs where id='$SRID';
+      delete from order_number_counters where environment='sandbox'" > /dev/null
+
+
+echo "############ SECTION 8 — WORKFLOW ENGINE (QNEW-64) ############"
+wf(){ curl -s "${AR[@]}" "$@"; }
+ok 403 "$(scode POST /api/admin/workflows -H "Authorization: Bearer $MTOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' -d '{"flowKey":"nope","nameEn":"X","nameAr":"س"}')" "a non-super-admin cannot create a flow"
+CAT=$(wf $B/api/admin/workflows/catalog)
+ok 1 "$(echo "$CAT" | /usr/bin/python3 -c 'import sys,json;d=json.load(sys.stdin);print(1 if len(d["itemStatuses"])>0 and len(d["roles"])>0 else 0)')" "the governed catalog the canvas and AI must draw from is served"
+
+WFID=$(wf -X POST $B/api/admin/workflows -d '{"flowKey":"smoke","nameEn":"Smoke","nameAr":"اختبار","isDefault":false}' | jf id)
+ok 1 "$([ -n "$WFID" ] && echo 1 || echo 0)" "a draft flow can be created"
+
+# a status the model invented must be refused, not stored
+BADG='{"steps":[{"status":"totally_made_up","isEntry":true}],"transitions":[]}'
+ok 400 "$(scode PUT /api/admin/workflows/$WFID/graph -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' -d "$BADG")" "an invented status code is rejected"
+TWOENTRY='{"steps":[{"status":"new_rfq","isEntry":true},{"status":"priced","isEntry":true,"isTerminal":true}],"transitions":[]}'
+ok 400 "$(scode PUT /api/admin/workflows/$WFID/graph -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' -d "$TWOENTRY")" "two entry steps are rejected"
+
+# a graph with a dead-end saves (drafts may be half-drawn) but must NOT activate
+DEADEND='{"selectionCondition":{},"steps":[{"status":"new_rfq","isEntry":true},{"status":"priced"},{"status":"confirmed","isTerminal":true}],"transitions":[{"from":"new_rfq","to":"priced"}]}'
+ok 200 "$(scode PUT /api/admin/workflows/$WFID/graph -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' -d "$DEADEND")" "a half-drawn draft still saves"
+ok 400 "$(scode POST /api/admin/workflows/$WFID/activate -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh')" "but a flow that would strand records cannot be activated"
+
+GOOD='{"selectionCondition":{},"steps":[{"status":"new_rfq","isEntry":true},{"status":"priced"},{"status":"confirmed","isTerminal":true}],"transitions":[{"from":"new_rfq","to":"priced"},{"from":"priced","to":"confirmed"}]}'
+wf -o /dev/null -X PUT $B/api/admin/workflows/$WFID/graph -d "$GOOD"
+ok 201 "$(scode POST /api/admin/workflows/$WFID/activate -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh')" "a complete flow activates"
+ok active "$(psql "select status from workflow_flows where id='$WFID'")" "and is recorded as active"
+
+# the guarantee that protects in-flight orders
+ok 409 "$(scode PUT /api/admin/workflows/$WFID/graph -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' -d "$GOOD")" "an ACTIVE flow cannot be edited in place"
+ok 409 "$(scode DELETE /api/admin/workflows/$WFID -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh')" "and cannot be deleted"
+V2=$(wf -X POST $B/api/admin/workflows/$WFID/new-version | jf id)
+ok draft "$(psql "select status from workflow_flows where id='$V2'")" "the supported path is a new draft version"
+ok 3 "$(psql "select count(*) from workflow_steps where flow_id='$V2'")" "and the graph is cloned into it"
+
+# the database refuses even if the API is bypassed
+ok 3 "$(psql "select count(*) from pg_trigger where tgname like 'trg_workflow%_freeze'")" "the freeze is enforced by the DB, not just the API"
+
+# flows are per-environment: built in Sandbox, activated in Live (ADR-0012)
+SBXN=$(curl -s "${AR[@]}" -H 'X-Environment: sandbox' $B/api/admin/workflows | jf count)
+ok 0 "$SBXN" "flows built in Live are invisible in Sandbox"
+
+# ── THE GUARD ────────────────────────────────────────────────────────────────
+# Kept in its own file: it drives a full RFQ→quote→winner chain twice, and inlining that here meant
+# three layers of shell escaping around JSON. `guard-check.sh` prints one PASS/FAIL line per check.
+GUARD_OUT=$(bash "$(dirname "$0")/guard-check.sh" "$B" "$ATOK")
+echo "$GUARD_OUT" | grep -E '^  (PASS|FAIL)'
+PASS=$((PASS + $(echo "$GUARD_OUT" | grep -c '^  PASS')))
+FAIL=$((FAIL + $(echo "$GUARD_OUT" | grep -c '^  FAIL')))
 
 echo
 echo "############################################################"

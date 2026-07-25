@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { resolveCounterparty } from "../../common/counterparty.helpers.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
+import { envOf } from "../../common/env-guards.js";
 
 export const activateSchema = z.object({ mobile: z.string().trim().min(6) });
 export const upgradeSchema = z.object({ legalName: z.string().min(2), taxNumber: z.string().trim().min(1) });
@@ -22,7 +23,7 @@ export class AccountService {
    * (they should log into that account instead of creating a duplicate).
    */
   async activate(ctx: RlsContext, dto: z.infer<typeof activateSchema>) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const cp = await resolveCounterparty(tx, ctx.userId);
       if (!cp) throw new BadRequestException("no counterparty account to activate");
       const { kind, entityId } = cp;
@@ -76,7 +77,7 @@ export class AccountService {
    * table is missed. The individual row is archived (kept for historical documents / name snapshots).
    */
   async upgrade(ctx: RlsContext, dto: z.infer<typeof upgradeSchema>) {
-    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const cp = await resolveCounterparty(tx, ctx.userId);
       if (!cp) throw new BadRequestException("no counterparty account to upgrade");
       const { kind, entityId: oldId } = cp;
@@ -110,10 +111,20 @@ export class AccountService {
         table_name: string;
         column_name: string;
       }>;
-      for (const fk of fks) {
-        if (!/^[a-z_][a-z0-9_]*$/.test(fk.table_name) || !/^[a-z_][a-z0-9_]*$/.test(fk.column_name)) continue;
-        await tx.execute(sql`update ${sql.raw(fk.table_name)} set ${sql.raw(fk.column_name)} = ${newId}::uuid where ${sql.raw(fk.column_name)} = ${oldId}::uuid`);
+      // Upgrading is an IDENTITY change, so it must reach BOTH environments: several of these tables
+      // (rfq_vendors, purchase_orders, vendor_payments…) carry `environment` and are hidden by the
+      // restrictive policy (ADR-0012), which would otherwise leave the other environment's rows
+      // pointing at the individual we are about to archive — a silent, permanent half-migration.
+      // We flip the GUC inside the SAME transaction, so the whole re-parent stays atomic.
+      for (const env of ["live", "sandbox"] as const) {
+        await tx.execute(sql`select set_config('app.environment', ${env}, true)`);
+        for (const fk of fks) {
+          if (!/^[a-z_][a-z0-9_]*$/.test(fk.table_name) || !/^[a-z_][a-z0-9_]*$/.test(fk.column_name)) continue;
+          await tx.execute(sql`update ${sql.raw(fk.table_name)} set ${sql.raw(fk.column_name)} = ${newId}::uuid where ${sql.raw(fk.column_name)} = ${oldId}::uuid`);
+        }
       }
+      // restore the caller's environment for the rest of the transaction
+      await tx.execute(sql`select set_config('app.environment', ${envOf(ctx)}, true)`);
 
       // Archive the individual identity (retained for historical documents + name snapshots).
       await tx.execute(sql`
@@ -125,13 +136,15 @@ export class AccountService {
       const linkTable = kind === "vendor" ? "tenant_vendors" : "tenant_workshops";
       const entityCol = kind === "vendor" ? "vendor_id" : "workshop_id";
       const links = (await tx.execute(sql`
-        select t.id as tenant_id, t.is_sandbox from ${sql.raw(linkTable)} l
+        select t.id as tenant_id from ${sql.raw(linkTable)} l
         join tenants t on t.id = l.tenant_id
-        where l.${sql.raw(entityCol)} = ${newId}::uuid and l.status <> 'archived'`)) as Array<{ tenant_id: string; is_sandbox: boolean }>;
+        where l.${sql.raw(entityCol)} = ${newId}::uuid and l.status <> 'archived'`)) as Array<{ tenant_id: string }>;
       for (const l of links) {
         await this.notifications.send(tx, {
           tenantId: l.tenant_id,
-          isSandbox: l.is_sandbox,
+          // without this the log row is written as 'live' while the tx runs as 'sandbox', and the
+          // restrictive WITH CHECK rejects the INSERT — rolling back the whole upgrade
+          environment: envOf(ctx),
           channel: "webhook",
           template: "counterparty.upgraded",
           payload: { kind, entityId: newId, tradingAs: dto.legalName, previousType: "individual" },

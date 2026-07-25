@@ -1,11 +1,17 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
+import { queuePredicate } from "../workflow/routing.js";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
+import { assertEnvironment, envOf } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   /**
    * Confirm an RFQ into an order. Only items with a winning quote are confirmed. The order REUSES
@@ -19,21 +25,41 @@ export class OrdersService {
           sql`select id, order_number, environment from rfqs where id = ${rfqId}::uuid limit 1`,
         )) as Array<{ id: string; order_number: string; environment: "live" | "sandbox" }>
       )[0];
-      if (!rfq) throw new NotFoundException("RFQ not found in this workspace");
+      // a Live RFQ may not be confirmed from a Sandbox session, nor the reverse (ADR-0012)
+      assertEnvironment(ctx, rfq, "RFQ");
 
       await assertRfqNotConfirmed(tx, rfqId);
 
       const winners = (await tx.execute(sql`
-        select id, part_number, quantity, winning_vendor_quote_item_id
-        from rfq_items
-        where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null`)) as Array<{
+        select i.id, i.part_number, i.quantity, i.winning_vendor_quote_item_id, s.code as status
+        from rfq_items i left join item_statuses s on s.id = i.status_id
+        where i.rfq_id = ${rfqId}::uuid and i.winning_vendor_quote_item_id is not null`)) as Array<{
         id: string;
         part_number: string | null;
         quantity: number;
         winning_vendor_quote_item_id: string;
+        status: string | null;
       }>;
       if (winners.length === 0) {
         throw new BadRequestException("no priced items to confirm (select a winning quote first)");
+      }
+
+      /**
+       * PRE-APPROVAL STATE CHECK. Having a winning quote is NOT sufficient to be confirmable: the
+       * winner id survives a later status change, so without this a cancelled item still became a
+       * real order line (proven 2026-07-25 — the item was at 'cancelled' and confirm returned 201).
+       *
+       * `priced` is what selectWinner() sets, and the insurance flow moves only the RFQ HEADER, so
+       * items legitimately sit at `priced` right up to confirmation. Fail CLOSED and name the offender
+       * rather than silently skipping it — skipping would confirm a partial order and look successful.
+       * When flows land (QNEW-64), this reads the flow's declared pre-approval status instead.
+       */
+      const notPriced = winners.filter((w) => w.status !== "priced");
+      if (notPriced.length > 0) {
+        throw new BadRequestException(
+          `cannot confirm: ${notPriced.length} item(s) carry a winning quote but are not at 'priced' ` +
+            `(${notPriced.map((w) => `${w.part_number ?? w.id}: ${w.status ?? "no status"}`).join(", ")})`,
+        );
       }
 
       const confirmedStatusId = (
@@ -56,6 +82,7 @@ export class OrdersService {
       await tx.insert(schema.orderItems).values(
         winners.map((w) => ({
           tenantId: ctx.tenantId!,
+          environment: rfq.environment, // a line always lives in the same environment as its order
           orderId: order.id,
           rfqItemId: w.id,
           finalPartNumber: w.part_number,
@@ -65,25 +92,30 @@ export class OrdersService {
         })),
       );
 
-      await tx.execute(
-        sql`update rfqs set status_id = ${confirmedStatusId} where id = ${rfqId}::uuid`,
-      );
-      await tx.execute(sql`
-        update rfq_items set status_id = ${confirmedStatusId}
-        where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null`);
+      // every status move goes through the single entry point, so each one lands in status_logs
+      // with its from/to and the acting user (QNEW-75)
+      await this.status.transition(tx, ctx, { entity: "rfq", id: rfqId, toCode: "confirmed" });
+      await this.status.transitionMany(tx, ctx, {
+        entity: "rfq_item",
+        ids: winners.map((w) => w.id),
+        toCode: "confirmed",
+      });
       // advance the WINNING vendors' invitation to 'confirmed' (vendor-portal 'won' KPI + queue state)
-      await tx.execute(sql`
-        update rfq_vendors set status_id = (select id from vendor_statuses where code = 'confirmed'), updated_at = now()
-        where id in (
-          select distinct vi.rfq_vendor_id from rfq_vendor_items vi
-          where vi.id in (select winning_vendor_quote_item_id from rfq_items
-                          where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null))`);
+      const wonVendorIds = (await tx.execute(sql`
+        select distinct vi.rfq_vendor_id as id from rfq_vendor_items vi
+        where vi.id in (select winning_vendor_quote_item_id from rfq_items
+                        where rfq_id = ${rfqId}::uuid and winning_vendor_quote_item_id is not null)`)) as Array<{ id: string }>;
+      await this.status.transitionMany(tx, ctx, {
+        entity: "rfq_vendor",
+        ids: wonVendorIds.map((v) => v.id),
+        toCode: "confirmed",
+      });
 
       return { orderId: order.id, orderNumber: rfq.order_number, confirmedItems: winners.length };
     });
   }
 
-  async list(ctx: RlsContext) {
+  async list(ctx: RlsContext, queue?: string) {
     const rows = await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select o.id, o.order_number, s.label_en as status,
@@ -91,6 +123,7 @@ export class OrdersService {
         from orders o
         left join item_statuses s on s.id = o.status_id
         where o.environment = ${ctx.environment ?? "live"}
+          and ${queuePredicate(sql`s.code`, queue)}
         order by o.created_at desc limit 50`),
     );
     return { count: rows.length, orders: rows };

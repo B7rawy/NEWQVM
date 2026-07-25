@@ -56,7 +56,7 @@ user_kind (platform): platform_admin · tenant_staff · workshop_user · vendor_
 
 ```
 tenants          uuid pk · name · slug (subdomain, unique) · logo_url · settings jsonb
-                 · plan · is_sandbox bool · is_active · created_at/updated_at
+                 · plan · is_active · created_at/updated_at
 users            uuid pk · email (unique) · password_hash · full_name · phone
                  · is_platform_admin bool · created_at …        ← هوية عالمية واحدة للشخص
 tenant_members   tenant_id + user_id (pk) · role (tenant_role enum: owner · admin · account_manager

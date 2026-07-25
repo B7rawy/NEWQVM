@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
 import { targetTenant } from "../../common/tenant-target.js";
+import { envOf } from "../../common/env-guards.js";
 
 export const createVendorSchema = z
   .object({
@@ -87,8 +88,9 @@ export class VendorsService {
    * never leaks another tenant's relationship.
    */
   async detail(ctx: RlsContext, id: string) {
+    const env = envOf(ctx);
     const global = ctx.isInternal && !ctx.tenantId;
-    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const v = (await tx.execute(sql`
         select id, legal_name, counterparty_type, activation_status, vendor_type, tax_number,
           commercial_registration_number, primary_phone, primary_email, payment_terms_days, is_active, created_at
@@ -126,7 +128,7 @@ export class VendorsService {
           t.name as workspace,
           (select count(*)::int from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_items
         from rfq_vendors rv
-        join rfqs r on r.id = rv.rfq_id and r.environment = 'live'
+        join rfqs r on r.id = rv.rfq_id and r.environment = ${env}::environment_type
         join tenants t on t.id = rv.tenant_id
         left join vendor_statuses vs on vs.id = rv.status_id
         where rv.vendor_id = ${id}::uuid ${global ? sql`` : sql`and rv.tenant_id = ${ctx.tenantId}::uuid`}
@@ -139,7 +141,7 @@ export class VendorsService {
         join order_items oi on oi.order_id = o.id
         join rfq_vendor_items rvi on rvi.id = oi.winning_vendor_quote_item_id
         join rfq_vendors rv on rv.id = rvi.rfq_vendor_id and rv.vendor_id = ${id}::uuid
-        where o.environment = 'live' ${global ? sql`` : sql`and o.tenant_id = ${ctx.tenantId}::uuid`}`))[0];
+        where o.environment = ${env}::environment_type ${global ? sql`` : sql`and o.tenant_id = ${ctx.tenantId}::uuid`}`))[0];
 
       return { vendor: v, branches, accounts, workspaces, quotations, won };
     });
@@ -185,7 +187,7 @@ export class VendorsService {
   /** Edit the global vendor's master data (platform-only). */
   async update(ctx: RlsContext, vendorId: string, dto: z.infer<typeof updateVendorSchema>) {
     const has = (k: string) => Object.prototype.hasOwnProperty.call(dto, k);
-    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: ctx.tenantId, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const rows = (await tx.execute(sql`
         update vendors set
           legal_name = coalesce(${dto.legalName ?? null}, legal_name),
@@ -205,7 +207,7 @@ export class VendorsService {
   /** Suspend / archive / reactivate a vendor's link to a workspace (tenant_vendors.status). */
   async setStatus(ctx: RlsContext, vendorId: string, dto: z.infer<typeof vendorStatusSchema>) {
     const target = this.targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const rows = (await tx.execute(sql`
         update tenant_vendors set status = ${dto.status}, updated_by = ${ctx.userId}::uuid, updated_at = now()
         where vendor_id = ${vendorId}::uuid and tenant_id = ${target}::uuid returning id`)) as Array<{ id: string }>;
@@ -232,7 +234,7 @@ export class VendorsService {
   /** Link an existing global vendor to the target workspace. */
   async link(ctx: RlsContext, vendorId: string, dto: z.infer<typeof linkVendorSchema>) {
     const target = this.targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true }, async (tx) => {
+    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await tx.execute(sql`
         insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
         values (${target}::uuid, ${vendorId}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
