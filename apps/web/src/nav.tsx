@@ -274,7 +274,7 @@ export const providerNav: NavGroup[] = [
   {
     heading: "Provider",
     items: [
-      { label: "Overview", path: "/provider", icon: LayoutDashboard, soon: true },
+      { label: "Overview", path: "/provider", icon: LayoutDashboard },
       { label: "Assignments", path: "/provider/assignments", icon: ClipboardList, soon: true },
       { label: "Invoices", path: "/provider/invoices", icon: Receipt, soon: true },
       { label: "Profile", path: "/provider/profile", icon: UserCircle, soon: true },

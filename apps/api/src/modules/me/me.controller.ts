@@ -34,16 +34,19 @@ export class MeController {
         const cp = await resolveCounterparty(tx, ctx.userId);
         const isVendor = cp?.kind === "vendor";
         const isWorkshop = cp?.kind === "workshop";
+        const isProvider = cp?.kind === "service_provider";
         // QNEW-71: the counterparty's own entity — activation lifecycle + individual/company type.
         const entity = cp
           ? ((await tx.execute(sql`
-              select activation_status, counterparty_type from ${sql.raw(cp.kind === "vendor" ? "vendors" : "workshops")}
+              select activation_status, counterparty_type from ${sql.raw(
+                cp.kind === "vendor" ? "vendors" : cp.kind === "workshop" ? "workshops" : "service_providers",
+              )}
               where id = ${cp.entityId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
           : undefined;
         const impersonator = ctx.impersonatorId
           ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
           : undefined;
-        return { user, platformRole, isVendor, isWorkshop, entity, impersonatorName: impersonator?.full_name ?? null };
+        return { user, platformRole, isVendor, isWorkshop, isProvider, entity, impersonatorName: impersonator?.full_name ?? null };
       },
     );
 
@@ -53,7 +56,9 @@ export class MeController {
         ? "vendor"
         : info.isWorkshop
           ? "workshop"
-          : "workspace";
+          : info.isProvider
+            ? "service_provider"
+            : "workspace";
     return {
       user: info.user,
       tenant: { slug: ctx.tenantSlug, id: ctx.tenantId },

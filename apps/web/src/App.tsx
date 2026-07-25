@@ -23,6 +23,7 @@ import VendorQuotationDetail from "./pages/vendor/VendorQuotationDetail";
 import VendorProfile from "./pages/vendor/VendorProfile";
 import VendorConfirmedOrders from "./pages/vendor/VendorConfirmedOrders";
 import WorkshopOverview from "./pages/workshop/WorkshopOverview";
+import ProviderOverview from "./pages/provider/ProviderOverview";
 import WorkshopBranches from "./pages/workshop/WorkshopBranches";
 import WorkshopOrders from "./pages/workshop/WorkshopOrders";
 import WorkshopRequests from "./pages/workshop/WorkshopRequests";
@@ -77,6 +78,7 @@ const WIRED = new Set([
   "/vendor/confirmed",
   "/vendor/profile",
   "/workshop",
+  "/provider",
   "/workshop/requests",
   "/workshop/requests/new",
   "/workshop/branches",
@@ -129,6 +131,7 @@ export default function App() {
         <Route path="/vendor/profile" element={<VendorProfile />} />
         <Route path="/vendor/confirmed" element={<VendorConfirmedOrders />} />
         <Route path="/workshop" element={<WorkshopOverview />} />
+        <Route path="/provider" element={<ProviderOverview />} />
         <Route path="/workshop/requests" element={<WorkshopRequests />} />
         <Route path="/workshop/requests/new" element={<WorkshopNewRequest />} />
         <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />

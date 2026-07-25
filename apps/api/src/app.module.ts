@@ -58,6 +58,8 @@ import { VendorPortalController } from "./modules/vendor-portal/vendor-portal.co
 import { VendorPortalService } from "./modules/vendor-portal/vendor-portal.service.js";
 import { WorkshopPortalController } from "./modules/workshop-portal/workshop-portal.controller.js";
 import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal.service.js";
+import { ProviderPortalController } from "./modules/provider-portal/provider-portal.controller.js";
+import { ProviderPortalService } from "./modules/provider-portal/provider-portal.service.js";
 
 /**
  * Root module. Domain modules are added one per area as they are built (CONVENTIONS §BE-1).
@@ -96,6 +98,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     AccountController,
     VendorPortalController,
     WorkshopPortalController,
+    ProviderPortalController,
   ],
   providers: [
     RfqService,
@@ -126,6 +129,7 @@ import { WorkshopPortalService } from "./modules/workshop-portal/workshop-portal
     AccountService,
     VendorPortalService,
     WorkshopPortalService,
+    ProviderPortalService,
   ],
 })
 export class AppModule {}

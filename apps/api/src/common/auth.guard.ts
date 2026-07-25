@@ -77,6 +77,7 @@ export class AuthGuard implements CanActivate {
         let tenant: { tenant_id?: string; role?: string } | undefined;
         let vendorAccess = false;
         let workshopAccess = false;
+        let providerAccess = false;
         if (tenantSlug) {
           tenant = (await tx.execute(sql`
             select t.id as tenant_id, m.role as role
@@ -104,7 +105,16 @@ export class AuthGuard implements CanActivate {
             )[0];
           }
         }
-        return { inactive: false as const, platformRole: platform?.role ?? null, tenant, vendorAccess, workshopAccess };
+        // service-provider users reach a workspace via their provider's tenant_service_providers link
+        if (tenant?.tenant_id && !tenant.role && !vendorAccess && !workshopAccess) {
+          providerAccess = !!(
+            (await tx.execute(sql`
+              select 1 from service_provider_users spu
+              join tenant_service_providers tsp on tsp.service_provider_id = spu.service_provider_id and tsp.status = 'active'
+              where spu.user_id = ${userId}::uuid and tsp.tenant_id = ${tenant.tenant_id}::uuid limit 1`)) as Array<unknown>
+          )[0];
+        }
+        return { inactive: false as const, platformRole: platform?.role ?? null, tenant, vendorAccess, workshopAccess, providerAccess };
       },
     );
 
@@ -114,6 +124,7 @@ export class AuthGuard implements CanActivate {
       tenant?: { tenant_id?: string; role?: string };
       vendorAccess?: boolean;
       workshopAccess?: boolean;
+      providerAccess?: boolean;
     };
     const isInternal = active.platformRole != null;
     const ctx: RequestContext = {
@@ -122,7 +133,7 @@ export class AuthGuard implements CanActivate {
       tenantId: active.tenant?.tenant_id ?? null,
       role:
         active.tenant?.role ??
-        (active.vendorAccess ? "vendor" : active.workshopAccess ? "workshop" : active.platformRole),
+        (active.vendorAccess ? "vendor" : active.workshopAccess ? "workshop" : active.providerAccess ? "service_provider" : active.platformRole),
       isInternal,
       platformRole: active.platformRole ?? null,
       environment: resolveEnvironment(req),
@@ -139,7 +150,7 @@ export class AuthGuard implements CanActivate {
     // If a workspace was requested, require access (member, vendor/workshop link, or platform staff).
     if (tenantSlug) {
       if (!active.tenant?.tenant_id) throw new ForbiddenException("unknown or inactive workspace");
-      if (!isInternal && !active.tenant.role && !active.vendorAccess && !active.workshopAccess) {
+      if (!isInternal && !active.tenant.role && !active.vendorAccess && !active.workshopAccess && !active.providerAccess) {
         throw new ForbiddenException("no access to this workspace");
       }
     }

@@ -10,7 +10,7 @@ import type { Tx } from "../db/db.service.js";
 export async function resolveCounterparty(
   tx: Tx,
   userId: string | null,
-): Promise<{ kind: "vendor" | "workshop"; entityId: string } | null> {
+): Promise<{ kind: "vendor" | "workshop" | "service_provider"; entityId: string } | null> {
   const v = (await tx.execute(sql`select vendor_id as id from vendor_users where user_id = ${userId}::uuid limit 1`))[0] as
     | { id: string }
     | undefined;
@@ -19,11 +19,15 @@ export async function resolveCounterparty(
     | { id: string }
     | undefined;
   if (w) return { kind: "workshop", entityId: w.id };
+  const sp = (await tx.execute(sql`select service_provider_id as id from service_provider_users where user_id = ${userId}::uuid limit 1`))[0] as
+    | { id: string }
+    | undefined;
+  if (sp) return { kind: "service_provider", entityId: sp.id };
   return null;
 }
 
 /** resolveCounterparty + require a specific kind (403 otherwise). */
-export async function requireCounterparty(tx: Tx, userId: string | null, kind: "vendor" | "workshop"): Promise<string> {
+export async function requireCounterparty(tx: Tx, userId: string | null, kind: "vendor" | "workshop" | "service_provider"): Promise<string> {
   const cp = await resolveCounterparty(tx, userId);
   if (!cp || cp.kind !== kind) throw new ForbiddenException(`not a ${kind} account`);
   return cp.entityId;

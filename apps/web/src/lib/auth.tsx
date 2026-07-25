@@ -8,6 +8,8 @@ export interface Workspace {
   name: string;
   is_sandbox: boolean;
   role: string | null;
+  /** how this workspace is reachable: platform | membership | vendor | workshop */
+  via?: string;
 }
 import type { Persona } from "../nav";
 
@@ -95,7 +97,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setActiveSlug(null);
       return null;
     }
-    const slug = res.workspaces[0]?.slug ?? null;
+    // Prefer a workspace where they hold a real ROLE (membership) over one reached only through a
+    // vendor/workshop link — landing somewhere they can actually act beats alphabetical order.
+    const preferred = res.workspaces.find((w) => w.via === "membership") ?? res.workspaces[0];
+    const slug = preferred?.slug ?? null;
     auth.setWorkspace(slug);
     setActiveSlug(slug);
     return slug;
