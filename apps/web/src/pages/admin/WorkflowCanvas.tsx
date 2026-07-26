@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, Ban, Copy, Frame, LayoutList, Lock, Play, Plus, Redo2, Save, Send, Settings2,
+  ArrowLeft, Ban, Copy, Frame, Lock, Play, Plus, Redo2, Save, Send, Settings2,
   Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { api } from "../../lib/api";
 import { useTargetWorkspace } from "../../lib/target-workspace";
+import PagesView from "./PagesView";
 
 /**
  * Full-screen workflow builder. Deliberately OUTSIDE AppShell: a canvas wants the whole viewport.
@@ -32,7 +33,7 @@ const MAX_K = 2.5;
 type FlowStatus = "draft" | "active" | "retired";
 interface CatalogStatus { code: string; label_en: string; label_ar: string }
 interface Step { status: string; label: string; isEntry: boolean; isTerminal: boolean; slaHours?: number | null; x: number; y: number; pages: string[]; ownerRoles: string[] }
-interface RoutablePage { key: string; path: string; labelEn: string; entities: string[]; personas: string[]; wired: boolean }
+interface RoutablePage { key: string; path: string; labelEn: string; labelAr: string; entities: string[]; personas: string[]; wired: boolean }
 type Handoff = "pool" | "keep" | "actor";
 interface Edge { from: string; to: string; label?: string | null; requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff }
 interface Graph { steps: Step[]; edges: Edge[] }
@@ -98,6 +99,9 @@ export default function WorkflowCanvas() {
   const [msg, setMsg] = useState<{ kind: "err" | "ok"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [rail, setRail] = useState<"inspector" | "assistant">("inspector");
+  /** Two readings of ONE workflow, in one screen — not two destinations in the sidebar. */
+  const [mode, setMode] = useState<"diagram" | "pages">("diagram");
+  const [pageSel, setPageSel] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [panning, setPanning] = useState(false);
 
@@ -449,6 +453,18 @@ export default function WorkflowCanvas() {
     setAdding(false);
   }
 
+  async function placeStatus(status: string, next: string[]) {
+    if (!frozen) return patchStep(status, { pages: next });
+    setBusy(true); setMsg(null);
+    try {
+      await api.put(`/admin/workflows/${id}/placement`, { status, pages: next }, { tenant: target });
+      setGraph((g) => ({ ...g, steps: g.steps.map((s) => (s.status === status ? { ...s, pages: next } : s)) }));
+      setMsg({ kind: "ok", text: "Screen updated" });
+    } catch (e) {
+      setMsg({ kind: "err", text: (e as Error).message });
+    } finally { setBusy(false); }
+  }
+
   function link(to: string) {
     if (!linkFrom || linkFrom === to) return setLinkFrom(null);
     // The source can vanish between arming the link and clicking the target (delete, undo, or an AI
@@ -533,9 +549,6 @@ export default function WorkflowCanvas() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => nav("/admin/pages")} className="btn btn-sm" title="See this workflow as screens">
-            <LayoutList className="h-4 w-4" /> Pages
-          </button>
           {msg && <span className={`text-[12px] ${msg.kind === "err" ? "text-accent" : "text-muted"}`}>{msg.text}</span>}
           {!frozen && (
             <>
@@ -569,8 +582,36 @@ export default function WorkflowCanvas() {
         </div>
       )}
 
+      <div className="shrink-0 border-b border-line bg-panel px-4">
+        <div className="flex gap-0.5">
+          {([["diagram", "Diagram"], ["pages", "Pages"]] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setMode(k)}
+              className={`border-b-2 px-3.5 py-2 text-[12.5px] font-medium transition ${
+                mode === k ? "border-navy text-ink" : "border-transparent text-muted hover:text-sub"}`}>
+              {label}
+            </button>
+          ))}
+          <span className="ml-2 self-center text-[11.5px] text-faint">
+            {mode === "diagram" ? "what may follow what" : "what each screen shows"}
+          </span>
+        </div>
+      </div>
+
       <div className="flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">
+          {mode === "pages" ? (
+            <PagesView
+              steps={steps}
+              edges={edges}
+              pages={pages}
+              holders={holders}
+              frozen={frozen}
+              selected={pageSel}
+              onSelect={setPageSel}
+              onPlace={placeStatus}
+            />
+          ) : (
+          <>
           {/* toolbar */}
           <div className="absolute left-3 top-3 z-10 flex items-center gap-1 rounded-lg border border-line bg-panel p-1 shadow-cardsm">
             {!frozen && (
@@ -782,6 +823,8 @@ export default function WorkflowCanvas() {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
 
         <aside className="flex w-[320px] shrink-0 flex-col border-l border-line bg-panel">
