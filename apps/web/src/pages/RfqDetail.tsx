@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Send, Check } from "lucide-react";
+import { ArrowLeft, Ban, Send, Check } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { Card, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
@@ -61,6 +61,8 @@ export default function RfqDetail() {
   const [sending, setSending] = useState(false);
   const [quotes, setQuotes] = useState<QuoteRow[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState("");
   const isPlatform = me?.persona === "platform";
 
   const load = useCallback(async () => {
@@ -92,6 +94,20 @@ export default function RfqDetail() {
       setBusy(false);
     }
   }
+  /** Raise a cancellation. It freezes the request until somebody decides — see the copy above. */
+  async function askCancel() {
+    setBusy(true);
+    try {
+      await api.post("/workflow/exceptions", {
+        entityType: "rfq", entityId: id, kind: "cancellation", reason: reason.trim(),
+      });
+      setAsking(false); setReason("");
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally { setBusy(false); }
+  }
+
   async function confirm() {
     setBusy(true);
     try {
@@ -148,12 +164,41 @@ export default function RfqDetail() {
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-[20px] font-semibold tracking-tight text-ink tnum">{rfq.order_number}</h1>
         <Badge tone={statusTone(rfq.status)}>{rfq.status ?? "—"}</Badge>
-        {anyWinner && !isConfirmed && (
-          <button className="btn-primary ml-auto rounded-md" disabled={busy} onClick={confirm}>
-            <Check className="h-4 w-4" /> Confirm order
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {anyWinner && !isConfirmed && (
+            <button className="btn-primary rounded-md" disabled={busy} onClick={confirm}>
+              <Check className="h-4 w-4" /> Confirm order
+            </button>
+          )}
+          {!asking ? (
+            <button className="btn btn-sm" disabled={busy} onClick={() => setAsking(true)}>
+              <Ban className="h-4 w-4" /> Ask to cancel
+            </button>
+          ) : null}
+        </div>
       </div>
+
+      {/* Asking to cancel FREEZES the request while somebody decides — so it asks for a reason and
+          says what will happen, rather than being a button that quietly stops an order. */}
+      {asking && (
+        <div className="mb-5 rounded-lg border border-line bg-panel p-4">
+          <p className="text-[13px] font-semibold text-ink">Ask to cancel this request</p>
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+            It will stop moving until somebody decides. If they turn it down it goes straight back to
+            where it is now. Somebody else has to decide — you cannot approve your own.
+          </p>
+          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="Why is this being cancelled?"
+            className="mt-2 w-full resize-none rounded-md border border-line bg-surface px-2.5 py-2 text-[12.5px] text-ink outline-none" />
+          <div className="mt-2 flex items-center gap-2">
+            <button className="btn-primary rounded-md" disabled={busy || reason.trim().length < 3}
+              onClick={askCancel}>
+              <Ban className="h-4 w-4" /> Send the request
+            </button>
+            <button className="btn btn-sm" onClick={() => { setAsking(false); setReason(""); }}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_300px]">
         <div className="flex flex-col gap-5">
