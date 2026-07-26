@@ -490,3 +490,63 @@ psql "delete from approval_actions; delete from approval_requests; delete from a
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'APPR-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'APPR-%'" > /dev/null
+
+# ── exception flows (0054 / QNEW-89 §7) ─────────────────────────────────────────────────────────
+# Cancellation and return as flows ATTACHED to a record rather than statuses spliced into its chain.
+# The distinction is the whole design: an order that merely has a cancellation REQUESTED must still
+# be `confirmed`, or there is nothing to put back when the request is refused.
+wfclean
+psql "delete from workflow_exceptions;
+      delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'EXC-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'EXC-%'" > /dev/null
+# a record of our own, quoted and ready to move — otherwise the "frozen" assertion below can pass
+# for the wrong reason (a validation error rather than the freeze).
+EXRFQ=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"EXC-1","items":[{"partNumber":"P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+EXTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$EXRFQ/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+EXIT_ID=$(psql "select id from rfq_items where rfq_id='$EXRFQ' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$EXTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$EXIT_ID")"
+EXQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$EXIT_ID' limit 1")
+EXBEFORE=$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$EXIT_ID'")
+
+EXC=$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions" \
+  -d "$(printf '{"entityType":"rfq_item","entityId":"%s","kind":"cancellation","reason":"customer changed their mind"}' "$EXIT_ID")")
+EXID=$(echo "$EXC" | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$EXID" ] && echo 1 || echo 0)" "a cancellation can be raised against a live record"
+
+# THE FREEZE. Not one of the workflow's rules — a statement that the record must not move at all.
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$EXRFQ/items/$EXIT_ID/winning-quote" \
+  -d "$(printf '{"quoteItemId":"%s"}' "$EXQI")" \
+  | $PY -c "import sys,json;print(1 if 'being reviewed' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "while it is open the record is FROZEN, whatever the workflow says"
+ok "$EXBEFORE" "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$EXIT_ID'")" \
+  "and the record keeps its real status — it did not become 'cancellation requested'"
+
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions/$EXID/resolve" -d '{"decision":"approve"}' \
+  | $PY -c "import sys,json;print(1 if 'cannot decide' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "the person who asked for it cannot decide it"
+
+ok "$EXBEFORE" "$(curl -s "${MR[@]}" -X POST "$B/api/workflow/exceptions/$EXID/resolve" \
+  -d '{"decision":"reject","note":"they changed their mind back"}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('restoredTo'))")" \
+  "refusing it restores the EXACT status the record was frozen at"
+
+ok 0 "$(psql "select count(*) from workflow_exceptions where status='open'")" \
+  "and the freeze lifts once it is decided"
+
+psql "delete from workflow_exceptions;
+      delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'EXC-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'EXC-%'" > /dev/null

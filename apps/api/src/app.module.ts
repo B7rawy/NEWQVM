@@ -46,6 +46,8 @@ import { InfraController } from "./modules/infra/infra.controller.js";
 import { AuditService, CalendarService } from "./modules/infra/infra.service.js";
 import { ApprovalsController } from "./modules/approvals/approvals.controller.js";
 import { ApprovalsService } from "./modules/approvals/approvals.service.js";
+import { WorkflowExceptionsService } from "./modules/workflow/exceptions.service.js";
+import { WorkflowExceptionsController } from "./modules/workflow/exceptions.controller.js";
 import { VendorSelfServiceController } from "./modules/vendor-selfservice/vendor-selfservice.controller.js";
 import { VendorSelfServiceService } from "./modules/vendor-selfservice/vendor-selfservice.service.js";
 import { VendorFinanceController } from "./modules/vendor-finance/vendor-finance.controller.js";
@@ -90,6 +92,7 @@ import { ProviderPortalService } from "./modules/provider-portal/provider-portal
     VendorAssignmentController,
     InfraController,
     ApprovalsController,
+    WorkflowExceptionsController,
     VendorSelfServiceController,
     VendorFinanceController,
     ShippingController,
@@ -121,6 +124,7 @@ import { ProviderPortalService } from "./modules/provider-portal/provider-portal
     AuditService,
     CalendarService,
     ApprovalsService,
+    WorkflowExceptionsService,
     VendorSelfServiceService,
     VendorFinanceService,
     ShippingService,

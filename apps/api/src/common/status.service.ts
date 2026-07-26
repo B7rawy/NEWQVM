@@ -45,6 +45,12 @@ export interface StatusContext {
   userId: string | null;
   environment?: Environment;
   /**
+   * Set only by the exception machinery itself when it executes or reverses its own decision.
+   * Everything else must be held by the freeze — otherwise resolving a cancellation would be
+   * blocked by the very cancellation being resolved.
+   */
+  resolvingException?: boolean;
+  /**
    * A written justification for bypassing a `warn_override` gate. Supplied by the caller who chose
    * to override, recorded against the move it permitted. A `block` gate ignores it entirely — the
    * point of block is that no reason is good enough.
@@ -164,6 +170,23 @@ export class StatusService {
     if (missing.length > 0)
       throw new BadRequestException(`${input.entity} not found in this workspace: ${missing.join(", ")}`);
 
+    // The freeze comes before everything, including the "no active flow means permissive" rule:
+    // it is not one of the workflow's rules, it is a statement that this record must not be moving
+    // at all right now. A workspace with no flow configured still must not ship an order somebody
+    // has asked to cancel.
+    for (const b of before) {
+      const frozenBy = await this.frozenByException(tx, ctx, input.entity, b.id);
+      if (frozenBy)
+        throw new ConflictException({
+          message:
+            frozenBy.kind === "cancellation"
+              ? "a cancellation is being reviewed for this order, so it cannot move until that is decided"
+              : "a return is being reviewed for this line, so it cannot move until that is decided",
+          frozenBy: frozenBy.kind,
+          reason: frozenBy.reason,
+        });
+    }
+
     const moving = before.filter((b) => b.status_id !== toStatusId);
 
     // ── the guard: is this move one the workspace's workflow actually permits? ──
@@ -219,6 +242,43 @@ export class StatusService {
    * judged against reality. Without it both would pass the guard and the loser's status_logs row
    * would claim a move from a state the record was never in.
    */
+  /**
+   * Is this record frozen by an open cancellation or return?
+   *
+   * The freeze is deliberately NOT part of the flow's own rules: an order must stop moving the
+   * moment someone asks to cancel it, whatever the workflow says, or the decision is being made
+   * about a record that has meanwhile been shipped.
+   *
+   * A LINE IS FROZEN BY ITS HEADER'S EXCEPTION TOO. Returns are per line, but a cancellation is
+   * usually raised on the order — and letting the lines march on while their parent is being
+   * cancelled would defeat the whole thing.
+   */
+  private async frozenByException(
+    tx: Tx,
+    ctx: StatusContext,
+    entity: StatusEntity,
+    id: string,
+  ): Promise<{ kind: string; reason: string } | null> {
+    if (ctx.resolvingException) return null;
+    const parent =
+      entity === "rfq_item" ? sql`select rfq_id from rfq_items where id = ${id}::uuid`
+      : entity === "order_item" ? sql`select order_id from order_items where id = ${id}::uuid`
+      : null;
+    const parentType = entity === "rfq_item" ? "rfq" : entity === "order_item" ? "order" : null;
+
+    const row = (await tx.execute(sql`
+      select kind, reason from workflow_exceptions
+      where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)} and status = 'open'
+        and (
+          (entity_type = ${entity} and entity_id = ${id}::uuid)
+          ${parent && parentType
+            ? sql`or (entity_type = ${parentType} and entity_id = (${parent}))`
+            : sql``}
+        )
+      limit 1`))[0] as { kind: string; reason: string } | undefined;
+    return row ?? null;
+  }
+
   private async assertTransitionAllowed(
     tx: Tx,
     ctx: StatusContext,
