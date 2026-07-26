@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Lock, Plus, Users, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Lock, Plus, Sparkles, Users, X } from "lucide-react";
 
 /**
  * The SAME workflow you are drawing, read as screens.
@@ -33,7 +33,7 @@ const PERSONA_GROUP: Record<string, string> = {
 const role = (r: string) => r.replace(/_/g, " ");
 
 export default function PagesView({
-  steps, edges, pages, holders, frozen, selected, onSelect, onPlace,
+  steps, edges, pages, holders, frozen, selected, onSelect, onPlace, onAddStep, onAskAssistant,
 }: {
   steps: PVStep[];
   edges: PVEdge[];
@@ -41,6 +41,8 @@ export default function PagesView({
   holders: Record<string, number>;
   frozen: boolean;
   selected: string | null;
+  onAddStep: () => void;
+  onAskAssistant: () => void;
   onSelect: (key: string) => void;
   onPlace: (status: string, pages: string[]) => void;
 }) {
@@ -62,12 +64,24 @@ export default function PagesView({
 
   if (steps.length === 0)
     return (
-      <div className="grid h-full place-items-center">
-        <div className="max-w-sm text-center">
-          <p className="text-[13.5px] font-medium text-sub">Nothing to lay out yet</p>
-          <p className="mt-1 text-[12.5px] leading-relaxed text-faint">
-            Add a step in the diagram — or describe the flow to the assistant — and it will appear
-            here, ready to place on a screen.
+      <div className="grid h-full place-items-center p-6">
+        <div className="max-w-md text-center">
+          <p className="text-[14px] font-semibold text-ink">This workflow is empty</p>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
+            It has no statuses yet, so there is nothing to put on a screen. Add them first — then
+            come back here and say which screen each one belongs on.
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2">
+            <button onClick={onAddStep} className="btn-primary rounded-md">
+              <Plus className="h-4 w-4" /> Add the first step
+            </button>
+            <button onClick={onAskAssistant} className="btn">
+              <Sparkles className="h-4 w-4" /> Let the assistant build it
+            </button>
+          </div>
+          <p className="mt-3 text-[11.5px] leading-relaxed text-faint">
+            The assistant takes plain Arabic or English — describe how an order moves through your
+            business and it will draw the whole thing.
           </p>
         </div>
       </div>

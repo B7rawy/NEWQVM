@@ -609,6 +609,8 @@ export default function WorkflowCanvas() {
               selected={pageSel}
               onSelect={setPageSel}
               onPlace={placeStatus}
+              onAddStep={() => { setMode("diagram"); setAdding(true); }}
+              onAskAssistant={() => { setMode("diagram"); setRail("assistant"); }}
             />
           ) : (
           <>
