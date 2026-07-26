@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-  ArrowLeft, Ban, Copy, Frame, Lock, Play, Plus, Redo2, Save, Send, Settings2,
+  ArrowLeft, Ban, Copy, Frame, LayoutList, Lock, Play, Plus, Redo2, Save, Send, Settings2,
   Sparkles, Trash2, Undo2, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import { api } from "../../lib/api";
@@ -533,6 +533,9 @@ export default function WorkflowCanvas() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => nav("/admin/pages")} className="btn btn-sm" title="See this workflow as screens">
+            <LayoutList className="h-4 w-4" /> Pages
+          </button>
           {msg && <span className={`text-[12px] ${msg.kind === "err" ? "text-accent" : "text-muted"}`}>{msg.text}</span>}
           {!frozen && (
             <>
