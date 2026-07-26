@@ -3,6 +3,9 @@ import { sql } from "drizzle-orm";
 import type { Tx } from "../db/db.service.js";
 import { envOf, type Environment } from "./env-guards.js";
 import { runGates, type GateConfig, type GateFailure } from "../modules/workflow/gates.js";
+import {
+  evaluate, describe, gatherFacts, isEmptyCondition, type Condition,
+} from "../modules/workflow/conditions.js";
 
 /**
  * THE SINGLE STATUS-WRITE ENTRY POINT (QNEW-64 §7.6.1 / QNEW-75).
@@ -257,13 +260,37 @@ export class StatusService {
         );
       }
 
-      const edge = (await tx.execute(sql`
-        select allowed_roles, handoff, gates, condition from workflow_transitions
+      // ALL matching arrows, highest priority first — not `limit 1` with no ordering.
+      // Two arrows may connect the same pair with different conditions ("insurance goes this way,
+      // everyone else that way"), and picking one arbitrarily made both `condition` and `priority`
+      // meaningless. The first arrow whose condition holds is the one being taken.
+      const candidates = (await tx.execute(sql`
+        select allowed_roles, handoff, gates, condition, priority from workflow_transitions
         where flow_id = ${flowId}::uuid and from_step_id = ${fromStep.id}::uuid and to_step_id = ${toStep.id}::uuid
-        limit 1`))[0] as {
+        order by priority desc, created_at asc`)) as Array<{
         allowed_roles: string[] | null; handoff: string;
-        gates: GateConfig[] | null; condition: Record<string, unknown> | null;
-      } | undefined;
+        gates: GateConfig[] | null; condition: Condition | null; priority: number;
+      }>;
+
+      let edge: (typeof candidates)[number] | undefined;
+      let blockedBy: Condition | null = null;
+      if (candidates.length) {
+        const unconditional = candidates.filter((c) => isEmptyCondition(c.condition));
+        const conditional = candidates.filter((c) => !isEmptyCondition(c.condition));
+        // reading the record once is enough for every clause on every candidate
+        const facts = conditional.length ? await gatherFacts(tx, entity, m.id) : {};
+        edge =
+          conditional.find((c) => evaluate(c.condition, facts)) ??
+          unconditional[0];
+        // every arrow exists but none applies here — say WHICH rule turned it away, not "not allowed"
+        if (!edge && conditional.length) blockedBy = conditional[0].condition;
+      }
+
+      if (!edge && blockedBy) {
+        throw new BadRequestException(
+          `this move is only allowed when ${describe(blockedBy)}`,
+        );
+      }
       if (!edge) {
         const fromCode = (await tx.execute(sql`
           select coalesce(i.code, v.code) as code from workflow_steps s

@@ -6,6 +6,7 @@ import { envOf } from "../../common/env-guards.js";
 import { AiService } from "../../common/ai.service.js";
 import { ROUTABLE_PAGES, isPageKey, pageByKey } from "./pages.js";
 import { GATES, gateByKey } from "./gates.js";
+import { CONDITION_FIELDS, conditionFieldByKey } from "./conditions.js";
 
 /**
  * Workflow authoring API (QNEW-64). Super-admin only for now — owner's decision: build the module
@@ -22,7 +23,20 @@ import { GATES, gateByKey } from "./gates.js";
  * these checks are for good error messages, not for safety.
  */
 
-const conditionSchema = z.record(z.unknown());
+/**
+ * A condition on a transition: `{}` = always, otherwise clauses that must all hold (`all`) or of
+ * which one must hold (`any`). Deliberately NOT nestable — a rule an admin cannot read back in one
+ * sentence is a rule nobody trusts, and `describe()` has to be able to render it.
+ */
+const clauseSchema = z.object({
+  field: z.string().max(64),
+  op: z.enum(["eq", "ne", "gt", "lt", "in"]),
+  value: z.unknown(),
+});
+const conditionSchema = z.object({
+  all: z.array(clauseSchema).max(10).optional(),
+  any: z.array(clauseSchema).max(10).optional(),
+});
 
 const stepSchema = z.object({
   /** status CODE from the governed catalog (item_statuses / vendor_statuses), never a uuid. */
@@ -142,7 +156,7 @@ export const saveGraphSchema = z.object({
   nameEn: z.string().min(2).max(120).optional(),
   nameAr: z.string().min(2).max(120).optional(),
   /** null = never auto-selected; {} = matches every record; {...} = a real condition. */
-  selectionCondition: conditionSchema.nullable().optional(),
+  selectionCondition: z.record(z.unknown()).nullable().optional(),
   canvas: z.record(z.unknown()).optional(),
   steps: z.array(stepSchema).min(1).max(200),
   transitions: z.array(transitionSchema).max(1000).default([]),
@@ -190,6 +204,10 @@ export class WorkflowService {
         vendorStatuses: vendor,
         roles: roles.map((r) => (r as { code: string }).code),
         pages: ROUTABLE_PAGES,
+        conditionFields: CONDITION_FIELDS.map((f) => ({
+          key: f.key, labelEn: f.labelEn, labelAr: f.labelAr,
+          type: f.type, options: f.options, entities: f.entities,
+        })),
         gates: GATES.map((g) => ({
           key: g.key, labelEn: g.labelEn, labelAr: g.labelAr, helpEn: g.helpEn,
           params: g.params, entities: g.entities, defaultEnforcement: g.defaultEnforcement,
@@ -969,6 +987,14 @@ export class WorkflowService {
     if (errs.length) throw new BadRequestException(errs.join("; "));
 
     for (const t of dto.transitions) {
+      const badFields = [...(t.condition.all ?? []), ...(t.condition.any ?? [])]
+        .map((c) => c.field)
+        .filter((k) => !conditionFieldByKey(k));
+      if (badFields.length)
+        throw new BadRequestException(
+          `'${t.from}' → '${t.to}' tests unknown field(s): ${[...new Set(badFields)].join(", ")}`,
+        );
+
       const unknown = t.gates.filter((g) => !gateByKey(g.gate)).map((g) => g.gate);
       if (unknown.length)
         throw new BadRequestException(

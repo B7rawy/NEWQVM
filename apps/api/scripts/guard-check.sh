@@ -362,3 +362,54 @@ psql "delete from status_logs;
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'GATE-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'GATE-%'" > /dev/null
+
+# ── record conditions (QNEW-89 §4.1) ────────────────────────────────────────────────────────────
+# `condition` was stored, round-tripped, frozen by triggers and evaluated by NOTHING since the engine
+# was built. This is the owner's own branching example: the same status leads one way for an insurance
+# customer and nowhere for anyone else.
+wfclean
+FIDC=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-cond","nameAr":"شرط","nameEn":"Cond","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$FIDC/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price",
+   "condition":{"all":[{"field":"payer_type","op":"eq","value":"insurance"}]}}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$FIDC/activate"
+
+cond_attempt(){ # $1=plate $2=payer -> echoes the winning-quote response
+  local rid tok it qi
+  rid=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"%s","items":[{"partNumber":"P1","quantity":1}]}' "$BR" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  psql "update rfqs set payer_type='$2' where id='$rid'" > /dev/null
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  it=$(psql "select id from rfq_items where rfq_id='$rid' limit 1")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$it")"
+  qi=$(psql "select id from rfq_vendor_items where rfq_item_id='$it' limit 1")
+  curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/items/$it/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$qi")"
+}
+
+ok 0 "$(blocked "$(cond_attempt COND-INS insurance)")" \
+  "a condition lets the move through when the record matches it"
+ok 1 "$(blocked "$(cond_attempt COND-CASH cash_client)")" \
+  "and refuses it when the record does not"
+ok 1 "$(cond_attempt COND-CASH2 cash_client | $PY -c "
+import sys,json;print(1 if 'Who pays' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "the refusal names the RULE in plain words, not just 'not allowed'"
+
+# a line inherits its request's facts, or a condition on the payer could never be judged on the
+# line-level moves, which is where most of the work happens
+ok 1 "$(psql "select count(*) from workflow_transitions where condition::text like '%payer_type%'")" \
+  "the condition survives a save (it is not silently reset to {})"
+
+wfclean
+psql "delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'COND-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'COND-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'COND-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'COND-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'COND-%'" > /dev/null
