@@ -339,11 +339,16 @@ export class WorkflowService {
         const codes = new Set(here.map((s) => s.code as string));
         return {
           ...p,
-          statuses: here.map((s) => ({
-            code: s.code, labelEn: s.label_en, labelAr: s.label_ar,
-            ownerRoles: (s.owner_roles as string[]) ?? [],
-            isEntry: s.is_entry, isTerminal: s.is_terminal, slaHours: s.sla_hours,
-          })),
+          statuses: here.map((s) => {
+            const pl = ((s.pages as PageRef[]) ?? []).find((x) => x.page === p.key);
+            return {
+              code: s.code, labelEn: s.label_en, labelAr: s.label_ar,
+              ownerRoles: (s.owner_roles as string[]) ?? [],
+              isEntry: s.is_entry, isTerminal: s.is_terminal, slaHours: s.sla_hours,
+              mode: pl?.mode ?? "action",
+              afterHours: pl?.afterHours ?? null,
+            };
+          }),
           // What can happen to work sitting here, and which screen it lands on afterwards. The
           // destination page is NOT a stored choice — it follows where the destination status is
           // placed, so there is exactly one place to change it.

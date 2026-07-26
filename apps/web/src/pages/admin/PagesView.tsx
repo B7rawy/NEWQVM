@@ -16,10 +16,20 @@ import { AlertTriangle, ArrowRight, Plus, Sparkles, Trash2, Users, X } from "luc
  * diagram edits, so the two readings can never disagree.
  */
 
+/** A station this step sits on, and what that station may do about it (QNEW-89 §3). */
+export type PageMode = "action" | "watch" | "optional";
+export interface Placement { page: string; mode: PageMode; afterHours?: number | null }
 export interface PVStep {
   status: string; label: string; isEntry: boolean; isTerminal: boolean;
-  pages: string[]; ownerRoles: string[];
+  pages: Placement[]; ownerRoles: string[];
 }
+
+/** What each mode means, in the words that go on the screen. */
+export const MODES: Array<{ key: PageMode; label: string; hint: string }> = [
+  { key: "action", label: "Works on it", hint: "This desk owns it — its buttons are live" },
+  { key: "watch", label: "Watches only", hint: "Can see it and follow progress, cannot act" },
+  { key: "optional", label: "Can step in", hint: "May take over from whoever owns it" },
+];
 export interface PVEdge {
   from: string; to: string; label?: string | null;
   requiresApproval: boolean; allowedRoles: string[]; handoff: string;
@@ -50,8 +60,8 @@ export default function PagesView({
   frozen: boolean;
   selected: string | null;
   onSelect: (key: string) => void;
-  onPlace: (status: string, pages: string[]) => void;
-  onAddStatus: (code: string, pageKey: string) => void;
+  onPlace: (status: string, pages: Placement[]) => void;
+  onAddStatus: (code: string, pageKey: string, mode?: PageMode) => void;
   onPatchStep: (code: string, patch: Partial<PVStep>) => void;
   onAddAction: (from: string, to: string, label: string) => void;
   onRemoveAction: (from: string, to: string) => void;
@@ -63,11 +73,13 @@ export default function PagesView({
 
   const page = pages.find((p) => p.key === selected) ?? pages[0] ?? null;
   const unplaced = steps.filter((s) => s.pages.length === 0);
+  const placementOn = (code: string, key: string) =>
+    byCode.get(code)?.pages.find((p) => p.page === key) ?? null;
   const byCode = new Map(steps.map((s) => [s.status, s]));
   const pagesOf = (code: string) =>
-    pages.filter((p) => byCode.get(code)?.pages.includes(p.key));
+    pages.filter((p) => byCode.get(code)?.pages.some((x) => x.page === p.key));
 
-  const here = page ? steps.filter((s) => s.pages.includes(page.key)) : [];
+  const here = page ? steps.filter((s) => s.pages.some((p) => p.page === page.key)) : [];
 
   const badge = (p: PVPage) =>
     !p.wired ? <span className="text-[11px] text-faint">Not built yet</span>
@@ -112,7 +124,7 @@ export default function PagesView({
               <div className="flex max-h-56 flex-wrap gap-1 overflow-auto">
                 {catalog.map((c) => (
                   <button key={c.code}
-                    onClick={() => onAddStatus(c.code, pages[0]?.key ?? "rfqs")}
+                    onClick={() => onAddStatus(c.code, pages[0]?.key ?? "rfqs", "action")}
                     className="rounded-md border border-line bg-panel px-2 py-1 text-[11.5px] leading-none text-sub transition hover:border-navy hover:text-ink">
                     {c.label_en}
                   </button>
@@ -137,7 +149,7 @@ export default function PagesView({
                 {PERSONA_GROUP[persona]}
               </p>
               {rows.map((p) => {
-                const n = steps.filter((s) => s.pages.includes(p.key)).length;
+                const n = steps.filter((s) => s.pages.some((x) => x.page === p.key)).length;
                 return (
                   <button key={p.key} onClick={() => { onSelect(p.key); setAdding(false); setActionFor(null); }}
                     className={`mb-0.5 flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left transition ${
@@ -201,13 +213,13 @@ export default function PagesView({
                   </p>
                   <div className="flex max-h-52 flex-wrap gap-1 overflow-auto">
                     {catalog
-                      .filter((c) => !byCode.get(c.code)?.pages.includes(page.key))
+                      .filter((c) => !byCode.get(c.code)?.pages.some((p) => p.page === page.key))
                       .map((c) => {
                         const inFlow = byCode.has(c.code);
                         return (
                           <button key={c.code}
                             onClick={() => {
-                              if (inFlow) onPlace(c.code, [...(byCode.get(c.code)!.pages), page.key]);
+                              if (inFlow) onPlace(c.code, [...byCode.get(c.code)!.pages, { page: page.key, mode: "action" }]);
                               else onAddStatus(c.code, page.key);
                               setAdding(false);
                             }}
@@ -242,6 +254,39 @@ export default function PagesView({
                           {s.isEntry && <span className="ml-1.5 rounded bg-[var(--chip-green-bg)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--chip-green-fg)]">STARTS HERE</span>}
                           {s.isTerminal && <span className="ml-1.5 rounded bg-[var(--chip-gray-bg)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--chip-gray-fg)]">FINISHED</span>}
                         </p>
+                        {(() => {
+                          const pl = placementOn(s.status, page.key);
+                          const m = MODES.find((x) => x.key === (pl?.mode ?? "action"))!;
+                          return (
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              {MODES.map((opt) => (
+                                <button key={opt.key} disabled={frozen} title={opt.hint}
+                                  onClick={() => onPlace(s.status, s.pages.map((p) =>
+                                    p.page === page.key ? { ...p, mode: opt.key } : p))}
+                                  className={`rounded-md border px-1.5 py-0.5 text-[10.5px] leading-none transition disabled:opacity-50 ${
+                                    m.key === opt.key
+                                      ? "border-navy bg-navy text-white"
+                                      : "border-line bg-surface text-muted hover:border-line-2 hover:text-sub"}`}>
+                                  {opt.label}
+                                </button>
+                              ))}
+                              {m.key === "optional" && (
+                                <label className="ml-1 flex items-center gap-1 text-[10.5px] text-faint">
+                                  after
+                                  <input type="number" min={1} disabled={frozen}
+                                    value={pl?.afterHours ?? ""} placeholder="—"
+                                    onChange={(e) => onPlace(s.status, s.pages.map((p) =>
+                                      p.page === page.key
+                                        ? { ...p, afterHours: e.target.value ? Number(e.target.value) : null }
+                                        : p))}
+                                    className="h-5 w-12 rounded border border-line bg-panel px-1 text-center text-[10.5px] text-ink outline-none" />
+                                  h
+                                </label>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         <button
                           onClick={() => setOpenRoles(openRoles === s.status ? null : s.status)}
                           disabled={frozen}
@@ -270,13 +315,28 @@ export default function PagesView({
                             </button>
                           </>
                         )}
-                        <button onClick={() => onPlace(s.status, s.pages.filter((k) => k !== page.key))}
+                        <button onClick={() => onPlace(s.status, s.pages.filter((p) => p.page !== page.key))}
                           title="Take it off this screen"
                           className="rounded p-1 text-faint hover:bg-surface hover:text-accent">
                           <X className="h-3.5 w-3.5" />
                         </button>
                       </div>
                     </div>
+
+                    {(() => {
+                      const m = placementOn(s.status, page.key)?.mode ?? "action";
+                      if (m === "action") return null;
+                      const hrs = placementOn(s.status, page.key)?.afterHours;
+                      return (
+                        <p className="mt-1 text-[11px] leading-relaxed text-faint">
+                          {m === "watch"
+                            ? "People here see it and can follow who is holding it — they cannot move it."
+                            : hrs
+                              ? `People here may take over, but only after it has sat here for ${hrs}h.`
+                              : "People here may take over from whoever owns it."}
+                        </p>
+                      );
+                    })()}
 
                     {openRoles === s.status && !frozen && (
                       <div className="mt-2 rounded-md border border-line bg-surface p-2.5">
@@ -347,8 +407,8 @@ export default function PagesView({
                             onCancel={() => setActionFor(null)}
                             onCreate={(to, label, alsoPlaceOn) => {
                               if (!byCode.has(to)) onAddStatus(to, alsoPlaceOn ?? page.key);
-                              else if (alsoPlaceOn && !byCode.get(to)!.pages.includes(alsoPlaceOn))
-                                onPlace(to, [...byCode.get(to)!.pages, alsoPlaceOn]);
+                              else if (alsoPlaceOn && !byCode.get(to)!.pages.some((p) => p.page === alsoPlaceOn))
+                                onPlace(to, [...byCode.get(to)!.pages, { page: alsoPlaceOn, mode: "action" }]);
                               onAddAction(s.status, to, label);
                               setActionFor(null);
                             }}
@@ -403,11 +463,11 @@ function ActionBuilder({
 
   const byCode = new Map(steps.map((s) => [s.status, s]));
   const samePage = dest === "__same__";
-  const targetPage = samePage ? (from.pages[0] ?? null) : dest;
+  const targetPage = samePage ? (from.pages[0]?.page ?? null) : dest;
 
   // statuses already on the chosen screen come first — that is nearly always what is meant
   const onTarget = catalog.filter(
-    (c) => targetPage && byCode.get(c.code)?.pages.includes(targetPage) && c.code !== from.status,
+    (c) => targetPage && byCode.get(c.code)?.pages.some((p) => p.page === targetPage) && c.code !== from.status,
   );
   const others = catalog.filter(
     (c) => c.code !== from.status && !onTarget.some((o) => o.code === c.code),

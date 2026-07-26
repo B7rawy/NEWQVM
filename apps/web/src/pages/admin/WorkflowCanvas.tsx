@@ -32,7 +32,10 @@ const MAX_K = 2.5;
 
 type FlowStatus = "draft" | "active" | "retired";
 interface CatalogStatus { code: string; label_en: string; label_ar: string }
-interface Step { status: string; label: string; isEntry: boolean; isTerminal: boolean; slaHours?: number | null; x: number; y: number; pages: string[]; ownerRoles: string[] }
+/** A station this step sits on, and what that station may do about it (QNEW-89 §3). */
+type PageMode = "action" | "watch" | "optional";
+interface Placement { page: string; mode: PageMode; afterHours?: number | null }
+interface Step { status: string; label: string; isEntry: boolean; isTerminal: boolean; slaHours?: number | null; x: number; y: number; pages: Placement[]; ownerRoles: string[] }
 interface RoutablePage { key: string; path: string; labelEn: string; labelAr: string; entities: string[]; personas: string[]; wired: boolean }
 type Handoff = "pool" | "keep" | "actor";
 interface Edge { from: string; to: string; label?: string | null; requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff }
@@ -104,7 +107,7 @@ export default function WorkflowCanvas() {
   const [pageSel, setPageSel] = useState<string | null>(null);
   const entryPage = useMemo(() => {
     const entry = graph.steps.find((s) => s.isEntry) ?? graph.steps.find((s) => s.pages.length);
-    return entry?.pages[0] ?? null;
+    return entry?.pages[0]?.page ?? null;
   }, [graph.steps]);
   const [adding, setAdding] = useState(false);
   const [panning, setPanning] = useState(false);
@@ -194,7 +197,7 @@ export default function WorkflowCanvas() {
         slaHours: (s.sla_hours as number) ?? null,
         x: Number(s.x) || 0,
         y: Number(s.y) || 0,
-        pages: (s.pages as string[]) ?? [],
+        pages: ((s.pages as Placement[]) ?? []).map((p) => ({ ...p, mode: p.mode ?? "action" })),
         ownerRoles: (s.owner_roles as string[]) ?? [],
       })),
       edges: f.transitions.map((t) => ({
@@ -457,7 +460,7 @@ export default function WorkflowCanvas() {
     setAdding(false);
   }
 
-  async function placeStatus(status: string, next: string[]) {
+  async function placeStatus(status: string, next: Placement[]) {
     if (!frozen) return patchStep(status, { pages: next });
     setBusy(true); setMsg(null);
     try {
@@ -471,7 +474,7 @@ export default function WorkflowCanvas() {
 
   /** Add a status the flow does not have YET, and put it straight onto a screen. This is what
    *  makes Pages self-sufficient: you never have to open the diagram to grow the workflow. */
-  function addStatusToPage(code: string, pageKey: string) {
+  function addStatusToPage(code: string, pageKey: string, mode: PageMode = "action") {
     const c = catalog.find((x) => x.code === code);
     // lay it out in a readable grid so the diagram stays usable for whoever does open it
     const col = steps.length % 4;
@@ -483,7 +486,7 @@ export default function WorkflowCanvas() {
         label: c?.label_en || code,
         isEntry: steps.length === 0,
         isTerminal: false,
-        pages: [pageKey],
+        pages: [{ page: pageKey, mode }],
         ownerRoles: [],
         x: 80 + col * 260,
         y: 100 + row * 200,
@@ -965,8 +968,11 @@ export default function WorkflowCanvas() {
                   <label className="label">Shows on</label>
                   <Chips
                     disabled={frozen && false /* routing stays fixable on a live flow — see 0048 */}
-                    value={selStep.pages}
-                    onChange={(v) => patchStep(selStep.status, { pages: v })}
+                    value={selStep.pages.map((p) => p.page)}
+                    onChange={(v) => patchStep(selStep.status, {
+                      // keep whatever mode a page already had; a newly ticked page defaults to action
+                      pages: v.map((k) => selStep.pages.find((p) => p.page === k) ?? { page: k, mode: "action" as const }),
+                    })}
                     empty="Everywhere it appears today — routing is off for this step."
                     options={pages.map((p) => ({
                       key: p.key,
@@ -975,7 +981,7 @@ export default function WorkflowCanvas() {
                       hint: p.wired ? p.path : `${p.path} — this screen is not built yet`,
                     }))}
                   />
-                  {selStep.pages.some((k) => pages.find((p) => p.key === k && !p.wired)) && (
+                  {selStep.pages.some((pl) => pages.find((p) => p.key === pl.page && !p.wired)) && (
                     <p className="mt-1.5 text-[11px] text-accent">
                       ⚠ One of these screens is not built yet — orders routed there would not be visible.
                     </p>
@@ -1116,7 +1122,7 @@ function AssistantPanel({
           steps: r.steps.map((s) => ({
             status: s.status, label: s.status, isEntry: !!s.isEntry, isTerminal: !!s.isTerminal,
             slaHours: s.slaHours ?? null, x: Number(s.x) || 0, y: Number(s.y) || 0,
-            pages: s.pages ?? [], ownerRoles: s.ownerRoles ?? [],
+            pages: (s.pages as Placement[] | undefined) ?? [], ownerRoles: s.ownerRoles ?? [],
           })),
           edges: (r.transitions ?? []).map((t2) => ({
             from: t2.from as string, to: t2.to as string, label: (t2.labelEn as string) ?? null,

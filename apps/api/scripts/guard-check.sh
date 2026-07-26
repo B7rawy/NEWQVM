@@ -275,3 +275,23 @@ ok 3 "$(psql "select count(*) from workflow_steps ws
 # guard, and the loser writes a status_logs row claiming a move from a state it was never in.
 ok 1 "$(/usr/bin/grep -c "order by id for update" "$(cd "$(dirname "$0")/.." && pwd)/src/common/status.service.ts")" \
   "the status gateway locks the rows it is about to move"
+
+# §3.4 — the canonical case: ONE status, two stations, two different roles
+WFI=$(psql "select id from workflow_flows where flow_key='insurance' limit 1")
+if [ -n "$WFI" ]; then
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WFI/placement" \
+    -d '{"status":"priced","pages":[{"page":"rfqs","mode":"action"},{"page":"workshop_requests","mode":"watch"}]}'
+  ok "action|watch" "$(psql "select string_agg(e->>'mode', '|' order by e->>'page')
+                             from workflow_steps s
+                             join item_statuses i on i.id = s.item_status_id,
+                             lateral jsonb_array_elements(s.pages) e
+                             where i.code='priced' and s.flow_id='$WFI'")" \
+    "one status can be ACTION on the desk that owns it and WATCH on the portal tracking it"
+
+  # a watch station still SHOWS the record — read-only is not invisible
+  ok 1 "$(psql "select count(*) from workflow_steps ws
+                where ws.flow_id='$WFI'
+                  and exists (select 1 from jsonb_array_elements(ws.pages) e
+                              where e->>'page'='workshop_requests')")" \
+    "a watch placement is visible to the routing predicate (read-only, not hidden)"
+fi
