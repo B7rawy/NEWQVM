@@ -38,8 +38,10 @@ interface PageRow {
   personas: string[]; wired: boolean;
   statuses: StatusOnPage[]; exits: Exit[]; owners: string[];
 }
+interface FlowRef { id: string; name: string; version: number; status: string; steps: number }
 interface PageView {
-  flow: { id: string; name: string; version: number; status: string } | null;
+  flow: (FlowRef & { nameAr: string; isDefault: boolean }) | null;
+  flows: FlowRef[];
   pages: PageRow[];
   unplaced: Array<{ code: string; labelEn: string; labelAr: string }>;
   holders: Record<string, number>;
@@ -126,6 +128,24 @@ export default function Pages() {
       </div>
     );
 
+  // A flow with no steps has nothing to place. Saying "no workflow" here would repeat the lie the
+  // is_default filter used to tell — the workflow exists, it is just empty.
+  if (data.flow.steps === 0)
+    return (
+      <div className="card p-8 text-center">
+        <p className="text-[14px] font-medium text-sub">
+          “{data.flow.name}” has no steps yet
+        </p>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-faint">
+          A workflow needs statuses before it can be laid out across screens. Add them in the
+          diagram — or describe the flow to the assistant there and let it draw one.
+        </p>
+        <Link to={`/admin/workflows/${data.flow.id}`} className="btn btn-sm mt-3 inline-flex">
+          Open the diagram
+        </Link>
+      </div>
+    );
+
   const grouped = ["internal", "workshop", "vendor"].map((persona) => ({
     heading: PERSONA_GROUP[persona],
     rows: data.pages.filter((p) => p.personas.includes(persona)),
@@ -141,7 +161,13 @@ export default function Pages() {
           </p>
         </div>
         <div className="flex items-center gap-2.5 text-[12px] text-muted">
-          <span>{data.flow.name} · v{data.flow.version} · {data.flow.status}</span>
+          <span>
+            Showing <b className="text-ink">{data.flow.name}</b> · v{data.flow.version} · {data.flow.status}
+            {data.flows.length > 1 && (
+              <span className="text-faint"> · {data.flows.length - 1} other
+                {data.flows.length === 2 ? " workflow" : " workflows"} in this workspace</span>
+            )}
+          </span>
           <Link to={`/admin/workflows/${data.flow.id}`} className="btn btn-sm">
             <GitBranch className="h-3.5 w-3.5" /> Diagram
           </Link>

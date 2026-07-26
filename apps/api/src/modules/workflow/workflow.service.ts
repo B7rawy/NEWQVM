@@ -241,14 +241,22 @@ export class WorkflowService {
    */
   async pageView(ctx: RlsContext) {
     return this.dbService.withContext(ctx, async (tx) => {
-      const [flow] = (await tx.execute(sql`
-        select id, name_en, version, status from workflow_flows
-        where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
-          and status_domain = 'item' and is_default
-        order by case status when 'active' then 0 when 'draft' then 1 else 2 end, version desc
-        limit 1`)) as Array<{ id: string; name_en: string; version: number; status: string }>;
+      const flows = (await tx.execute(sql`
+        select f.id, f.name_en, f.name_ar, f.version, f.status, f.is_default,
+               (select count(*)::int from workflow_steps s where s.flow_id = f.id) as steps
+        from workflow_flows f
+        where f.tenant_id = ${ctx.tenantId}::uuid and f.environment = ${envOf(ctx)}
+          and f.status_domain = 'item'
+        order by case f.status when 'active' then 0 when 'draft' then 1 else 2 end,
+                 f.is_default desc, f.version desc`)) as Array<{
+        id: string; name_en: string; name_ar: string; version: number; status: string;
+        is_default: boolean; steps: number;
+      }>;
+      // A flow with no steps has nothing to lay out, so prefer one that does — otherwise the screen
+      // looks broken when a perfectly good flow exists next to an empty stub.
+      const flow = flows.find((f) => f.steps > 0) ?? flows[0];
 
-      if (!flow) return { flow: null, pages: [], unplaced: [], holders: {} };
+      if (!flow) return { flow: null, flows: [], pages: [], unplaced: [], holders: {} };
 
       const steps = (await tx.execute(sql`
         select s.id, coalesce(i.code, v.code) as code,
@@ -311,7 +319,15 @@ export class WorkflowService {
       });
 
       return {
-        flow: { id: flow.id, name: flow.name_en, version: flow.version, status: flow.status },
+        flow: {
+          id: flow.id, name: flow.name_en, nameAr: flow.name_ar,
+          version: flow.version, status: flow.status, isDefault: flow.is_default,
+          steps: flow.steps,
+        },
+        // every flow in the workspace, so the screen can say what it is showing and why
+        flows: flows.map((f) => ({
+          id: f.id, name: f.name_en, version: f.version, status: f.status, steps: f.steps,
+        })),
         pages,
         // The safety rule made visible: a status placed nowhere shows on EVERY screen. It is the
         // most counter-intuitive behaviour in the system and today it is invisible everywhere.
