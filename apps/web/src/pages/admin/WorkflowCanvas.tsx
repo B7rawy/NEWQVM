@@ -7,6 +7,7 @@ import {
 import { api } from "../../lib/api";
 import { useTargetWorkspace } from "../../lib/target-workspace";
 import PagesView from "./PagesView";
+import { type ActionCfg, type ActionDef } from "./ActionEditor";
 
 /**
  * Full-screen workflow builder. Deliberately OUTSIDE AppShell: a canvas wants the whole viewport.
@@ -45,13 +46,39 @@ interface GateDef {
   params: Array<{ key: string; labelEn: string; type: string; options?: string[]; default?: unknown }>;
   entities: string[]; defaultEnforcement: "block" | "warn_override";
 }
-interface Edge { from: string; to: string; label?: string | null; requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff; gates: GateCfg[] }
+/**
+ * EVERY COLUMN OF A TRANSITION THAT THE SAVE PAYLOAD SENDS MUST BE HERE.
+ *
+ * `PUT :id/graph` replaces the flow's transitions wholesale, so a field this interface does not
+ * carry is not merely un-editable — it is WIPED the next time anyone drags a node and saves.
+ * `actions`, `condition`, `autoAdvance` and `autoOnce` were missing, which meant the canvas
+ * silently destroyed every action, every condition and every automatic move on save. The API-side
+ * five-place rule does not cover this file; it is the sixth place, and the one a user can reach.
+ */
+interface Edge {
+  from: string; to: string; label?: string | null;
+  requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff;
+  gates: GateCfg[]; actions: ActionCfg[];
+  /** Opaque here on purpose — the canvas has no condition editor yet, but it must not eat one. */
+  condition: Record<string, unknown>;
+  autoAdvance: boolean; autoOnce: boolean;
+}
 interface Graph { steps: Step[]; edges: Edge[] }
 interface FlowDoc {
   id: string; flow_key: string; version: number; name_en: string; name_ar: string;
   status: FlowStatus; is_default: boolean; status_domain: "item" | "vendor";
   steps: Array<Record<string, unknown>>; transitions: Array<Record<string, unknown>>;
 }
+
+/**
+ * Which record types a flow's domain actually governs — mirrors ENTITIES in status.service.ts.
+ * An action declares the entities it applies to; one that matches nothing here would only ever
+ * write "skipped" to the run log, so the picker does not offer it.
+ */
+const DOMAIN_ENTITIES: Record<"item" | "vendor", string[]> = {
+  item: ["rfq", "rfq_item", "order", "order_item", "purchase_order", "delivery", "return", "invoice", "credit_note"],
+  vendor: ["rfq_vendor"],
+};
 
 const CHIP: Record<FlowStatus, string> = {
   draft: "bg-[var(--chip-amber-bg)] text-[var(--chip-amber-fg)]",
@@ -105,6 +132,7 @@ export default function WorkflowCanvas() {
   const [holders, setHolders] = useState<Record<string, number>>({});
   /** The code-defined rule catalog. Admins pick from it; they never write a condition. */
   const [gateDefs, setGateDefs] = useState<GateDef[]>([]);
+  const [actionDefs, setActionDefs] = useState<ActionDef[]>([]);
   const [sel, setSel] = useState<Sel | null>(null);
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -190,6 +218,7 @@ export default function WorkflowCanvas() {
       api.get<{
         itemStatuses: CatalogStatus[]; vendorStatuses: CatalogStatus[]; roles: string[];
         pages: RoutablePage[]; holders: Record<string, number>; gates: GateDef[];
+        actions: ActionDef[];
       }>("/admin/workflows/catalog", { tenant: target }),
     ]);
     setFlow(f);
@@ -198,6 +227,7 @@ export default function WorkflowCanvas() {
     setPages(c.pages ?? []);
     setHolders(c.holders ?? {});
     setGateDefs(c.gates ?? []);
+    setActionDefs(c.actions ?? []);
     setGraph({
       steps: f.steps.map((s) => ({
         status: s.status as string,
@@ -219,6 +249,10 @@ export default function WorkflowCanvas() {
         priority: (t.priority as number) ?? 0,
         handoff: ((t.handoff as Handoff) ?? "pool"),
         gates: ((t.gates as GateCfg[]) ?? []),
+        actions: ((t.actions as ActionCfg[]) ?? []),
+        condition: ((t.condition as Record<string, unknown>) ?? {}),
+        autoAdvance: !!t.auto_advance,
+        autoOnce: t.auto_once === undefined ? true : !!t.auto_once,
       })),
     });
     hist.current = { past: [], future: [], lastKey: null };
@@ -513,6 +547,7 @@ export default function WorkflowCanvas() {
       edges: [...edges, {
         from, to, label: label || null,
         requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool", gates: [],
+        actions: [], condition: {}, autoAdvance: false, autoOnce: true,
       }],
     });
   }
@@ -527,7 +562,10 @@ export default function WorkflowCanvas() {
     // proposal replacing the graph). Such an edge draws as nothing but still serialises into save().
     if (!byCode.has(linkFrom) || !byCode.has(to)) return setLinkFrom(null);
     if (!edges.some((e) => e.from === linkFrom && e.to === to)) {
-      commit({ ...graph, edges: [...edges, { from: linkFrom, to, requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool", gates: [] }] });
+      commit({ ...graph, edges: [...edges, {
+        from: linkFrom, to, requiresApproval: false, allowedRoles: [], priority: 0,
+        handoff: "pool", gates: [], actions: [], condition: {}, autoAdvance: false, autoOnce: true,
+      }] });
     }
     setLinkFrom(null);
   }
@@ -552,7 +590,8 @@ export default function WorkflowCanvas() {
         transitions: edges.map((e) => ({
           from: e.from, to: e.to, labelEn: e.label ?? null,
           requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
-          handoff: e.handoff, gates: e.gates,
+          handoff: e.handoff, gates: e.gates, actions: e.actions,
+          condition: e.condition, autoAdvance: e.autoAdvance, autoOnce: e.autoOnce,
         })),
       }, { tenant: target });
       // Only declare the document clean if nothing changed while the request was in flight;
@@ -674,6 +713,10 @@ export default function WorkflowCanvas() {
               onSetGates={(from, to, gates) =>
                 commit({ ...graph, edges: edges.map((e) => (e.from === from && e.to === to ? { ...e, gates } : e)) })}
               gateDefs={gateDefs}
+              onSetAfter={(from, to, p) =>
+                commit({ ...graph, edges: edges.map((e) => (e.from === from && e.to === to ? { ...e, ...p } : e)) })}
+              actionDefs={actionDefs}
+              domainEntities={DOMAIN_ENTITIES[flow?.status_domain ?? "item"]}
               onAskAssistant={() => setRail("assistant")}
             />
           ) : (
@@ -1125,7 +1168,8 @@ function AssistantPanel({
             transitions: graph.edges.map((e) => ({
               from: e.from, to: e.to, labelEn: e.label ?? null,
               requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
-              handoff: e.handoff, gates: e.gates,
+              handoff: e.handoff, gates: e.gates, actions: e.actions,
+              condition: e.condition, autoAdvance: e.autoAdvance, autoOnce: e.autoOnce,
             })),
           },
         },
@@ -1142,7 +1186,9 @@ function AssistantPanel({
             from: t2.from as string, to: t2.to as string, label: (t2.labelEn as string) ?? null,
             requiresApproval: !!t2.requiresApproval, allowedRoles: (t2.allowedRoles as string[]) ?? [],
             priority: (t2.priority as number) ?? 0, handoff: ((t2.handoff as Handoff) ?? "pool"),
-            gates: ((t2.gates as GateCfg[]) ?? []),
+            gates: ((t2.gates as GateCfg[]) ?? []), actions: ((t2.actions as ActionCfg[]) ?? []),
+            condition: ((t2.condition as Record<string, unknown>) ?? {}),
+            autoAdvance: !!t2.autoAdvance, autoOnce: t2.autoOnce === undefined ? true : !!t2.autoOnce,
           })),
         });
       }

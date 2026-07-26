@@ -721,3 +721,69 @@ psql "delete from workflow_exceptions; delete from workflow_action_runs; delete 
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'ACTS-%'" > /dev/null
+
+# ── the SIXTH place, and the freeze tuple's newer members ────────────────────────────────────────
+# The five-place rule (zod schema → get() SELECT → saveGraph INSERT → newVersion clone → AI result
+# schema) names five places a transition field must be plumbed through. It misses a sixth, and the
+# sixth is the only one a user can reach: WorkflowCanvas.tsx builds the save payload from its own
+# `Edge` interface, and `PUT :id/graph` REPLACES every transition. A field the canvas does not carry
+# is therefore not merely un-editable — it is destroyed the next time anyone drags a node and saves.
+#
+# That is not hypothetical. actions, condition, auto_advance and auto_once were all missing from
+# that interface, so opening the builder and moving one box wiped every action, every condition and
+# every automatic move in the flow.
+#
+# TWO CHECKS, because neither half is sufficient alone and a bash suite cannot drive React:
+#   - the round trip below asserts the API PRESERVES what a canvas-shaped save sends;
+#   - the greps after it assert the canvas still SENDS it.
+# The first would have stayed green all through the bug. Only the second catches it.
+wfclean
+RTF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-rt","nameAr":"ذهاب وعودة","nameEn":"Round trip","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RTF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"P","priority":5,"autoAdvance":true,"autoOnce":false,
+   "condition":{"all":[{"field":"payer_type","op":"eq","value":"insurance"}]},
+   "actions":[{"action":"lock_record","params":{"reason":"look at it"}}]}]}'
+# now save again with EXACTLY the payload the canvas sends, as if a node had been nudged
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RTF/graph" \
+  -d "$(curl -s "${AR[@]}" "$B/api/admin/workflows/$RTF" | $PY -c "
+import sys, json
+f = json.load(sys.stdin)
+print(json.dumps({
+  'selectionCondition': {},
+  'steps': [{'status': s['status'], 'isEntry': s['is_entry'], 'isTerminal': s['is_terminal'],
+             'slaHours': s.get('sla_hours'), 'x': s['x'] + 10, 'y': s['y'],
+             'pages': s.get('pages', []), 'ownerRoles': s.get('owner_roles', [])} for s in f['steps']],
+  # the canvas Edge interface, field for field
+  'transitions': [{'from': t['from'], 'to': t['to'], 'labelEn': t.get('label_en'),
+                   'requiresApproval': t['requires_approval'], 'allowedRoles': t.get('allowed_roles', []),
+                   'priority': t['priority'], 'handoff': t['handoff'], 'gates': t.get('gates', []),
+                   'actions': t.get('actions', []), 'condition': t.get('condition', {}),
+                   'autoAdvance': t['auto_advance'], 'autoOnce': t['auto_once']} for t in f['transitions']],
+}))")"
+RT=$(curl -s "${AR[@]}" "$B/api/admin/workflows/$RTF" | $PY -c "
+import sys, json
+t = json.load(sys.stdin)['transitions'][0]
+print('%s|%s|%s|%s' % (len(t.get('actions') or []), 'yes' if (t.get('condition') or {}) else 'no',
+                       t['auto_advance'], t['auto_once']))")
+ok "1|yes|True|False" "$RT" \
+  "a canvas-shaped save preserves actions, condition and auto-advance instead of wiping them"
+
+# The client-side half of the same guarantee. A bash suite cannot drive React, but it can assert the
+# payload builder still mentions every field — which is exactly the check that would have caught it.
+CANVAS=apps/web/src/pages/admin/WorkflowCanvas.tsx
+for FIELD in actions condition autoAdvance autoOnce; do
+  ok 1 "$(/usr/bin/grep -c "e\.$FIELD" "$(dirname "$0")/../../../$CANVAS" 2>/dev/null | /usr/bin/head -1 | { read n; [ "${n:-0}" -gt 0 ] && echo 1 || echo 0; })" \
+    "the canvas save payload still carries $FIELD"
+done
+
+# The freeze tuple has now been hand-retyped by six migrations. Nothing asserted its newer members,
+# so a seventh retype that dropped one would un-freeze it on every active flow, silently.
+for COL in actions gates auto_advance auto_once; do
+  ok t "$(psql "select prosrc like '%NEW.$COL%' from pg_proc where proname='workflow_child_freeze'")" \
+    "the freeze trigger still governs $COL"
+done
+
+wfclean
