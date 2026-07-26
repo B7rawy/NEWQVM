@@ -16,6 +16,12 @@ export class ApprovalsController {
     return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
 
+  /** What is waiting on me, what I asked for, and what was approved but never acted on. */
+  @Get()
+  inbox(@Req() req: Request) {
+    return this.svc.inbox(this.ctx(req));
+  }
+
   @Post("request-move")
   requestMove(@Req() req: Request, @Body() body: unknown) {
     return this.svc.requestForMove(this.ctx(req), requestMoveSchema.parse(body));

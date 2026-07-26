@@ -34,7 +34,8 @@ import {
   Settings,
   type LucideIcon,
   Inbox,
-} from "lucide-react";
+
+  Stamp,} from "lucide-react";
 
 export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider";
 
@@ -57,6 +58,7 @@ export const platformNav: NavGroup[] = [
     heading: "Workspace",
     items: [
       { label: "My work", path: "/my-work", icon: Inbox },
+      { label: "Approvals", path: "/approvals", icon: Stamp },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes },
       { label: "Management Overview", path: "/management-overview", icon: Gauge },

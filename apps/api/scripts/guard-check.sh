@@ -461,6 +461,26 @@ ok priced "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i
 ok 1 "$(psql "select count(*) from approval_requests where consumed_at is not null")" \
   "the grant is spent, so it cannot authorise the same move twice"
 
+# ── the approvals inbox — the screen the chain must not ship without ────────────────────────────
+# A chain creates records that wait BY DESIGN, and there is no scheduler here to tell anyone. If the
+# approver cannot see the decision, the engine has simply stopped orders for no visible reason.
+psql "delete from approval_actions; delete from approval_requests" > /dev/null
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/approvals/request-move" \
+  -d "$(printf '{"entityType":"rfq_item","entityId":"%s","transitionKey":"new_rfq>priced"}' "$APIT")"
+
+ok 1 "$(curl -s "${MR[@]}" "$B/api/approvals" | $PY -c "import sys,json;print(len(json.load(sys.stdin)['waitingOnMe']))")" \
+  "the named approver sees the decision waiting on them"
+ok 0 "$(curl -s "${AR[@]}" "$B/api/approvals" | $PY -c "import sys,json;print(len(json.load(sys.stdin)['waitingOnMe']))")" \
+  "and someone who is not the approver does not"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/approvals" | $PY -c "import sys,json;print(len(json.load(sys.stdin)['mine']))")" \
+  "the requester can see what they asked for and who it is sitting with"
+
+# 0045 stopped a workspace user reading the directory, so the requester's name is snapshotted rather
+# than joined — otherwise the approver is asked to authorise something "by someone".
+ok 1 "$(curl -s "${MR[@]}" "$B/api/approvals" | $PY -c "
+import sys,json;print(1 if json.load(sys.stdin)['waitingOnMe'][0].get('requested_by_name') else 0)")" \
+  "the approver can see WHO asked, without the directory being opened to them"
+
 wfclean
 psql "delete from approval_actions; delete from approval_requests; delete from approval_levels; delete from approval_policies;
       delete from status_logs;

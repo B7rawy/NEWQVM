@@ -53,6 +53,61 @@ export class ApprovalsService {
   }
 
   /**
+   * THE APPROVALS INBOX.
+   *
+   * Three lists, and the third is the one that matters most:
+   *
+   *   waitingOnMe      — I am the named approver for the current level. My decision, right now.
+   *   readyToContinue  — signed off, and the move has NOT happened. This is the safety net. The
+   *                      final approval performs the move, so this should always be empty; if a row
+   *                      appears here it means an approval was granted and something stopped the
+   *                      move afterwards. With no scheduler in this repo, a stuck grant is invisible
+   *                      anywhere else, and an approval that silently changed nothing is the worst
+   *                      failure this feature can have.
+   *   mine             — what I asked for, so I can see who it is sitting with.
+   */
+  async inbox(ctx: RlsContext) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const rows = (await tx.execute(sql`
+        select r.id, r.entity_type, r.entity_id, r.transition_key, r.overall_status,
+               r.current_level, r.created_at, r.consumed_at, r.requested_by,
+               coalesce(r.requested_by_name, u.full_name) as requested_by_name,
+               l.approver_user_id as current_approver,
+               au.full_name as current_approver_name,
+               p.name as policy,
+               (select count(*)::int from approval_levels x where x.policy_id = r.policy_id) as levels,
+               coalesce(rq.order_number, o.order_number, irq.order_number) as reference,
+               coalesce(ii.part_number, oi.final_part_number) as part
+        from approval_requests r
+        join approval_policies p on p.id = r.policy_id
+        left join approval_levels l on l.policy_id = r.policy_id and l.level_order = r.current_level
+        left join users u on u.id = r.requested_by
+        left join users au on au.id = l.approver_user_id
+        left join rfqs        rq on r.entity_type = 'rfq'        and rq.id = r.entity_id
+        left join orders      o  on r.entity_type = 'order'      and o.id  = r.entity_id
+        left join rfq_items   ii on r.entity_type = 'rfq_item'   and ii.id = r.entity_id
+        left join order_items oi on r.entity_type = 'order_item' and oi.id = r.entity_id
+        left join rfqs        irq on irq.id = ii.rfq_id
+        where r.environment = ${envOf(ctx)}
+        order by r.created_at desc
+        limit 200`)) as Array<Record<string, unknown>>;
+
+      const mineId = ctx.userId;
+      return {
+        waitingOnMe: rows.filter(
+          (r) => r.overall_status === "pending" && r.current_approver === mineId,
+        ),
+        readyToContinue: rows.filter(
+          (r) => r.overall_status === "approved" && r.consumed_at === null && r.transition_key,
+        ),
+        mine: rows.filter((r) => r.requested_by === mineId && r.overall_status === "pending"),
+        // everything else, so nothing is invisible just because it is not yours
+        all: rows,
+      };
+    });
+  }
+
+  /**
    * Ask for sign-off on a specific move.
    *
    * Separate from the guard on purpose. The guard runs inside the caller's business transaction, so
@@ -85,9 +140,10 @@ export class ApprovalsService {
       const [r] = (await tx.execute(sql`
         insert into approval_requests
           (tenant_id, environment, policy_id, entity_type, entity_id, requested_by,
-           current_level, overall_status, transition_key)
+           current_level, overall_status, transition_key, requested_by_name)
         values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${policy.id}::uuid, ${dto.entityType},
-                ${dto.entityId}::uuid, ${ctx.userId}::uuid, 1, 'pending', ${dto.transitionKey})
+                ${dto.entityId}::uuid, ${ctx.userId}::uuid, 1, 'pending', ${dto.transitionKey},
+                (select full_name from users where id = ${ctx.userId}::uuid))
         returning id`)) as Array<{ id: string }>;
       return { requestId: r.id, status: "pending", currentLevel: 1, joined: false };
     });
