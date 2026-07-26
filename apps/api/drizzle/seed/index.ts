@@ -230,12 +230,69 @@ async function main() {
   await sql`insert into pricing_basis_settings (tenant_id,payer_scenario,price_basis,adjustment_type,adjustment_pct)
     values (${t1.id},'cash_client','calculated_margin','markup',0)`;
 
+  // ---- a working workflow, so the builder is not empty on a fresh database ----
+  // The seed TRUNCATES everything, so anything a developer draws by hand is gone after the next
+  // `pnpm db:seed` or `pnpm test:smoke`. Making one real flow a FIXTURE means the Pages screen and
+  // the canvas always have something true to show, and nobody loses their afternoon to a test run.
+  {
+    const step = async (flowId: string, code: string, opts: {
+      entry?: boolean; terminal?: boolean; x: number; y: number; pages?: string[]; owners?: string[];
+    }) => {
+      const [r] = await sql`insert into workflow_steps
+        (tenant_id, environment, flow_id, status_domain, item_status_id, is_entry, is_terminal,
+         canvas_x, canvas_y, pages, owner_roles)
+        select ${t1.id}, 'live', ${flowId}, 'item', id, ${!!opts.entry}, ${!!opts.terminal},
+               ${opts.x}, ${opts.y}, ${sql.json(opts.pages ?? [])},
+               ${sql.json(opts.owners ?? [])}
+        from item_statuses where code = ${code} returning id`;
+      return r.id as string;
+    };
+
+    const [flow] = await sql`insert into workflow_flows
+      (tenant_id, environment, flow_key, version, name_en, name_ar, status_domain, status, is_default)
+      values (${t1.id}, 'live', 'insurance', 1, 'Insurance flow', 'مسار التأمين', 'item', 'draft', true)
+      returning id`;
+
+    const ids: Record<string, string> = {
+      new_rfq: await step(flow.id, "new_rfq", { entry: true, x: 80, y: 100, pages: ["rfqs"], owners: ["company_admin"] }),
+      tendering: await step(flow.id, "tendering", { x: 340, y: 100, pages: ["rfqs"] }),
+      priced: await step(flow.id, "priced", { x: 600, y: 100, pages: ["rfqs"] }),
+      sent_insurance_approval: await step(flow.id, "sent_insurance_approval", { x: 80, y: 300, pages: ["orders"] }),
+      insurance_approved: await step(flow.id, "insurance_approved", { x: 340, y: 300, pages: ["orders"] }),
+      confirmed: await step(flow.id, "confirmed", { x: 600, y: 300, pages: ["orders"] }),
+      // deliberately placed on NO page, so the "shows on every screen" warning has a real example
+      cancelled: await step(flow.id, "cancelled", { terminal: true, x: 860, y: 100 }),
+      settled: await step(flow.id, "settled", { terminal: true, x: 860, y: 300, pages: ["orders"] }),
+    };
+
+    const moves: Array<[string, string, string, boolean?, string?]> = [
+      ["new_rfq", "tendering", "Request agency price"],
+      ["tendering", "priced", "Agency price received"],
+      ["priced", "sent_insurance_approval", "Send to insurance", false, "pool"],
+      ["sent_insurance_approval", "insurance_approved", "Insurance approved items", true],
+      ["insurance_approved", "confirmed", "Confirm order"],
+      ["confirmed", "settled", "Settle", false, "actor"],
+      ["priced", "cancelled", "Cancel"],
+    ];
+    for (const [from, to, label, approval, handoff] of moves) {
+      await sql`insert into workflow_transitions
+        (tenant_id, environment, flow_id, from_step_id, to_step_id, label_en, requires_approval, handoff)
+        values (${t1.id}, 'live', ${flow.id}, ${ids[from]}, ${ids[to]}, ${label},
+                ${!!approval}, ${handoff ?? "pool"})`;
+    }
+    // Left as a DRAFT deliberately: an active flow starts enforcing rules on every status move,
+    // and "permissive until configured" is the engine's rollout promise. A seed that silently
+    // switched enforcement on would make a fresh database behave unlike a real one. Press Activate
+    // in the builder when you want it live.
+  }
+
   // ---- report ----
   const counts = await sql`select
     (select count(*) from item_statuses) item_statuses,
     (select count(*) from tenants) tenants,
     (select count(*) from rfqs) rfqs,
-    (select order_number from rfqs limit 1) sample_order_number`;
+    (select order_number from rfqs limit 1) sample_order_number,
+    (select count(*) from workflow_flows) workflow_flows`;
   console.log("seed complete:", counts[0]);
   console.log("tenant t1:", t1.id, "t2:", t2.id);
   await sql.end();

@@ -308,6 +308,19 @@ echo "$GUARD_OUT" | grep -E '^  (PASS|FAIL)'
 PASS=$((PASS + $(echo "$GUARD_OUT" | grep -c '^  PASS')))
 FAIL=$((FAIL + $(echo "$GUARD_OUT" | grep -c '^  FAIL')))
 
+# This suite creates a flow keyed 'smoke' and never removed it, so every run left two more rows
+# behind. Scoped to its own key so it cannot take a developer's own flows with it.
+psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
+      delete from workflow_transitions where flow_id in (select id from workflow_flows where flow_key = 'smoke');
+      delete from workflow_steps       where flow_id in (select id from workflow_flows where flow_key = 'smoke');
+      delete from workflow_record_state where flow_id in (select id from workflow_flows where flow_key = 'smoke');
+      delete from workflow_flows where flow_key = 'smoke';
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
+
 echo
 echo "############################################################"
 echo "RESULT:  $PASS passed,  $FAIL failed"

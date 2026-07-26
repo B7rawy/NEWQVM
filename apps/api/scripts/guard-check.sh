@@ -21,8 +21,10 @@ wfclean(){
   psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
         alter table workflow_steps disable trigger trg_workflow_steps_freeze;
         alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
-        delete from workflow_transitions; delete from workflow_steps;
-        delete from workflow_record_state; delete from workflow_flows;
+        delete from workflow_transitions where flow_id in (select id from workflow_flows where flow_key like 'smoke-%');
+        delete from workflow_steps       where flow_id in (select id from workflow_flows where flow_key like 'smoke-%');
+        delete from workflow_record_state where flow_id in (select id from workflow_flows where flow_key like 'smoke-%');
+        delete from workflow_flows where flow_key like 'smoke-%';
         alter table workflow_flows enable trigger trg_workflow_flows_freeze;
         alter table workflow_steps enable trigger trg_workflow_steps_freeze;
         alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
@@ -96,9 +98,10 @@ ok t "$(psql "select prosrc like '%owner_roles%' from pg_proc where proname='wor
 ok f "$(psql "select prosrc like '%NEW.pages%' from pg_proc where proname='workflow_child_freeze'")" \
   "but NOT pages — a mis-routed status stays fixable without republishing"
 
-# permissive until configured: the columns exist and default to "no opinion"
-ok "[]" "$(psql "select pages::text from workflow_steps limit 1" | /usr/bin/head -1)$(psql "select '[]' where not exists (select 1 from workflow_steps)")" \
-  "pages defaults to [] (no routing opinion)"
+# permissive until configured: a step created without an opinion routes nowhere
+ok "'[]'::jsonb" "$(psql "select column_default from information_schema.columns
+                          where table_name='workflow_steps' and column_name='pages'")" \
+  "pages defaults to [] — routing is opt-in, not something a new step inherits"
 
 # every migration on disk must be reachable by the runner, or a deploy silently applies nothing
 ok 0 "$(/usr/bin/python3 -c "
