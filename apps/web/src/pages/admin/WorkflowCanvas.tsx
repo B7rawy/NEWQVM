@@ -100,7 +100,7 @@ export default function WorkflowCanvas() {
   const [busy, setBusy] = useState(false);
   const [rail, setRail] = useState<"inspector" | "assistant">("inspector");
   /** Two readings of ONE workflow, in one screen — not two destinations in the sidebar. */
-  const [mode, setMode] = useState<"diagram" | "pages">("diagram");
+  const [mode, setMode] = useState<"pages" | "diagram">("pages");
   const [pageSel, setPageSel] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [panning, setPanning] = useState(false);
@@ -465,6 +465,44 @@ export default function WorkflowCanvas() {
     } finally { setBusy(false); }
   }
 
+  /** Add a status the flow does not have YET, and put it straight onto a screen. This is what
+   *  makes Pages self-sufficient: you never have to open the diagram to grow the workflow. */
+  function addStatusToPage(code: string, pageKey: string) {
+    const c = catalog.find((x) => x.code === code);
+    // lay it out in a readable grid so the diagram stays usable for whoever does open it
+    const col = steps.length % 4;
+    const row = Math.floor(steps.length / 4);
+    commit({
+      ...graph,
+      steps: [...steps, {
+        status: code,
+        label: c?.label_en || code,
+        isEntry: steps.length === 0,
+        isTerminal: false,
+        pages: [pageKey],
+        ownerRoles: [],
+        x: 80 + col * 260,
+        y: 100 + row * 200,
+      }],
+    });
+  }
+
+  /** Create an action out of a status. Asked in page terms, stored as a transition. */
+  function addAction(from: string, to: string, label: string) {
+    if (edges.some((e) => e.from === from && e.to === to)) return;
+    commit({
+      ...graph,
+      edges: [...edges, {
+        from, to, label: label || null,
+        requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool",
+      }],
+    });
+  }
+
+  function removeAction(from: string, to: string) {
+    commit({ ...graph, edges: edges.filter((e) => !(e.from === from && e.to === to)) });
+  }
+
   function link(to: string) {
     if (!linkFrom || linkFrom === to) return setLinkFrom(null);
     // The source can vanish between arming the link and clicking the target (delete, undo, or an AI
@@ -584,7 +622,7 @@ export default function WorkflowCanvas() {
 
       <div className="shrink-0 border-b border-line bg-panel px-4">
         <div className="flex gap-0.5">
-          {([["diagram", "Diagram"], ["pages", "Pages"]] as const).map(([k, label]) => (
+          {([["pages", "Pages"], ["diagram", "Diagram"]] as const).map(([k, label]) => (
             <button key={k} onClick={() => setMode(k)}
               className={`border-b-2 px-3.5 py-2 text-[12.5px] font-medium transition ${
                 mode === k ? "border-navy text-ink" : "border-transparent text-muted hover:text-sub"}`}>
@@ -592,7 +630,7 @@ export default function WorkflowCanvas() {
             </button>
           ))}
           <span className="ml-2 self-center text-[11.5px] text-faint">
-            {mode === "diagram" ? "what may follow what" : "what each screen shows"}
+            {mode === "pages" ? "what each screen shows, and where work goes next" : "the same flow as a graph"}
           </span>
         </div>
       </div>
@@ -609,8 +647,13 @@ export default function WorkflowCanvas() {
               selected={pageSel}
               onSelect={setPageSel}
               onPlace={placeStatus}
-              onAddStep={() => { setMode("diagram"); setAdding(true); }}
-              onAskAssistant={() => { setMode("diagram"); setRail("assistant"); }}
+              catalog={catalog}
+              roles={roles}
+              onAddStatus={addStatusToPage}
+              onPatchStep={(code, p) => patchStep(code, p)}
+              onAddAction={addAction}
+              onRemoveAction={removeAction}
+              onAskAssistant={() => setRail("assistant")}
             />
           ) : (
           <>
