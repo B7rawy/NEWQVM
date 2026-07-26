@@ -76,6 +76,54 @@ export default function PagesView({
         <span className="h-1.5 w-1.5 rounded-full bg-[var(--chip-green-fg)]" /> Live
       </span>;
 
+  // With no statuses there is nothing to arrange, and showing seven empty screens plus a technical
+  // warning answers a question nobody asked. One instruction instead.
+  if (steps.length === 0)
+    return (
+      <div className="grid h-full place-items-center overflow-auto bg-surface p-6">
+        <div className="w-full max-w-lg text-center">
+          <h2 className="text-[18px] font-semibold text-ink">Set up your order flow</h2>
+          <p className="mx-auto mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
+            Describe how an order moves through your business — in Arabic or English — and it will be
+            laid out for you across your screens. You can change anything afterwards.
+          </p>
+
+          <button onClick={onAskAssistant}
+            className="btn-primary mx-auto mt-4 rounded-md px-4 py-2 text-[13px]">
+            <Sparkles className="h-4 w-4" /> Describe my flow
+          </button>
+
+          <div className="mt-6 rounded-lg border border-line bg-panel p-4 text-left">
+            <p className="text-[12px] font-semibold text-ink">For example, you could say:</p>
+            <p className="mt-1.5 text-[12.5px] leading-relaxed text-sub" dir="rtl">
+              «لما يجي طلب جديد يروح لفريق التسعير، وبعد ما يتسعّر يتبعت للتأمين، ولما التأمين يوافق
+              يتحوّل لأمر شراء»
+            </p>
+          </div>
+
+          <details className="mt-5 text-left">
+            <summary className="cursor-pointer text-[12.5px] text-muted hover:text-ink">
+              Or set it up yourself, one status at a time
+            </summary>
+            <div className="mt-2.5 rounded-lg border border-line bg-panel p-3">
+              <p className="mb-2 text-[11.5px] leading-relaxed text-muted">
+                Pick the first thing that happens to a new order. You will then say where it goes next.
+              </p>
+              <div className="flex max-h-56 flex-wrap gap-1 overflow-auto">
+                {catalog.map((c) => (
+                  <button key={c.code}
+                    onClick={() => onAddStatus(c.code, pages[0]?.key ?? "rfqs")}
+                    className="rounded-md border border-line bg-panel px-2 py-1 text-[11.5px] leading-none text-sub transition hover:border-navy hover:text-ink">
+                    {c.label_en}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    );
+
   return (
     <div className="grid h-full grid-cols-[minmax(0,250px)_minmax(0,1fr)] overflow-hidden">
       {/* ── the screens ──────────────────────────────────────────────────────── */}
@@ -133,26 +181,9 @@ export default function PagesView({
               <p className="mt-0.5 flex items-center gap-2 font-mono text-[11.5px] text-faint">
                 {page.path} {badge(page)}
               </p>
-              {page.wired && !ROUTING_LIVE.has(page.key) && (
-                <p className="mt-2 rounded-md border border-line bg-panel px-3 py-2 text-[11.5px] leading-relaxed text-muted">
-                  This screen exists, but its list does not filter by the workflow yet — putting a
-                  status here will not change what it shows until that is wired up.
-                </p>
-              )}
+
             </div>
 
-            {steps.length === 0 && (
-              <div className="rounded-lg border border-line bg-panel p-5 text-center">
-                <p className="text-[13.5px] font-semibold text-ink">Start here</p>
-                <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-relaxed text-muted">
-                  Put the first status on a screen and the workflow starts taking shape. Or describe
-                  how an order moves through your business and let the assistant draw the whole thing.
-                </p>
-                <button onClick={onAskAssistant} className="btn btn-sm mt-3">
-                  <Sparkles className="h-4 w-4" /> Describe it instead
-                </button>
-              </div>
-            )}
 
             {/* what sits here */}
             <div className="rounded-lg border border-line bg-panel">
@@ -334,6 +365,13 @@ export default function PagesView({
                 );
               })}
             </div>
+
+            {page.wired && !ROUTING_LIVE.has(page.key) && (
+              <p className="rounded-md border border-line bg-panel px-3 py-2 text-[11px] leading-relaxed text-faint">
+                Note: this screen does not filter by the workflow yet, so what you set here will not
+                change what it shows until that is wired up.
+              </p>
+            )}
           </div>
         )}
       </div>

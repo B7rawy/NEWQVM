@@ -102,6 +102,10 @@ export default function WorkflowCanvas() {
   /** Two readings of ONE workflow, in one screen — not two destinations in the sidebar. */
   const [mode, setMode] = useState<"pages" | "diagram">("pages");
   const [pageSel, setPageSel] = useState<string | null>(null);
+  const entryPage = useMemo(() => {
+    const entry = graph.steps.find((s) => s.isEntry) ?? graph.steps.find((s) => s.pages.length);
+    return entry?.pages[0] ?? null;
+  }, [graph.steps]);
   const [adding, setAdding] = useState(false);
   const [panning, setPanning] = useState(false);
 
@@ -644,7 +648,7 @@ export default function WorkflowCanvas() {
               pages={pages}
               holders={holders}
               frozen={frozen}
-              selected={pageSel}
+              selected={pageSel ?? entryPage}
               onSelect={setPageSel}
               onPlace={placeStatus}
               catalog={catalog}
