@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
+import { queuePredicate } from "../workflow/routing.js";
 import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { RfqService } from "../rfq/rfq.service.js";
@@ -62,7 +63,7 @@ export class WorkshopPortalService {
   }
 
   /** The workshop's requests (RFQs) across workspaces. */
-  async requests(ctx: RlsContext) {
+  async requests(ctx: RlsContext, queue?: string) {
     const env = envOf(ctx);
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
@@ -77,6 +78,7 @@ export class WorkshopPortalService {
         join tenants t on t.id = r.tenant_id
         left join item_statuses ist on ist.id = r.status_id
         where r.environment = ${env}::environment_type
+          and ${queuePredicate(sql`ist.code`, queue, sql`r.tenant_id`)}
         order by r.created_at desc`);
       return { count: rows.length, requests: rows };
     });
@@ -147,7 +149,7 @@ export class WorkshopPortalService {
   }
 
   /** The workshop's confirmed orders (across linked workspaces). */
-  async orders(ctx: RlsContext) {
+  async orders(ctx: RlsContext, queue?: string) {
     const env = envOf(ctx);
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       await this.requireWorkshopUser(tx, ctx.userId);
@@ -162,6 +164,7 @@ export class WorkshopPortalService {
         join tenants t on t.id = o.tenant_id
         left join item_statuses s on s.id = o.status_id
         where o.environment = ${env}::environment_type
+          and ${queuePredicate(sql`ist.code`, queue, sql`o.tenant_id`)}
         order by o.created_at desc`);
       return { count: rows.length, orders: rows };
     });

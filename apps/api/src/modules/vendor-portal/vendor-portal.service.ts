@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
+import { queuePredicate } from "../workflow/routing.js";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { VendorRfqService, type SubmitQuoteDto } from "../rfq/vendor-rfq.service.js";
 import { requireCounterparty } from "../../common/counterparty.helpers.js";
@@ -54,7 +55,7 @@ export class VendorPortalService {
   }
 
   /** The vendor's quotation-request queue (across workspaces). */
-  async quotations(ctx: RlsContext) {
+  async quotations(ctx: RlsContext, queue?: string) {
     const env = envOf(ctx);
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
@@ -68,6 +69,7 @@ export class VendorPortalService {
         join vendor_statuses vs on vs.id = rv.status_id
         join tenants t on t.id = rv.tenant_id
         where rv.vendor_id = ${vid}::uuid and r.environment = ${env}::environment_type
+          and ${queuePredicate(sql`vs.code`, queue, sql`r.tenant_id`)}
         order by coalesce(rv.sent_at, r.created_at) desc`);
       return { count: rows.length, quotations: rows };
     });
@@ -101,7 +103,7 @@ export class VendorPortalService {
   }
 
   /** Orders this vendor won — derived via order_items → winning rfq_vendor_item → rfq_vendors.vendor_id. */
-  async orders(ctx: RlsContext) {
+  async orders(ctx: RlsContext, queue?: string) {
     const env = envOf(ctx);
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
       const vid = await this.requireVendorId(tx, ctx.userId);
@@ -116,6 +118,7 @@ export class VendorPortalService {
         join tenants t on t.id = o.tenant_id
         left join item_statuses s on s.id = o.status_id
         where rv.vendor_id = ${vid}::uuid and o.environment = ${env}::environment_type
+          and ${queuePredicate(sql`s.code`, queue, sql`o.tenant_id`)}
         group by o.id, o.order_number, o.created_at, s.label_en, s.code, t.name
         order by o.created_at desc`);
       return { count: rows.length, orders: rows };

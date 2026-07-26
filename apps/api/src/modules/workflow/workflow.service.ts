@@ -32,8 +32,31 @@ const stepSchema = z.object({
   x: z.number().finite().default(0),
   y: z.number().finite().default(0),
   sortOrder: z.number().int().min(0).default(0),
-  /** Page keys this step surfaces on. [] = wherever it already appears (see pages.ts). */
-  pages: z.array(z.string().max(40)).optional().default([]),
+  /**
+   * The stations this step appears on. A page is not just a location — it plays a ROLE:
+   *   action   — this desk owns the work and its buttons are live
+   *   watch    — read-only tracking; the record is visible but untouchable here
+   *   optional — may intervene, possibly only after `afterHours` at the step
+   * [] = appears wherever it already appears (the routing safety rule).
+   *
+   * A bare string is accepted and read as `action`, which is exactly what it meant before 0050.
+   */
+  pages: z
+    .array(
+      z.union([
+        z.string().max(40),
+        z.object({
+          page: z.string().max(40),
+          mode: z.enum(["action", "watch", "optional"]).default("action"),
+          afterHours: z.number().int().positive().max(8760).nullish(),
+        }),
+      ]),
+    )
+    .optional()
+    .default([])
+    .transform((arr) =>
+      arr.map((p) => (typeof p === "string" ? { page: p, mode: "action" as const, afterHours: null } : p)),
+    ),
   /** Roles responsible while a record sits here. [] = unrestricted. */
   ownerRoles: z.array(z.string().max(40)).optional().default([]),
 });
@@ -51,9 +74,26 @@ const transitionSchema = z.object({
   handoff: z.enum(["pool", "keep", "actor"]).optional().default("pool"),
 });
 
+/** One station a step sits on, and what that station may do about it. */
+export interface PageRef { page: string; mode: "action" | "watch" | "optional"; afterHours?: number | null }
+
 export const placementSchema = z.object({
   status: z.string().min(1).max(64),
-  pages: z.array(z.string().max(40)).max(20),
+  pages: z
+    .array(
+      z.union([
+        z.string().max(40),
+        z.object({
+          page: z.string().max(40),
+          mode: z.enum(["action", "watch", "optional"]).default("action"),
+          afterHours: z.number().int().positive().max(8760).nullish(),
+        }),
+      ]),
+    )
+    .max(20)
+    .transform((arr) =>
+      arr.map((p) => (typeof p === "string" ? { page: p, mode: "action" as const, afterHours: null } : p)),
+    ),
 });
 
 export const createFlowSchema = z.object({
@@ -290,10 +330,12 @@ export class WorkflowService {
       );
 
       const placedOn = (code: string) =>
-        ((steps.find((s) => s.code === code)?.pages as string[]) ?? []);
+        ((steps.find((s) => s.code === code)?.pages as PageRef[]) ?? []).map((p) => p.page);
 
       const pages = ROUTABLE_PAGES.map((p) => {
-        const here = steps.filter((s) => ((s.pages as string[]) ?? []).includes(p.key));
+        const here = steps.filter((s) =>
+          ((s.pages as PageRef[]) ?? []).some((x) => x.page === p.key),
+        );
         const codes = new Set(here.map((s) => s.code as string));
         return {
           ...p,
@@ -332,7 +374,7 @@ export class WorkflowService {
         // The safety rule made visible: a status placed nowhere shows on EVERY screen. It is the
         // most counter-intuitive behaviour in the system and today it is invisible everywhere.
         unplaced: steps
-          .filter((s) => (((s.pages as string[]) ?? []).length === 0))
+          .filter((s) => (((s.pages as PageRef[]) ?? []).length === 0))
           .map((s) => ({ code: s.code, labelEn: s.label_en, labelAr: s.label_ar })),
         holders,
       };
@@ -353,9 +395,9 @@ export class WorkflowService {
   async setPlacement(
     ctx: RlsContext,
     id: string,
-    dto: { status: string; pages: string[] },
+    dto: z.infer<typeof placementSchema>,
   ) {
-    const bad = dto.pages.filter((p) => !isPageKey(p));
+    const bad = dto.pages.filter((p) => !isPageKey(p.page)).map((p) => p.page);
     if (bad.length) throw new BadRequestException(`unknown page(s): ${bad.join(", ")}`);
 
     return this.dbService.withContext(ctx, async (tx) => {
@@ -898,7 +940,7 @@ export class WorkflowService {
     if (errs.length) throw new BadRequestException(errs.join("; "));
 
     for (const st of dto.steps) {
-      const bad = st.pages.filter((p) => !isPageKey(p));
+      const bad = st.pages.filter((p) => !isPageKey(p.page)).map((p) => p.page);
       if (bad.length)
         throw new BadRequestException(
           `step '${st.status}' is routed to unknown page(s): ${bad.join(", ")}`,

@@ -18,19 +18,27 @@ import { isPageKey } from "./pages.js";
  *
  * Callers pass `undefined` to opt out entirely, which yields `true` — so an endpoint, an integration
  * or an external consumer that does not ask for a queue gets today's query unchanged.
+ *
+ * Every MODE counts as "shows here". `watch` means read-only, not invisible — a workshop watching
+ * its own request must still see the row; what changes is which buttons it gets.
  */
-export function queuePredicate(statusCode: SQL, queue: string | undefined): SQL {
+export function queuePredicate(statusCode: SQL, queue: string | undefined, tenantCol?: SQL): SQL {
   if (!queue || !isPageKey(queue)) return sql`true`;
 
-  // RLS already scopes workflow_flows/workflow_steps to this tenant and environment, so the
-  // subqueries need no explicit tenant filter — adding one would duplicate the policy, not tighten it.
+  // WHOSE flow decides? For a workspace-scoped screen, RLS already pins workflow_flows to the one
+  // tenant in session, so no filter is needed. But the PORTAL endpoints run with tenantId: null and
+  // isInternal: true, because a vendor legitimately serves several workspaces at once — and under
+  // that context app_is_internal() opens every tenant's flows. Without correlating to the row being
+  // filtered, one workspace's routing would decide what a vendor sees for another workspace's order.
+  // So callers on a cross-workspace list MUST pass the row's tenant column.
+  const sameTenant = tenantCol ? sql`and f.tenant_id = ${tenantCol}` : sql``;
   const routedAnywhere = sql`
     select coalesce(i.code, v.code)
     from workflow_steps ws
     join workflow_flows f on f.id = ws.flow_id and f.status = 'active'
     left join item_statuses i on i.id = ws.item_status_id
     left join vendor_statuses v on v.id = ws.vendor_status_id
-    where jsonb_array_length(ws.pages) > 0`;
+    where jsonb_array_length(ws.pages) > 0 ${sameTenant}`;
 
   const routedHere = sql`
     select coalesce(i.code, v.code)
@@ -38,7 +46,9 @@ export function queuePredicate(statusCode: SQL, queue: string | undefined): SQL 
     join workflow_flows f on f.id = ws.flow_id and f.status = 'active'
     left join item_statuses i on i.id = ws.item_status_id
     left join vendor_statuses v on v.id = ws.vendor_status_id
-    where ws.pages @> to_jsonb(${queue}::text)`;
+    where exists (
+      select 1 from jsonb_array_elements(ws.pages) e where e ->> 'page' = ${queue}
+    ) ${sameTenant}`;
 
   return sql`(${statusCode} is null or ${statusCode} not in (${routedAnywhere}) or ${statusCode} in (${routedHere}))`;
 }

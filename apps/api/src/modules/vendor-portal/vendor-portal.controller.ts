@@ -24,7 +24,7 @@ export class VendorPortalController {
 
   @Get("orders")
   orders(@Req() req: Request) {
-    return this.svc.orders(this.ctx(req));
+    return this.svc.orders(this.ctx(req), "vendor_confirmed");
   }
 
   @Get("profile")
@@ -34,7 +34,7 @@ export class VendorPortalController {
 
   @Get("quotations")
   quotations(@Req() req: Request) {
-    return this.svc.quotations(this.ctx(req));
+    return this.svc.quotations(this.ctx(req), "vendor_quotations");
   }
 
   @Get("quotations/:id")

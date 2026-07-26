@@ -351,6 +351,13 @@
       "when": 1785001408112,
       "tag": "0049_workflow_custody",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1785001409112,
+      "tag": "0050_page_roles",
+      "breakpoints": true
     }
   ]
 }

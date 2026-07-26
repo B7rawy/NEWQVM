@@ -24,7 +24,7 @@ export class WorkshopPortalController {
 
   @Get("requests")
   requests(@Req() req: Request) {
-    return this.svc.requests(this.ctx(req));
+    return this.svc.requests(this.ctx(req), "workshop_requests");
   }
 
   @Get("context")
@@ -39,7 +39,7 @@ export class WorkshopPortalController {
 
   @Get("orders")
   orders(@Req() req: Request) {
-    return this.svc.orders(this.ctx(req));
+    return this.svc.orders(this.ctx(req), "workshop_orders");
   }
 
   @Get("requests/:id")

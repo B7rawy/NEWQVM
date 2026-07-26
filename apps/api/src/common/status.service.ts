@@ -114,9 +114,10 @@ export class StatusService {
       sql`, `,
     );
 
-    // read BEFORE the write so the log's from_status_id is the real prior value
+    // read BEFORE the write so the log's from_status_id is the real prior value — and lock, because
+    // two stations may now hold the same record: see the note on concurrent stations below.
     const before = (await tx.execute(
-      sql`select id, status_id from ${sql.raw(spec.table)} where id in (${ids})`,
+      sql`select id, status_id from ${sql.raw(spec.table)} where id in (${ids}) order by id for update`,
     )) as Array<{ id: string; status_id: string | null }>;
     const found = new Set(before.map((b) => b.id));
     const missing = input.ids.filter((i) => !found.has(i));
@@ -166,6 +167,13 @@ export class StatusService {
    *
    * A record is BOUND to the flow version live at the time it first moves, and stays on it — so
    * publishing a new version can never strand an order mid-flight.
+   *
+   * CONCURRENT STATIONS: the same status can be an `action` station on several screens, so two
+   * people pressing different buttons on the same record at the same instant is ordinary use, not a
+   * race to be waved away. transitionMany takes `for update` on the rows before reading their
+   * current status, so the second transaction waits, re-reads the status the first one wrote, and is
+   * judged against reality. Without it both would pass the guard and the loser's status_logs row
+   * would claim a move from a state the record was never in.
    */
   private async assertTransitionAllowed(
     tx: Tx,

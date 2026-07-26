@@ -236,7 +236,8 @@ async function main() {
   // the canvas always have something true to show, and nobody loses their afternoon to a test run.
   {
     const step = async (flowId: string, code: string, opts: {
-      entry?: boolean; terminal?: boolean; x: number; y: number; pages?: string[]; owners?: string[];
+      entry?: boolean; terminal?: boolean; x: number; y: number;
+      pages?: Array<{ page: string; mode: "action" | "watch" | "optional" }>; owners?: string[];
     }) => {
       const [r] = await sql`insert into workflow_steps
         (tenant_id, environment, flow_id, status_domain, item_status_id, is_entry, is_terminal,
@@ -254,15 +255,15 @@ async function main() {
       returning id`;
 
     const ids: Record<string, string> = {
-      new_rfq: await step(flow.id, "new_rfq", { entry: true, x: 80, y: 100, pages: ["rfqs"], owners: ["company_admin"] }),
-      tendering: await step(flow.id, "tendering", { x: 340, y: 100, pages: ["rfqs"] }),
-      priced: await step(flow.id, "priced", { x: 600, y: 100, pages: ["rfqs"] }),
-      sent_insurance_approval: await step(flow.id, "sent_insurance_approval", { x: 80, y: 300, pages: ["orders"] }),
-      insurance_approved: await step(flow.id, "insurance_approved", { x: 340, y: 300, pages: ["orders"] }),
-      confirmed: await step(flow.id, "confirmed", { x: 600, y: 300, pages: ["orders"] }),
+      new_rfq: await step(flow.id, "new_rfq", { entry: true, x: 80, y: 100, pages: [{ page: "rfqs", mode: "action" }], owners: ["company_admin"] }),
+      tendering: await step(flow.id, "tendering", { x: 340, y: 100, pages: [{ page: "rfqs", mode: "action" }] }),
+      priced: await step(flow.id, "priced", { x: 600, y: 100, pages: [{ page: "rfqs", mode: "action" }] }),
+      sent_insurance_approval: await step(flow.id, "sent_insurance_approval", { x: 80, y: 300, pages: [{ page: "orders", mode: "action" }, { page: "workshop_orders", mode: "watch" }] }),
+      insurance_approved: await step(flow.id, "insurance_approved", { x: 340, y: 300, pages: [{ page: "orders", mode: "action" }, { page: "workshop_orders", mode: "watch" }] }),
+      confirmed: await step(flow.id, "confirmed", { x: 600, y: 300, pages: [{ page: "orders", mode: "action" }, { page: "workshop_orders", mode: "watch" }] }),
       // deliberately placed on NO page, so the "shows on every screen" warning has a real example
       cancelled: await step(flow.id, "cancelled", { terminal: true, x: 860, y: 100 }),
-      settled: await step(flow.id, "settled", { terminal: true, x: 860, y: 300, pages: ["orders"] }),
+      settled: await step(flow.id, "settled", { terminal: true, x: 860, y: 300, pages: [{ page: "orders", mode: "action" }, { page: "workshop_orders", mode: "watch" }] }),
     };
 
     const moves: Array<[string, string, string, boolean?, string?]> = [

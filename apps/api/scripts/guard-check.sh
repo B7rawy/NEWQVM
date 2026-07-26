@@ -240,3 +240,38 @@ psql "delete from status_logs;
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'CUST-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'CUST-%'" > /dev/null
+
+# ── page roles (0050 / QNEW-89 §3) ──────────────────────────────────────────────────────────────
+# The shape change from ["rfqs"] to [{page,mode}] silently breaks jsonb containment, and the routing
+# predicate used exactly that. If these two ever fail together, every routed status has vanished from
+# every screen — the failure the safety rule exists to prevent, caused by the migration itself.
+ok true "$(psql "select ('[\"rfqs\"]'::jsonb @> to_jsonb('rfqs'::text))::text")" \
+  "jsonb containment finds a bare key in a FLAT array (the old shape)"
+ok false "$(psql "select ('[{\"page\":\"rfqs\",\"mode\":\"action\"}]'::jsonb @> to_jsonb('rfqs'::text))::text")" \
+  "but NOT in an array of objects — which is why routing.ts had to change with the migration"
+
+ok 0 "$(psql "select count(*) from workflow_steps s
+              where jsonb_array_length(s.pages) > 0
+                and not exists (select 1 from jsonb_array_elements(s.pages) e where e ? 'mode')")" \
+  "every placement carries a mode after the migration"
+
+# the shape CHECK must refuse the old form and an unknown mode. Wrapped in a transaction that rolls
+# back — an earlier version of this check ran a bare UPDATE and wiped every placement in the database.
+ok "refused|refused" "$(psql "begin;
+  do \$\$ begin update workflow_steps set pages='[\"rfqs\"]'::jsonb; raise notice 'ACCEPTED';
+     exception when check_violation then raise notice 'refused'; end \$\$;
+  do \$\$ begin update workflow_steps set pages='[{\"page\":\"rfqs\",\"mode\":\"typo\"}]'::jsonb; raise notice 'ACCEPTED';
+     exception when check_violation then raise notice 'refused'; end \$\$;
+  rollback;" 2>&1 | /usr/bin/grep -o 'refused\|ACCEPTED' | /usr/bin/paste -sd'|' -)" \
+  "the shape check refuses the old flat form and an unknown mode"
+
+# routing still resolves through the new shape
+ok 3 "$(psql "select count(*) from workflow_steps ws
+              where exists (select 1 from jsonb_array_elements(ws.pages) e where e->>'page'='rfqs')")" \
+  "routing resolves a page key out of the new {page,mode} shape"
+
+# A status can now be an `action` station on several screens, so two people pressing two buttons on
+# the same record is ordinary use. Without the row lock both reads see the same status, both pass the
+# guard, and the loser writes a status_logs row claiming a move from a state it was never in.
+ok 1 "$(/usr/bin/grep -c "order by id for update" "$(cd "$(dirname "$0")/.." && pwd)/src/common/status.service.ts")" \
+  "the status gateway locks the rows it is about to move"
