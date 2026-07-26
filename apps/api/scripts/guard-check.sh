@@ -616,3 +616,108 @@ psql "delete from workflow_auto_fired; delete from status_logs;
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'AUTO-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'AUTO-%'" > /dev/null
+
+# ── what a move DOES (0056) + a hold is not a cancellation (0057 / QNEW-90 items 3, 4) ───────────
+# Every check below started life as a real defect, which is why they are here rather than in a
+# throwaway script: an action that wrote to a column that does not exist; a hold filed as a
+# cancellation and rendered one click from ending a live order; a hold that swallowed the very
+# operation that placed it and rolled the whole thing back with a message about a return.
+wfclean
+psql "delete from workflow_exceptions; delete from workflow_action_runs; delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'ACTS-%'));
+      delete from orders where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ACTS-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'ACTS-%'" > /dev/null
+
+# An action the server does not know must be refused at SAVE time. Discovering it at run time means
+# the flow looks configured and quietly does nothing.
+ACF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-acts","nameAr":"أفعال","nameEn":"Acts","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$(curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$ACF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"P","actions":[{"action":"bogus_action"}]}]}' \
+  | $PY -c "import sys,json;print(1 if 'unknown action' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "an action this server does not know is refused when the flow is SAVED"
+
+# The real flow: pricing a line puts it on hold, and cutting the order fills a field on the header.
+# Two transitions in two separate requests, which is the only way to test that a freeze outlives the
+# operation that recorded it.
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$ACF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[
+   {"from":"new_rfq","to":"priced","labelEn":"Price","actions":[{"action":"lock_record","params":{"reason":"the price needs a look"}}]},
+   {"from":"priced","to":"confirmed","labelEn":"Confirm line"},
+   {"from":"new_rfq","to":"confirmed","labelEn":"Confirm header","actions":[{"action":"set_field","params":{"field":"shipping_type","value":"express"}}]}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$ACF/activate"
+
+ACR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"ACTS-1","items":[{"partNumber":"P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ACTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$ACR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+ACIT=$(psql "select id from rfq_items where rfq_id='$ACR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$ACTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$ACIT")"
+ACQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$ACIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$ACR/items/$ACIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$ACQI")"
+
+ok priced "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$ACIT'")" \
+  "an action that freezes the record does not veto the move that triggered it"
+ok hold/open "$(psql "select kind||'/'||status from workflow_exceptions where entity_id='$ACIT'")" \
+  "lock_record files a HOLD, not a cancellation"
+ok "the workflow" "$(psql "select requested_by_name from workflow_exceptions where entity_id='$ACIT'")" \
+  "and names the engine as what placed it, not whoever tripped it"
+
+ACEID=$(psql "select id from workflow_exceptions where entity_id='$ACIT'")
+ok 1 "$(curl -s "${AR[@]}" "$B/api/workflow/exceptions" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(1 if not d['open'] and len(d['held'])==1 else 0)")" \
+  "a hold is kept OUT of the inbox that renders a 'Cancel it' button"
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions/$ACEID/resolve" -d '{"decision":"approve"}' \
+  | $PY -c "import sys,json;print(1 if 'release it instead' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "and cannot be approved at all — there is no path from a hold to 'cancelled'"
+
+# THE COMPOSITION FAILURE. The freeze must reach a later operation, and refusing it must undo
+# everything that operation had already done — including the action that ran before it.
+ACCONF=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$ACR/confirm" -d '{}')
+ok 1 "$(echo "$ACCONF" | $PY -c "import sys,json;print(1 if 'on hold' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "a hold recorded EARLIER stops a later operation, and says so as a hold"
+ok 0 "$(psql "select count(*) from orders where rfq_id='$ACR'")" "which produced no order"
+ok "" "$(psql "select coalesce(shipping_type,'') from rfqs where id='$ACR'")" \
+  "and rolled back the action that had already run on the header"
+
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/workflow/exceptions/$ACEID/release" -d '{"note":"looked at"}'
+ok released "$(psql "select status from workflow_exceptions where id='$ACEID'")" \
+  "releasing a hold records it as released, not as a request that was rejected"
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$ACR/confirm" -d '{}'
+ok express "$(psql "select coalesce(shipping_type,'') from rfqs where id='$ACR'")" \
+  "and then the same operation goes through, action and all"
+ok 1 "$(psql "select count(*) from workflow_action_runs where outcome='ok' and action='set_field'")" \
+  "with the run log showing outcome=ok — a column that actually exists"
+
+# A cancellation is somebody's question. The release path must not be able to answer it.
+ACO=$(psql "select id from orders where rfq_id='$ACR' limit 1")
+ACC=$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions" \
+  -d "$(printf '{"entityType":"order","entityId":"%s","kind":"cancellation","reason":"they changed their mind"}' "$ACO")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions/$ACC/release" -d '{}' \
+  | $PY -c "import sys,json;print(1 if 'do not release' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "release refuses a cancellation — only a person may answer one"
+ok open "$(psql "select status from workflow_exceptions where id='$ACC'")" \
+  "and it stays open for whoever has to decide it"
+
+wfclean
+psql "delete from workflow_exceptions; delete from workflow_action_runs; delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'ACTS-%'));
+      delete from orders where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ACTS-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'ACTS-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'ACTS-%'" > /dev/null

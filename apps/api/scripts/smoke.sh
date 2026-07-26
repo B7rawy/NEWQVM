@@ -63,6 +63,21 @@ SQL
 ok 0 "$(echo "$D3" | /usr/bin/grep -c 'duplicate key')" "cross-scope (indiv mobile == company phone) allowed"
 
 echo "############ SECTION 2 — SUBMISSION API + MATCH + REVIEW (Slice 2) ############"
+# The section registers vendors and never removes them, so from the SECOND run onwards "submit a new
+# company" matched the one the first run left behind and six checks went red — noise that teaches a
+# reader to skip red lines, which is worse than the missing cleanup. Clear the artifacts up front
+# rather than at the end, so an aborted run heals itself too. Only the identifiers this file invents.
+psql "delete from counterparty_submissions
+       where coalesce(tax_number,'') in ('NEWTAX1','ESCAPE-TEST-9','PHTAX1','GULFX1','DUP99','REJ1',
+                                         'IMPA1','IMPB1','GOVOK1','ADMD1')
+          or coalesce(mobile,'') in ('0561110001','0562220002','0563330003');
+      delete from tenant_vendors where vendor_id in (
+        select id from vendors where coalesce(tax_number,'') in
+          ('NEWTAX1','ESCAPE-TEST-9','PHTAX1','GULFX1','DUP99','REJ1','IMPA1','IMPB1','GOVOK1','ADMD1')
+          or coalesce(primary_phone,'') in ('0561110001','0562220002','0563330003'));
+      delete from vendors where coalesce(tax_number,'') in
+          ('NEWTAX1','ESCAPE-TEST-9','PHTAX1','GULFX1','DUP99','REJ1','IMPA1','IMPB1','GOVOK1','ADMD1')
+          or coalesce(primary_phone,'') in ('0561110001','0562220002','0563330003')" > /dev/null
 # T1 new company
 R1=$(curl -s -X POST $B/api/counterparty/submissions "${M[@]}" -d '{"kind":"vendor","counterpartyType":"company","legalName":"Riyadh Bolts","taxNumber":"NEWTAX1","email":"b@x.com"}')
 ok pending "$(echo "$R1" | jf status)" "T1 submit new company -> pending"

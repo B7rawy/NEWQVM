@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Ban, Check, CheckCheck, Clock, RotateCcw, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { AlertTriangle, Ban, Check, CheckCheck, Clock, PauseCircle, PlayCircle, RotateCcw, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { api } from "../lib/api";
 
 /**
@@ -36,7 +36,7 @@ interface Row {
 /** A cancellation or return waiting on a decision. Same question as an approval — different shape. */
 interface Exc {
   id: string; entity_type: string; entity_id: string;
-  kind: "cancellation" | "return";
+  kind: "cancellation" | "return" | "hold";
   status: string; reason: string;
   requested_by_name: string | null;
   resolved_by_name: string | null; resolved_at: string | null; resolution_note: string | null;
@@ -130,7 +130,7 @@ function RowCard({
 
 export default function Approvals() {
   const [data, setData] = useState<{ waitingOnMe: Row[]; readyToContinue: Row[]; mine: Row[] } | null>(null);
-  const [excs, setExcs] = useState<{ open: Exc[]; all: Exc[] } | null>(null);
+  const [excs, setExcs] = useState<{ open: Exc[]; held: Exc[]; all: Exc[] } | null>(null);
   const [note, setNote] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -140,7 +140,7 @@ export default function Approvals() {
     try {
       const [a, e] = await Promise.all([
         api.get<{ waitingOnMe: Row[]; readyToContinue: Row[]; mine: Row[] }>("/approvals"),
-        api.get<{ open: Exc[]; all: Exc[] }>("/workflow/exceptions"),
+        api.get<{ open: Exc[]; held: Exc[]; all: Exc[] }>("/workflow/exceptions"),
       ]);
       setData(a);
       setExcs(e);
@@ -169,6 +169,21 @@ export default function Approvals() {
       setErr((e as Error).message);
     } finally { setBusy(false); }
   }
+  /**
+   * Take a record off hold. Not `decide` with a third option: a hold is not a request, so there is
+   * nothing to approve or refuse, and giving it the same two buttons is what made an engine hold
+   * look like a cancellation somebody had asked for.
+   */
+  async function release(id: string) {
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      await api.post(`/workflow/exceptions/${id}/release`, { note: note[id] || undefined });
+      setMsg("Off hold — it can move again.");
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally { setBusy(false); }
+  }
   useEffect(() => { load(); }, [load]);
 
   async function act(id: string, action: "approve" | "reject", comment: string) {
@@ -192,8 +207,10 @@ export default function Approvals() {
   if (!data) return <div className="card p-4 text-[13px] text-muted">Loading…</div>;
 
   const openExcs = excs?.open ?? [];
+  const heldExcs = excs?.held ?? [];
   const nothing =
-    !data.waitingOnMe.length && !data.readyToContinue.length && !data.mine.length && !openExcs.length;
+    !data.waitingOnMe.length && !data.readyToContinue.length && !data.mine.length && !openExcs.length
+    && !heldExcs.length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -204,6 +221,51 @@ export default function Approvals() {
 
       {err && <div className="card border-accent p-3 text-[12.5px] text-accent">{err}</div>}
       {msg && <div className="card p-3 text-[12.5px] text-[var(--chip-green-fg)]">{msg}</div>}
+
+      {/* ON HOLD — deliberately not in the block below. The workflow parked these itself; nobody is
+          asking for a decision, so there is nothing to approve and no "Cancel it" button. Before
+          0057 a hold was filed as a cancellation and rendered right there with the rest. */}
+      {heldExcs.length > 0 && (
+        <div className="card overflow-hidden border-[var(--chip-amber-bg)]">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <PauseCircle className="h-4 w-4 text-[var(--chip-amber-fg)]" />
+            <p className="text-[12.5px] font-semibold text-ink">On hold by the workflow · {heldExcs.length}</p>
+          </div>
+          <p className="border-b border-line px-4 py-2 text-[11.5px] leading-relaxed text-muted">
+            A rule stopped these on their way through. They keep their status and will not move until
+            somebody releases them. Nobody is being asked to approve anything here.
+          </p>
+          {heldExcs.map((e) => (
+            <div key={e.id} className="border-b border-line px-4 py-3 last:border-0">
+              <div className="flex items-start gap-2.5">
+                <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--chip-amber-fg)]" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-medium text-ink">
+                    {e.reference ?? ENTITY[e.entity_type] ?? e.entity_type}
+                    {e.part && <span className="ml-2 text-[12px] font-normal text-muted">{e.part}</span>}
+                  </p>
+                  <p className="mt-0.5 text-[12.5px] text-sub">“{e.reason}”</p>
+                  <p className="mt-0.5 text-[11px] text-faint">
+                    held {ago(e.created_at)}
+                    {e.frozen_at && <> · sitting at <b className="font-medium">{e.frozen_at}</b></>}
+                  </p>
+
+                  <textarea rows={1} value={note[e.id] ?? ""} placeholder="Why you are releasing it (optional)"
+                    onChange={(ev) => setNote((n) => ({ ...n, [e.id]: ev.target.value }))}
+                    className="mt-2 w-full resize-none rounded-md border border-line bg-surface px-2 py-1.5 text-[12px] text-ink outline-none" />
+
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <button disabled={busy} onClick={() => release(e.id)} className="btn btn-sm">
+                      <PlayCircle className="h-3.5 w-3.5" /> Release it
+                    </button>
+                    <span className="text-[11px] text-faint">It carries on from where it stopped.</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Cancellations and returns are the same question as an approval — a decision someone is
           waiting on — so they belong in the same inbox rather than a second place to check. */}
@@ -265,7 +327,7 @@ export default function Approvals() {
           <CheckCheck className="mx-auto h-7 w-7 text-faint" />
           <p className="mt-2 text-[13.5px] font-medium text-sub">Nothing needs a signature</p>
           <p className="mt-1 text-[12.5px] text-faint">
-            This fills up when a step needs sign-off, or when somebody asks to cancel or return something.
+            This fills up when a step needs sign-off, when somebody asks to cancel or return something, \n            or when a rule puts an order on hold.
           </p>
         </div>
       ) : (

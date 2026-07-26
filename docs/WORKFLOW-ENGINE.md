@@ -386,39 +386,132 @@ The model is also explicitly instructed to **set `drawGraph=false`** for greetin
 
 ---
 
-## 10. What is NOT built
+## 10. What a move actually does — the ten steps, in the order they run
+
+Sections 6 and 7 describe the engine as it stood when only roles were enforced. Everything below was
+added by QNEW-89 and QNEW-90, and the ORDER is the design: each check sits where it does because
+putting it anywhere else produces a specific wrong outcome, named here so it is not "simplified"
+back later.
+
+`StatusService.transitionMany` is still the only place a status is written.
+
+| # | Step | Why HERE and not elsewhere |
+|---|---|---|
+| 1 | **Exception freeze** (`frozenByException`) | Before everything, including permissive-until-configured. A frozen record must not move even in a workspace that has drawn no flow at all — the freeze is not one of the workflow's rules, it is a statement that this record is out of play. |
+| 2 | **`select … for update`** | The row lock precedes every read the decision depends on, or two concurrent movers both read `priced` and both pass. |
+| 3 | **Flow and step resolution** | Missing flow ⇒ return, unchanged. This is what "permissive until configured" means in code. |
+| 4 | **Candidate arrows**, `order by priority desc, created_at asc`; first arrow whose `condition` passes wins | Priority is what makes two arrows out of one status mean "under 5,000 straight through, above it via finance". Conditions before roles, because *which* arrow you are on determines *who* may fire it. |
+| 5 | **Roles** — `fromStep.owner_roles`, `edge.allowed_roles` | Skipped entirely when `autoDepth > 0`: an automatic move has no human, and asking which role the engine holds is a category error. |
+| 6 | **Gates** (`gates.ts`) | After roles, because "you may not do this" is a better message than "the lines are not all priced" for someone who was never allowed to try. `runGates` reports EVERY failure in one pass — fixing one blocker only to discover the next is the worst way to learn a rule. |
+| 7 | **Approval** (`requires_approval`) | The guard JUDGES and never writes. It refuses and says a signature is needed; `POST /approvals/request-move` opens the request in its own transaction. An earlier version opened it inside the caller's transaction, which the refusal then rolled back — the user was told "sent for sign-off" and nothing existed. |
+| 8 | **Actions** (`actions.ts`) | Last of the rules, and nothing in it throws. An action that fired for a move which was then rejected would be a consequence without a cause. |
+| 9 | **Custody upsert** | After the move is real. |
+| 10 | **`autoAdvance()`** | After the write, capped at `MAX_AUTO_DEPTH = 3`, and each hop re-enters at step 1 — automation gets no privileges a person would not have. |
+
+### Actions: the engine is allowed to have a consequence (0056)
+
+A rules engine that can only permit and refuse is half an engine. Three actions ship, chosen from a
+CODE-DEFINED catalog for the same reason the gates are: an admin picking "put it on hold" from a
+list cannot write something wrong, slow, or reaching into another tenant's data.
+
+| Action | What it does |
+|---|---|
+| `set_field` | Writes one of a curated list of columns, per entity. The list is `WRITABLE` in `actions.ts` and it is checked against the real schema — the first version invented `client_po` on `rfqs`, which exists only on `orders`, and failed on the first real order it met. |
+| `lock_record` | Freezes the record. |
+| `unlock_record` | Releases a freeze the engine placed. |
+
+`notify` and `webhook` are deliberately ABSENT. `NotificationsService.send()` records an attempt and
+dispatches nothing, so a "send an email" action would be a catalog that records intentions and
+delivers none of them — the same defect as a padlock that enforces nothing. A webhook has the mirror
+problem: outbound HTTP inside the business transaction means a rollback leaves the receiver
+believing something happened.
+
+Every attempt is written to `workflow_action_runs` with `ok` / `failed` / `skipped`. `skipped` is a
+first-class outcome, not an absence: "did not apply to this record" and "broke" are different facts.
+An action whose failure were invisible would be worse than no action, because the flow would look
+configured and quietly not be.
+
+### A hold is not a cancellation (0057)
+
+`lock_record` reuses the exception FREEZE — one mechanism means one place to look when a record will
+not move. It does **not** reuse the cancellation KIND, and that distinction is load-bearing:
+
+> The approvals inbox renders every open exception with a button labelled **"Cancel it"**, wired to
+> `resolve → approve → cancelled`. A hold filed as a cancellation appeared to a reviewer as a
+> request nobody had made, one click from ending a live order.
+
+So `kind = 'hold'` exists, with its own terminal state `released` — not `rejected`, because there
+was no request to refuse and an audit line saying otherwise is a false record. Three consequences:
+
+- `list()` returns `open` and `held` as separate buckets, so a hold cannot reach the inbox that
+  offers to cancel things. The split is enforced in the service, not trusted to the caller.
+- `resolve()` refuses a hold outright; `release()` refuses a cancellation or a return. Neither path
+  can answer the other's question.
+- `unlock_record` matches `kind = 'hold'` only. Without that clause an automatic release could
+  quietly refuse a customer's real cancellation request and file the engine as the reason.
+
+### A freeze applies to LATER moves, never to the operation that recorded it
+
+`frozenByException` carries `and xmin <> pg_current_xact_id()::xid`, and the reason is a composition
+failure that only appears when a hold meets a multi-record operation:
+
+Confirming an RFQ moves the header, whose arrow fires `lock_record`, which opens a hold on the
+header. The very next statement of the same confirm moves the LINES — and a line inherits its
+header's freeze (that inheritance is deliberate: a cancellation raised on an order must not let its
+lines march on). The move is refused, the whole transaction rolls back, and the user is told the
+order cannot be confirmed because of a hold that afterwards exists nowhere. Nothing happened at
+all — not even the run log that would have explained it.
+
+A consequence of a move must not retroactively veto the move it followed, nor the sibling work
+belonging to the same business operation. `xmin` is the row's writing transaction, so the clause
+reads exactly as intended: somebody else's freeze, recorded earlier, still bites. `guard-check.sh`
+proves both halves — the hold does not eat its own operation, and it does stop the next one.
+
+---
+
+## 11. What is NOT built
 
 Verified by reading the code and by grep across `apps/api/src` and `apps/web/src`.
 
-### Approval chains — designed into the schema, enforced nowhere
+### ~~Approval chains~~ — BUILT (0052, QNEW-89 §6)
 
-`workflow_transitions.requires_approval` is stored, is in the freeze tuple, is drawn on the canvas as a padlock (`WorkflowCanvas.tsx:689`), is editable in the inspector (`:910-911`), and is described to the user as "The order waits here until someone approves" (`:914`).
+`requires_approval` is read by the guard (`status.service.ts:469`), the workflow and approvals
+modules are wired together through `approval_requests.transition_key`, and the final approval
+PERFORMS the move — without that, an approved request would sit there with nothing to unstick it.
+The inbox is `apps/web/src/pages/Approvals.tsx`. See section 10.
 
-**Nothing reads it.** `assertTransitionAllowed` selects only `allowed_roles, handoff` from the edge (`status.service.ts:222-225`). A transition marked `requiresApproval: true` executes immediately, exactly like any other.
+### Auto-transitions — EVENT-driven only; still no scheduler
 
-There is a separate `approvals` module (`approval_policies`, `approval_levels`, `approval_requests`, `approval_actions` in `apps/api/drizzle/schema/approvals.ts`) reached at `/api/approvals`. Grep for `workflow` inside `apps/api/src/modules/approvals/` returns nothing — the two subsystems have no connection. The schema comment at `workflow.ts:195` states the intent ("Gate this move behind the approvals engine (QNEW-53)") in the future tense, correctly.
+`auto_advance` (0055) carries a record forward the moment a move satisfies the next arrow, capped at
+three hops, with `auto_once` to stop a flow re-firing the same automatic move every time it
+legitimately returns to an earlier status. Automatic moves are recorded with `auto_advanced = true`
+and `changed_by = NULL` — attributing them to whoever tripped the rule would be a false audit record.
 
-### Auto-transitions — no scheduler exists
-
-There is no timer, no queue worker, no cron. Grep for `@Cron`, `setInterval`, `ScheduleModule`, `node-cron` across `apps/api/src` returns zero hits, and `@nestjs/schedule` is not a dependency. Every transition is driven by a human hitting an endpoint. A flow cannot say "after 24 hours in `tendering`, move to `unavailable`".
+What is still missing is TIME. There is no timer, no queue worker, no cron: grep for `@Cron`,
+`setInterval`, `ScheduleModule`, `node-cron` across `apps/api/src` returns zero hits, and
+`@nestjs/schedule` is not a dependency. A flow still cannot say "after 24 hours in `tendering`, move
+to `unavailable`" — only "as soon as the rules are met".
 
 ### Escalation — not built
 
 `due_at` is computed and stored, `myWork` counts overdue rows, and `MyWork.tsx:55` renders them with a red tint. That is the entirety of SLA handling. Nothing notifies, reassigns, or escalates when `due_at` passes. (And `NotificationsService` would not deliver it anyway — `notifications.service.ts:60-63` logs `SEND …` with the comment "real provider dispatch goes here"; see the architecture document.)
 
-### Conditions and priority are stored, never evaluated
+### ~~Conditions and priority~~ — BUILT (QNEW-89 §4.1)
 
-`workflow_transitions.condition` is described at `workflow.ts:199` as "The IF part: field / operator / reference, AND-OR composed", and `priority` at `:201-205` as the mechanism for "Confirmed → Purchased goes straight through under 5,000, needs the finance manager above it".
-
-Neither is implemented. The guard's edge lookup is `… where flow_id = … and from_step_id = … and to_step_id = … limit 1` — no `order by priority`, no condition evaluation. There is also no UI for authoring a condition: the canvas inspector has no field for it, and the save payload (`WorkflowCanvas.tsx:474-485`) never sends one, so `condition` is always the `{}` default.
+Candidate arrows are read `order by priority desc, created_at asc` and the first whose condition
+passes wins (`status.service.ts:382-399`). The catalog of fields a condition may test is
+`conditions.ts` — `payer_type`, `order_type`, `delivery_type` — and a line inherits its header's
+facts. `describe()` renders a refusal a person can act on: *"this move is only allowed when Who pays
+is insurance"*.
 
 ### `selection_condition` is never evaluated — there is effectively one flow per workspace
 
 The guard resolves the applicable flow with `… and status = 'active' and is_default limit 1` (`status.service.ts:181-185`). A non-default flow with a selection condition can be created, saved and activated, and will never be selected for any record. Multi-flow routing is schema-and-validation only.
 
-### A flow created through the UI cannot be activated
+### ~~A flow created through the UI cannot be activated~~ — FIXED
 
-`Workflows.tsx:72` posts only `{ flowKey, nameEn, nameAr }` — no `isDefault`. `WorkflowCanvas.tsx:474-485` sends the graph but no `selectionCondition`. So a UI-created flow has `is_default = false` and `selection_condition = null`, and `assertActivatable` refuses it with *"routing is not set: give it a selection condition, or make it the default flow"* — with no way to satisfy either condition from any screen. `guard-check.sh:68-74` gets around this by posting `"isDefault":true` and `"selectionCondition":{}` directly to the API.
+`Workflows.tsx` now sends `isDefault: true`. Every flow created before that fix was permanently
+stuck in draft with no way to satisfy `assertActivatable` from any screen.
 
 ### "My work" is unreachable for the people custody assigns work to
 
@@ -426,11 +519,15 @@ The guard resolves the applicable flow with `… and status = 'active' and is_de
 
 But custody assigns to `tenant_memberships` roles — `company_admin`, `branch_manager`, `service_advisor` — and `guard-check.sh:215` proves a pooled record lands on a workspace manager. Those users have neither the link nor API access to see it. The personal-queue payoff currently reaches only Qparts staff.
 
-### Routing reaches two of the seven pages
+### Routing reaches six of the seven pages
 
-`queuePredicate` is called in exactly two places: `rfq.service.ts:117` and `orders.service.ts:126`, both opt-in via `?queue=`. `Rfqs.tsx:35` uses `?queue=rfqs`; `Orders.tsx:24` uses `?queue=orders`.
+`queuePredicate` is now called from six places: `rfq.service.ts:117`, `orders.service.ts:126`, and
+the four portal endpoints (`vendor-portal.service.ts:72,121`, `workshop-portal.service.ts:81,167`).
+Only `internal` remains offered-but-ignored.
 
-The other five page keys — `workshop_requests`, `workshop_orders`, `vendor_quotations`, `vendor_confirmed`, `internal` — are offered in the builder, are accepted by `validateGraph`, are saved to `workflow_steps.pages`, and are **ignored**. No portal endpoint calls `queuePredicate`. An admin routing a status to a vendor screen gets no error and no effect.
+The portal calls take a THIRD argument the internal ones do not: a tenant column. Those endpoints
+run with `tenantId: null, isInternal: true` — a vendor is not a member of any workspace — so without
+correlating each row to its own tenant, one workspace's flow would filter another workspace's queue.
 
 ### `pages.ts` promises two things it does not do
 
@@ -482,7 +579,7 @@ Flows are per-environment, and `newVersion` clones within `envOf(ctx)` (`:428`).
 
 ---
 
-## 11. Reading order
+## 12. Reading order
 
 1. `apps/api/drizzle/schema/workflow.ts` — the four tables and most of the reasoning.
 2. `apps/api/drizzle/migrations/0047_workflow_engine.sql` → `0048` → `0049` — the constraints and triggers, in the order they were argued out.

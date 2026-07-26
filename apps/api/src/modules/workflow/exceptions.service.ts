@@ -32,6 +32,11 @@ export const resolveExceptionSchema = z.object({
   note: z.string().max(500).optional(),
 });
 
+/** Release carries no decision — there was no request. Only a note, and even that is optional. */
+export const releaseExceptionSchema = z.object({
+  note: z.string().max(500).optional(),
+});
+
 /** Where an approved exception sends the record. */
 const TERMINAL: Record<string, string> = { cancellation: "cancelled", return: "return" };
 
@@ -66,7 +71,17 @@ export class WorkflowExceptionsService {
         where e.environment = ${envOf(ctx)}
         order by case e.status when 'open' then 0 else 1 end, e.created_at desc
         limit 200`);
-      return { open: rows.filter((r) => (r as { status: string }).status === "open"), all: rows };
+      // Two buckets, not one, because they need different buttons: `open` is a question somebody
+      // must answer, `held` is a record the engine parked. Handing a hold to the inbox that renders
+      // "Cancel it" is precisely the defect 0057 closed, so the split is enforced here rather than
+      // trusted to the caller.
+      const isOpen = (r: unknown) => (r as { status: string }).status === "open";
+      const isHold = (r: unknown) => (r as { kind: string }).kind === "hold";
+      return {
+        open: rows.filter((r) => isOpen(r) && !isHold(r)),
+        held: rows.filter((r) => isOpen(r) && isHold(r)),
+        all: rows,
+      };
     });
   }
 
@@ -148,6 +163,14 @@ export class WorkflowExceptionsService {
       if (!e) throw new NotFoundException("exception not found");
       if (e.status !== "open") throw new BadRequestException(`already ${e.status}`);
 
+      // A hold is not a request, so there is nothing here to approve or refuse — and approving one
+      // would run TERMINAL['hold'], which does not exist. Before 0057 the engine filed its holds as
+      // cancellations and this path would have CANCELLED the record. Release is the only exit.
+      if (e.kind === "hold")
+        throw new BadRequestException(
+          "this is on hold, not a request — release it instead of approving or refusing it",
+        );
+
       // segregation of duties, same rule the approvals engine applies: asking and deciding are two
       // different people, or the review is theatre.
       if (e.requested_by === ctx.userId)
@@ -194,6 +217,44 @@ export class WorkflowExceptionsService {
                resolved_at = now(), resolution_note = ${dto.note ?? null}, updated_at = now()
          where id = ${id}::uuid`);
       return { id, decision: "rejected", restoredTo };
+    });
+  }
+
+  /**
+   * Take a record off hold (0057).
+   *
+   * Separate from resolve() because a hold is a different kind of thing: the engine froze the record
+   * and nobody is being asked to decide anything. Three differences follow from that, and each is
+   * deliberate:
+   *
+   *   - no approve/reject — the only exit is release, so there is no path that cancels the record
+   *   - no segregation of duties — that rule exists so asking and granting are two people. Nobody
+   *     asked for a hold, so refusing to let the person who tripped it clear it would only strand
+   *     the record.
+   *   - no status move — a hold never took the record anywhere, so there is nothing to restore.
+   *     restore_status_id is still captured, because a hold placed on a record that a LATER
+   *     cancellation also touches needs to know where home was.
+   */
+  async release(ctx: RlsContext, id: string, note?: string) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const e = (await tx.execute(sql`
+        select id, kind, status from workflow_exceptions
+        where id = ${id}::uuid limit 1 for update`))[0] as
+        { id: string; kind: string; status: string } | undefined;
+      if (!e) throw new NotFoundException("not found");
+      if (e.kind !== "hold")
+        throw new BadRequestException(
+          `a ${e.kind} is somebody's request — decide it, do not release it`,
+        );
+      if (e.status !== "open") throw new BadRequestException(`already ${e.status}`);
+
+      await tx.execute(sql`
+        update workflow_exceptions
+           set status = 'released', resolved_by = ${ctx.userId}::uuid,
+               resolved_by_name = (select full_name from users where id = ${ctx.userId}::uuid),
+               resolved_at = now(), resolution_note = ${note ?? null}, updated_at = now()
+         where id = ${id}::uuid`);
+      return { id, status: "released" };
     });
   }
 }

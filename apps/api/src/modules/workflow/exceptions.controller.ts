@@ -3,10 +3,10 @@ import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
 import {
-  openExceptionSchema, resolveExceptionSchema, WorkflowExceptionsService,
+  openExceptionSchema, releaseExceptionSchema, resolveExceptionSchema, WorkflowExceptionsService,
 } from "./exceptions.service.js";
 
-/** Cancellation and return: raise one, see what is open, decide it. */
+/** Cancellation, return and hold: raise one, see what is open, decide it — or release it. */
 @Controller("workflow/exceptions")
 @UseGuards(AuthGuard)
 export class WorkflowExceptionsController {
@@ -30,5 +30,11 @@ export class WorkflowExceptionsController {
   @Post(":id/resolve")
   resolve(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.resolve(this.ctx(req), id, resolveExceptionSchema.parse(body));
+  }
+
+  /** Take a record off hold. A separate route from resolve() so a hold has no path that cancels. */
+  @Post(":id/release")
+  release(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
+    return this.svc.release(this.ctx(req), id, releaseExceptionSchema.parse(body ?? {}).note);
   }
 }

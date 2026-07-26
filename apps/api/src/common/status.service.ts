@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Tx } from "../db/db.service.js";
 import { envOf, type Environment } from "./env-guards.js";
 import { runGates, type GateConfig, type GateFailure } from "../modules/workflow/gates.js";
+import { runActions, type ActionConfig } from "../modules/workflow/actions.js";
 import {
   evaluate, describe, gatherFacts, isEmptyCondition, type Condition,
 } from "../modules/workflow/conditions.js";
@@ -191,9 +192,13 @@ export class StatusService {
       if (frozenBy)
         throw new ConflictException({
           message:
+            // Was an if/else that said "a return" for anything that was not a cancellation, so a
+            // hold reported itself as a return being reviewed — two wrong facts in one sentence.
             frozenBy.kind === "cancellation"
               ? "a cancellation is being reviewed for this order, so it cannot move until that is decided"
-              : "a return is being reviewed for this line, so it cannot move until that is decided",
+              : frozenBy.kind === "return"
+              ? "a return is being reviewed for this line, so it cannot move until that is decided"
+              : "the workflow put this on hold, so it cannot move until somebody releases it",
           frozenBy: frozenBy.kind,
           reason: frozenBy.reason,
         });
@@ -262,7 +267,7 @@ export class StatusService {
    * would claim a move from a state the record was never in.
    */
   /**
-   * Is this record frozen by an open cancellation or return?
+   * Is this record frozen by an open cancellation, return, or a hold the engine placed?
    *
    * The freeze is deliberately NOT part of the flow's own rules: an order must stop moving the
    * moment someone asks to cancel it, whatever the workflow says, or the decision is being made
@@ -288,6 +293,17 @@ export class StatusService {
     const row = (await tx.execute(sql`
       select kind, reason from workflow_exceptions
       where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)} and status = 'open'
+        -- ONLY EXCEPTIONS RECORDED BEFORE THIS TRANSACTION. Without this clause the lock_record
+        -- action eats the operation that triggered it: confirming an RFQ moves the header, whose
+        -- arrow fires the action, which opens a hold on the header — and the very next statement of
+        -- the same confirm moves the lines, which inherit their header's freeze (see above). The
+        -- move is refused, the whole transaction rolls back, and the user is told the order cannot
+        -- be confirmed because of a hold that no longer exists anywhere. Nothing happened at all,
+        -- not even the run log that would have explained it.
+        -- A consequence of a move must not retroactively veto the move it followed, nor the sibling
+        -- work that belongs to the same business operation. xmin is the row's writing transaction,
+        -- so this reads exactly as intended: somebody else's freeze, recorded earlier, still bites.
+        and xmin <> pg_current_xact_id()::xid
         and (
           (entity_type = ${entity} and entity_id = ${id}::uuid)
           ${parent && parentType
@@ -363,13 +379,13 @@ export class StatusService {
       // everyone else that way"), and picking one arbitrarily made both `condition` and `priority`
       // meaningless. The first arrow whose condition holds is the one being taken.
       const candidates = (await tx.execute(sql`
-        select allowed_roles, handoff, gates, condition, priority, requires_approval
+        select allowed_roles, handoff, gates, condition, priority, requires_approval, actions
         from workflow_transitions
         where flow_id = ${flowId}::uuid and from_step_id = ${fromStep.id}::uuid and to_step_id = ${toStep.id}::uuid
         order by priority desc, created_at asc`)) as Array<{
         allowed_roles: string[] | null; handoff: string;
         gates: GateConfig[] | null; condition: Condition | null; priority: number;
-        requires_approval: boolean;
+        requires_approval: boolean; actions: ActionConfig[] | null;
       }>;
 
       let edge: (typeof candidates)[number] | undefined;
@@ -491,6 +507,28 @@ export class StatusService {
             pending ? "already waiting for sign-off" : "this move needs sign-off before it can happen",
           );
         }
+      }
+
+      // ── what this move DOES ──────────────────────────────────────────────────────────────
+      // Placed after every rule that could still refuse the move: an action that fired for a move
+      // which was then rejected would be a consequence without a cause. Nothing in here throws — a
+      // broken action must not fail a person's correct click. It lands in the run log instead,
+      // which is the whole reason that log exists.
+      const actionCfgs = (edge.actions ?? []) as ActionConfig[];
+      if (actionCfgs.length) {
+        await runActions(
+          tx,
+          {
+            tenantId: ctx.tenantId,
+            userId: ctx.userId,
+            environment: envOf(ctx),
+            automatic: (ctx.autoDepth ?? 0) > 0,
+          },
+          entity,
+          m.id,
+          `${fromCodeStr}>${toCode}`,
+          actionCfgs,
+        );
       }
 
       // ── custody: who is holding this record now that it has moved ────────────────────────
