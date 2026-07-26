@@ -38,7 +38,14 @@ interface Placement { page: string; mode: PageMode; afterHours?: number | null }
 interface Step { status: string; label: string; isEntry: boolean; isTerminal: boolean; slaHours?: number | null; x: number; y: number; pages: Placement[]; ownerRoles: string[] }
 interface RoutablePage { key: string; path: string; labelEn: string; labelAr: string; entities: string[]; personas: string[]; wired: boolean }
 type Handoff = "pool" | "keep" | "actor";
-interface Edge { from: string; to: string; label?: string | null; requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff }
+/** A rule that must hold before this move is allowed (QNEW-89 §4). */
+interface GateCfg { gate: string; params: Record<string, unknown>; enforcement: "block" | "warn_override" }
+interface GateDef {
+  key: string; labelEn: string; labelAr: string; helpEn: string;
+  params: Array<{ key: string; labelEn: string; type: string; options?: string[]; default?: unknown }>;
+  entities: string[]; defaultEnforcement: "block" | "warn_override";
+}
+interface Edge { from: string; to: string; label?: string | null; requiresApproval: boolean; allowedRoles: string[]; priority: number; handoff: Handoff; gates: GateCfg[] }
 interface Graph { steps: Step[]; edges: Edge[] }
 interface FlowDoc {
   id: string; flow_key: string; version: number; name_en: string; name_ar: string;
@@ -96,6 +103,8 @@ export default function WorkflowCanvas() {
   /** How many people actually hold each role here — restricting a step to a role nobody holds
    *  is the fastest way to wedge a workspace, so it is shown while the choice is being made. */
   const [holders, setHolders] = useState<Record<string, number>>({});
+  /** The code-defined rule catalog. Admins pick from it; they never write a condition. */
+  const [gateDefs, setGateDefs] = useState<GateDef[]>([]);
   const [sel, setSel] = useState<Sel | null>(null);
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -180,7 +189,7 @@ export default function WorkflowCanvas() {
       api.get<FlowDoc>(`/admin/workflows/${id}`, { tenant: target }),
       api.get<{
         itemStatuses: CatalogStatus[]; vendorStatuses: CatalogStatus[]; roles: string[];
-        pages: RoutablePage[]; holders: Record<string, number>;
+        pages: RoutablePage[]; holders: Record<string, number>; gates: GateDef[];
       }>("/admin/workflows/catalog", { tenant: target }),
     ]);
     setFlow(f);
@@ -188,6 +197,7 @@ export default function WorkflowCanvas() {
     setRoles(c.roles);
     setPages(c.pages ?? []);
     setHolders(c.holders ?? {});
+    setGateDefs(c.gates ?? []);
     setGraph({
       steps: f.steps.map((s) => ({
         status: s.status as string,
@@ -208,6 +218,7 @@ export default function WorkflowCanvas() {
         allowedRoles: (t.allowed_roles as string[]) ?? [],
         priority: (t.priority as number) ?? 0,
         handoff: ((t.handoff as Handoff) ?? "pool"),
+        gates: ((t.gates as GateCfg[]) ?? []),
       })),
     });
     hist.current = { past: [], future: [], lastKey: null };
@@ -501,7 +512,7 @@ export default function WorkflowCanvas() {
       ...graph,
       edges: [...edges, {
         from, to, label: label || null,
-        requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool",
+        requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool", gates: [],
       }],
     });
   }
@@ -516,7 +527,7 @@ export default function WorkflowCanvas() {
     // proposal replacing the graph). Such an edge draws as nothing but still serialises into save().
     if (!byCode.has(linkFrom) || !byCode.has(to)) return setLinkFrom(null);
     if (!edges.some((e) => e.from === linkFrom && e.to === to)) {
-      commit({ ...graph, edges: [...edges, { from: linkFrom, to, requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool" }] });
+      commit({ ...graph, edges: [...edges, { from: linkFrom, to, requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool", gates: [] }] });
     }
     setLinkFrom(null);
   }
@@ -541,7 +552,7 @@ export default function WorkflowCanvas() {
         transitions: edges.map((e) => ({
           from: e.from, to: e.to, labelEn: e.label ?? null,
           requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
-          handoff: e.handoff,
+          handoff: e.handoff, gates: e.gates,
         })),
       }, { tenant: target });
       // Only declare the document clean if nothing changed while the request was in flight;
@@ -660,6 +671,9 @@ export default function WorkflowCanvas() {
               onPatchStep={(code, p) => patchStep(code, p)}
               onAddAction={addAction}
               onRemoveAction={removeAction}
+              onSetGates={(from, to, gates) =>
+                commit({ ...graph, edges: edges.map((e) => (e.from === from && e.to === to ? { ...e, gates } : e)) })}
+              gateDefs={gateDefs}
               onAskAssistant={() => setRail("assistant")}
             />
           ) : (
@@ -1111,7 +1125,7 @@ function AssistantPanel({
             transitions: graph.edges.map((e) => ({
               from: e.from, to: e.to, labelEn: e.label ?? null,
               requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
-              handoff: e.handoff,
+              handoff: e.handoff, gates: e.gates,
             })),
           },
         },
@@ -1128,6 +1142,7 @@ function AssistantPanel({
             from: t2.from as string, to: t2.to as string, label: (t2.labelEn as string) ?? null,
             requiresApproval: !!t2.requiresApproval, allowedRoles: (t2.allowedRoles as string[]) ?? [],
             priority: (t2.priority as number) ?? 0, handoff: ((t2.handoff as Handoff) ?? "pool"),
+            gates: ((t2.gates as GateCfg[]) ?? []),
           })),
         });
       }

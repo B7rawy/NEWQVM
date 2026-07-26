@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowRight, Plus, Sparkles, Trash2, Users, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Plus, ShieldCheck, Sparkles, Trash2, Users, X } from "lucide-react";
+import GateEditor, { type GateCfg, type GateDef } from "./GateEditor";
 
 /**
  * PAGES — the primary way to build a workflow.
@@ -33,6 +34,7 @@ export const MODES: Array<{ key: PageMode; label: string; hint: string }> = [
 export interface PVEdge {
   from: string; to: string; label?: string | null;
   requiresApproval: boolean; allowedRoles: string[]; handoff: string;
+  gates: GateCfg[];
 }
 export interface PVPage {
   key: string; path: string; labelEn: string; labelAr: string;
@@ -49,7 +51,8 @@ const role = (r: string) => r.replace(/_/g, " ");
 
 export default function PagesView({
   steps, edges, pages, catalog, roles, holders, frozen, selected,
-  onSelect, onPlace, onAddStatus, onPatchStep, onAddAction, onRemoveAction, onAskAssistant,
+  onSelect, onPlace, onAddStatus, onPatchStep, onAddAction, onRemoveAction, onSetGates, gateDefs,
+  onAskAssistant,
 }: {
   steps: PVStep[];
   edges: PVEdge[];
@@ -65,11 +68,15 @@ export default function PagesView({
   onPatchStep: (code: string, patch: Partial<PVStep>) => void;
   onAddAction: (from: string, to: string, label: string) => void;
   onRemoveAction: (from: string, to: string) => void;
+  onSetGates: (from: string, to: string, gates: GateCfg[]) => void;
+  gateDefs: GateDef[];
   onAskAssistant: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [actionFor, setActionFor] = useState<string | null>(null);
   const [openRoles, setOpenRoles] = useState<string | null>(null);
+  /** Which action has its rules panel open, keyed "from>to". */
+  const [openGates, setOpenGates] = useState<string | null>(null);
 
   const page = pages.find((p) => p.key === selected) ?? pages[0] ?? null;
   const unplaced = steps.filter((s) => s.pages.length === 0);
@@ -384,6 +391,34 @@ export default function PagesView({
                                   : dest.length ? <>goes to <b>{dest.map((p) => p.labelEn).join(", ")}</b>, becomes {toLabel}</>
                                   : <>becomes {toLabel} — <span className="text-[var(--chip-amber-fg)]">not on any screen, so it shows everywhere</span></>}
                               </p>
+                              <p className="text-[10.5px] text-faint">
+                                {e.allowedRoles.length ? `only ${e.allowedRoles.map(role).join(" or ")}` : "anyone who can reach it"}
+                                {" · "}
+                                {e.handoff === "keep" ? "same person keeps it"
+                                  : e.handoff === "actor" ? "whoever does it takes it on"
+                                  : "hands to the next desk"}
+                              </p>
+
+                              {/* the rules that decide WHEN, right beside the one that decides WHO */}
+                              <button
+                                onClick={() => setOpenGates(openGates === `${e.from}>${e.to}` ? null : `${e.from}>${e.to}`)}
+                                className="mt-1 flex items-center gap-1 text-[11px] text-muted hover:text-ink">
+                                <ShieldCheck className="h-3 w-3" />
+                                {e.gates.length
+                                  ? `${e.gates.length} rule${e.gates.length > 1 ? "s" : ""} before this can happen`
+                                  : "No rules — add one"}
+                              </button>
+                              {openGates === `${e.from}>${e.to}` && (
+                                <div className="mt-1.5">
+                                  <GateEditor
+                                    gates={e.gates}
+                                    defs={gateDefs}
+                                    statuses={steps.map((x) => ({ code: x.status, label: x.label }))}
+                                    disabled={frozen}
+                                    onChange={(next) => onSetGates(e.from, e.to, next)}
+                                  />
+                                </div>
+                              )}
                             </div>
                             {!frozen && (
                               <button onClick={() => onRemoveAction(e.from, e.to)}
@@ -392,7 +427,7 @@ export default function PagesView({
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             )}
-                          </div>
+                            </div>
                         );
                       })}
 
