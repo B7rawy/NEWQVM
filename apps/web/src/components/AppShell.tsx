@@ -92,9 +92,6 @@ export default function AppShell() {
     isCompanyAdmin: previewing ? true : me?.role === "company_admin",
     unscoped: persona === "platform" && !activeSlug,
   });
-  /** The system view administers the platform. It has no orders of its own and no mailbox, so the
-   *  workspace-scoped surfaces are hidden rather than shown permanently empty. */
-  const unscoped = persona === "platform" && !activeSlug;
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
   const portalLabel =
     ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider" } as const)[
@@ -227,14 +224,10 @@ export default function AppShell() {
 
         {/* bottom */}
         <div className="mt-auto border-t border-line-2 py-1.5">
-          {/* Communications belongs to a WORKSPACE — it is that company's own WhatsApp
-              number and Gmail. In the system view there is no workspace whose inbox this
-              could be. */}
           {/* Deliberately NOT a nav row: this is the doorway to a separate portal, so it should not
               read as one more page in the list. It gets its own treatment and collapses to a single
               glyph like everything else. */}
-          {!unscoped && (
-            <div className={collapsed ? "px-2 pb-1.5" : "px-2.5 pb-1.5"}>
+          <div className={collapsed ? "px-2 pb-1.5" : "px-2.5 pb-1.5"}>
               <NavLink
                 to="/communications"
                 title={collapsed ? "Communications" : undefined}
@@ -278,7 +271,6 @@ export default function AppShell() {
                   ))}
               </NavLink>
             </div>
-          )}
           <NavLink
             to="/developers"
             title={collapsed ? "Developers" : undefined}
