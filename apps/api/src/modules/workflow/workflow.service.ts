@@ -51,6 +51,11 @@ const transitionSchema = z.object({
   handoff: z.enum(["pool", "keep", "actor"]).optional().default("pool"),
 });
 
+export const placementSchema = z.object({
+  status: z.string().min(1).max(64),
+  pages: z.array(z.string().max(40)).max(20),
+});
+
 export const createFlowSchema = z.object({
   flowKey: z
     .string()
@@ -221,6 +226,140 @@ export class WorkflowService {
         update workflow_record_state set assignee_user_id = ${target}::uuid, updated_at = now()
         where entity_type = ${entity}::entity_type and entity_id = ${id}::uuid`);
       return { entity, id, assignedTo: target };
+    });
+  }
+
+  /**
+   * THE PAGE VIEW — the same workflow, read as screens instead of as a graph.
+   *
+   * Nothing here is stored. A page's composition is derived every time: the statuses placed on it,
+   * who handles them, and — by looking up where each destination status is placed — which screen an
+   * order moves to next. Deriving rather than duplicating is deliberate: `pages` is many-to-many
+   * (a status legitimately sits on two screens), and the three things that actually read it at
+   * runtime all read the STEPS. A page record holding its own copy would be a second truth that
+   * nothing enforces, in the screen that is about to become the main view of the engine.
+   */
+  async pageView(ctx: RlsContext) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const [flow] = (await tx.execute(sql`
+        select id, name_en, version, status from workflow_flows
+        where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+          and status_domain = 'item' and is_default
+        order by case status when 'active' then 0 when 'draft' then 1 else 2 end, version desc
+        limit 1`)) as Array<{ id: string; name_en: string; version: number; status: string }>;
+
+      if (!flow) return { flow: null, pages: [], unplaced: [], holders: {} };
+
+      const steps = (await tx.execute(sql`
+        select s.id, coalesce(i.code, v.code) as code,
+               coalesce(i.label_en, v.label_en) as label_en, coalesce(i.label_ar, v.label_ar) as label_ar,
+               s.pages, s.owner_roles, s.is_entry, s.is_terminal, s.sla_hours
+        from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.flow_id = ${flow.id}::uuid
+        order by s.sort_order, s.created_at`)) as Array<Record<string, unknown>>;
+
+      const moves = (await tx.execute(sql`
+        select coalesce(fi.code, fv.code) as from_code, coalesce(ti.code, tv.code) as to_code,
+               t.label_en, t.requires_approval, t.allowed_roles, t.handoff
+        from workflow_transitions t
+        join workflow_steps fs on fs.id = t.from_step_id
+        join workflow_steps ts on ts.id = t.to_step_id
+        left join item_statuses fi on fi.id = fs.item_status_id
+        left join vendor_statuses fv on fv.id = fs.vendor_status_id
+        left join item_statuses ti on ti.id = ts.item_status_id
+        left join vendor_statuses tv on tv.id = ts.vendor_status_id
+        where t.flow_id = ${flow.id}::uuid
+        order by t.priority desc`)) as Array<Record<string, unknown>>;
+
+      const holders = Object.fromEntries(
+        ((await tx.execute(sql`
+          select role::text as code, count(*)::int as n from tenant_memberships
+          where tenant_id = ${ctx.tenantId}::uuid and is_active group by role`)) as Array<
+          { code: string; n: number }
+        >).map((h) => [h.code, h.n]),
+      );
+
+      const placedOn = (code: string) =>
+        ((steps.find((s) => s.code === code)?.pages as string[]) ?? []);
+
+      const pages = ROUTABLE_PAGES.map((p) => {
+        const here = steps.filter((s) => ((s.pages as string[]) ?? []).includes(p.key));
+        const codes = new Set(here.map((s) => s.code as string));
+        return {
+          ...p,
+          statuses: here.map((s) => ({
+            code: s.code, labelEn: s.label_en, labelAr: s.label_ar,
+            ownerRoles: (s.owner_roles as string[]) ?? [],
+            isEntry: s.is_entry, isTerminal: s.is_terminal, slaHours: s.sla_hours,
+          })),
+          // What can happen to work sitting here, and which screen it lands on afterwards. The
+          // destination page is NOT a stored choice — it follows where the destination status is
+          // placed, so there is exactly one place to change it.
+          exits: moves
+            .filter((m) => codes.has(m.from_code as string))
+            .map((m) => ({
+              from: m.from_code, to: m.to_code, action: m.label_en,
+              requiresApproval: m.requires_approval, allowedRoles: (m.allowed_roles as string[]) ?? [],
+              handoff: m.handoff,
+              goesTo: placedOn(m.to_code as string),
+              staysHere: placedOn(m.to_code as string).includes(p.key),
+            })),
+          owners: [...new Set(here.flatMap((s) => (s.owner_roles as string[]) ?? []))],
+        };
+      });
+
+      return {
+        flow: { id: flow.id, name: flow.name_en, version: flow.version, status: flow.status },
+        pages,
+        // The safety rule made visible: a status placed nowhere shows on EVERY screen. It is the
+        // most counter-intuitive behaviour in the system and today it is invisible everywhere.
+        unplaced: steps
+          .filter((s) => (((s.pages as string[]) ?? []).length === 0))
+          .map((s) => ({ code: s.code, labelEn: s.label_en, labelAr: s.label_ar })),
+        holders,
+      };
+    });
+  }
+
+  /**
+   * Move statuses onto and off a screen — WITHOUT publishing a new version.
+   *
+   * This is the one write that must work on an ACTIVE flow. Migration 0048 deliberately left `pages`
+   * out of the freeze tuple precisely so a mis-routed status could be fixed in seconds, because a
+   * status routed to the wrong screen makes live work vanish from the queue people watch. But
+   * saveGraph — the only writer until now — refuses a non-draft flow and works by delete-and-
+   * reinsert, which the freeze trigger blocks anyway. So the promise was unreachable.
+   *
+   * A targeted UPDATE of one column keeps it: the semantics stay frozen, the view stays tunable.
+   */
+  async setPlacement(
+    ctx: RlsContext,
+    id: string,
+    dto: { status: string; pages: string[] },
+  ) {
+    const bad = dto.pages.filter((p) => !isPageKey(p));
+    if (bad.length) throw new BadRequestException(`unknown page(s): ${bad.join(", ")}`);
+
+    return this.dbService.withContext(ctx, async (tx) => {
+      const [step] = (await tx.execute(sql`
+        select s.id from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.flow_id = ${id}::uuid and coalesce(i.code, v.code) = ${dto.status}
+        limit 1`)) as Array<{ id: string }>;
+      // Placing a status the flow does not contain would silently do nothing, and the screen would
+      // show the change until it was reloaded. Refuse instead.
+      if (!step)
+        throw new BadRequestException(
+          `'${dto.status}' is not part of this workflow, so it cannot be placed on a screen`,
+        );
+
+      await tx.execute(sql`
+        update workflow_steps set pages = ${JSON.stringify(dto.pages)}::jsonb, updated_at = now()
+        where id = ${step.id}::uuid`);
+      return { status: dto.status, pages: dto.pages };
     });
   }
 

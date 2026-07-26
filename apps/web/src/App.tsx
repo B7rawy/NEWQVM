@@ -32,6 +32,7 @@ import WorkshopRequestDetail from "./pages/workshop/WorkshopRequestDetail";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import Workflows from "./pages/admin/Workflows";
+import Pages from "./pages/admin/Pages";
 import MyWork from "./pages/MyWork";
 import Communications from "./pages/Communications";
 import WorkflowCanvas from "./pages/admin/WorkflowCanvas";
@@ -66,6 +67,7 @@ function Placeholder() {
 
 const WIRED = new Set([
   "/my-work",
+  "/admin/pages",
   "/communications",
   "/overview",
   "/rfqs",
@@ -148,6 +150,7 @@ export default function App() {
         <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />
         <Route path="/workshop/branches" element={<WorkshopBranches />} />
         <Route path="/workshop/orders" element={<WorkshopOrders />} />
+        <Route path="/admin/pages" element={<Pages />} />
         <Route path="/admin/workflows" element={<Workflows />} />
         <Route path="/admin/workspaces" element={<Workspaces />} />
         <Route path="/admin/workspaces/:id" element={<WorkspaceDetail />} />

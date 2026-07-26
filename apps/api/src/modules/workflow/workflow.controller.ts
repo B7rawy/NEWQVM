@@ -4,7 +4,9 @@ import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
-import { assistSchema, createFlowSchema, saveGraphSchema, WorkflowService } from "./workflow.service.js";
+import {
+  assistSchema, createFlowSchema, placementSchema, saveGraphSchema, WorkflowService,
+} from "./workflow.service.js";
 
 /**
  * /admin/workflows — authoring surface for the workflow engine (QNEW-64).
@@ -47,6 +49,12 @@ export class WorkflowController {
   /** Full graph for the canvas. */
   /** Not under :id — this is about the USER, not one flow. Declared BEFORE @Get(":id"), which
    *  would otherwise match "my-work" as a flow id. */
+  /** The same workflow read as screens rather than as a graph. Purely derived. */
+  @Get("page-view")
+  pageView(@Req() req: Request) {
+    return this.svc.pageView(this.ctx(req));
+  }
+
   @Get("my-work")
   myWork(@Req() req: Request) {
     return this.svc.myWork(this.ctx(req));
@@ -77,6 +85,12 @@ export class WorkflowController {
   @Post(":id/assist")
   assist(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.assist(this.ctx(req), id, assistSchema.parse(body));
+  }
+
+  /** Tunable on an ACTIVE flow by design — routing is a view, not a rule. See 0048. */
+  @Put(":id/placement")
+  placement(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
+    return this.svc.setPlacement(this.ctx(req), id, placementSchema.parse(body));
   }
 
   @Post(":id/activate")

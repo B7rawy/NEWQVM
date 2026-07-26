@@ -32,7 +32,10 @@ import {
   ClipboardCheck,
   UserPlus,
   Settings,
-  type LucideIcon, Inbox,} from "lucide-react";
+  type LucideIcon,
+  Inbox,
+  LayoutList,
+} from "lucide-react";
 
 export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider";
 
@@ -89,6 +92,7 @@ export const platformNav: NavGroup[] = [
     heading: "Admin",
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
+      { label: "Pages", path: "/admin/pages", icon: LayoutList, superAdminOnly: true },
       { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
@@ -116,6 +120,7 @@ export const platformSystemNav: NavGroup[] = [
     heading: "Control tower",
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
+      { label: "Pages", path: "/admin/pages", icon: LayoutList, superAdminOnly: true },
       { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },

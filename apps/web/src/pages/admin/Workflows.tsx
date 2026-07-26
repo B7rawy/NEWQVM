@@ -69,7 +69,10 @@ export default function Workflows() {
     setErr("");
     setBusy(true);
     try {
-      const r = await api.post<{ id: string }>("/admin/workflows", { flowKey, nameEn, nameAr }, { tenant: target });
+      const r = // isDefault matters: a flow that is neither the default nor conditional fails the
+      // workflow_flows_selection_complete CHECK on activation, so every flow created here was
+      // permanently stuck in draft.
+      await api.post<{ id: string }>("/admin/workflows", { flowKey, nameEn, nameAr, isDefault: true }, { tenant: target });
       nav(`/admin/workflows/${r.id}`);
     } catch (e) {
       setErr((e as Error).message);
