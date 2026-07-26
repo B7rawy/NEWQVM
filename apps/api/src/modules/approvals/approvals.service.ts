@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 import { envOf } from "../../common/env-guards.js";
+import { StatusService, type StatusEntity } from "../../common/status.service.js";
 
 export const createPolicySchema = z.object({
   name: z.string().min(1),
@@ -12,6 +13,14 @@ export const createPolicySchema = z.object({
     .min(1),
 });
 export const submitSchema = z.object({ entityType: z.string().min(1), entityId: z.string().uuid() });
+
+/** Ask for sign-off on a specific MOVE, not just on a record. */
+export const requestMoveSchema = z.object({
+  entityType: z.string().min(1),
+  entityId: z.string().uuid(),
+  /** "fromCode>toCode" — the move being authorised. */
+  transitionKey: z.string().min(3).max(140),
+});
 export const actSchema = z.object({
   action: z.enum(["approve", "reject"]),
   comment: z.string().max(500).optional(),
@@ -19,7 +28,10 @@ export const actSchema = z.object({
 
 @Injectable()
 export class ApprovalsService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   async createPolicy(ctx: RlsContext, dto: z.infer<typeof createPolicySchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
@@ -37,6 +49,47 @@ export class ApprovalsService {
         })),
       );
       return { id: p.id, levels: dto.levels.length };
+    });
+  }
+
+  /**
+   * Ask for sign-off on a specific move.
+   *
+   * Separate from the guard on purpose. The guard runs inside the caller's business transaction, so
+   * anything it wrote would be rolled back by its own refusal — the first cut did that and reported
+   * "sent for sign-off" while creating nothing. Asking is a deliberate act with its own transaction.
+   *
+   * Idempotent: pressing the button twice joins the request already waiting rather than splitting
+   * the approvers across two.
+   */
+  async requestForMove(ctx: RlsContext, dto: z.infer<typeof requestMoveSchema>) {
+    return this.dbService.withContext(ctx, async (tx) => {
+      const existing = (await tx.execute(sql`
+        select id, current_level from approval_requests
+        where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+          and entity_type = ${dto.entityType} and entity_id = ${dto.entityId}::uuid
+          and transition_key = ${dto.transitionKey} and overall_status = 'pending'
+        limit 1`))[0] as { id: string; current_level: number } | undefined;
+      if (existing) return { requestId: existing.id, status: "pending", currentLevel: existing.current_level, joined: true };
+
+      const policy = (await tx.execute(sql`
+        select id from approval_policies
+        where tenant_id = ${ctx.tenantId}::uuid and entity_type = ${dto.entityType} and is_active
+        order by created_at desc limit 1`))[0] as { id: string } | undefined;
+      // A padlock with no policy behind it blocks the move forever with nobody able to clear it.
+      if (!policy)
+        throw new BadRequestException(
+          `no approval policy is set up for ${dto.entityType} in this workspace, so nobody can sign this off`,
+        );
+
+      const [r] = (await tx.execute(sql`
+        insert into approval_requests
+          (tenant_id, environment, policy_id, entity_type, entity_id, requested_by,
+           current_level, overall_status, transition_key)
+        values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${policy.id}::uuid, ${dto.entityType},
+                ${dto.entityId}::uuid, ${ctx.userId}::uuid, 1, 'pending', ${dto.transitionKey})
+        returning id`)) as Array<{ id: string }>;
+      return { requestId: r.id, status: "pending", currentLevel: 1, joined: false };
     });
   }
 
@@ -85,12 +138,16 @@ export class ApprovalsService {
       // FOR UPDATE serializes concurrent acts on the same request (prevents level-skip race)
       const req = (
         (await tx.execute(sql`
-          select id, policy_id, current_level, overall_status, requested_by
+          select id, policy_id, current_level, overall_status, requested_by,
+                 entity_type, entity_id, transition_key
           from approval_requests where id = ${requestId}::uuid limit 1 for update`)) as Array<{
           id: string;
           policy_id: string;
           current_level: number;
           overall_status: string;
+          entity_type: string;
+          entity_id: string;
+          transition_key: string | null;
           requested_by: string | null;
         }>
       )[0];
@@ -134,7 +191,28 @@ export class ApprovalsService {
         await tx.execute(
           sql`update approval_requests set overall_status = 'approved' where id = ${requestId}::uuid`,
         );
-        return { requestId, status: "approved" };
+
+        // THE LAST APPROVAL PERFORMS THE MOVE.
+        //
+        // Without this the record is approved and still sitting there: this repo has no scheduler,
+        // no queue worker and no notification dispatcher, so nothing would tell anyone the sign-off
+        // had landed. The order would wait until a human happened to press the button again — and a
+        // sign-off that changes nothing is the fastest way to lose trust in sign-offs.
+        //
+        // Running it here also means the approver's own transaction proves the move is possible. If
+        // a gate has failed in the meantime, the approval is rolled back with it rather than being
+        // recorded against a move that never happened.
+        if (req.transition_key) {
+          const toCode = req.transition_key.split(">")[1];
+          if (toCode) {
+            await this.status.transition(tx, ctx, {
+              entity: req.entity_type as StatusEntity,
+              id: req.entity_id,
+              toCode,
+            });
+          }
+        }
+        return { requestId, status: "approved", moved: !!req.transition_key };
       }
       // guard the advance on the level we actually acted on
       await tx.execute(

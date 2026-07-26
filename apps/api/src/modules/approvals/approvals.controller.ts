@@ -4,7 +4,7 @@ import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
-import { actSchema, ApprovalsService, createPolicySchema, submitSchema } from "./approvals.service.js";
+import { actSchema, ApprovalsService, createPolicySchema, requestMoveSchema, submitSchema } from "./approvals.service.js";
 
 @Controller("approvals")
 @UseGuards(AuthGuard, RolesGuard)
@@ -15,6 +15,12 @@ export class ApprovalsController {
     if (!c.tenantId) throw new BadRequestException("no workspace resolved (subdomain / X-Tenant)");
     return { tenantId: c.tenantId, userId: c.userId, isInternal: c.isInternal, environment: c.environment, impersonatorId: c.impersonatorId };
   }
+
+  @Post("request-move")
+  requestMove(@Req() req: Request, @Body() body: unknown) {
+    return this.svc.requestForMove(this.ctx(req), requestMoveSchema.parse(body));
+  }
+
 
   @Post("policies")
   @PlatformOnly()

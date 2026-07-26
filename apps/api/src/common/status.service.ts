@@ -52,6 +52,18 @@ export interface StatusContext {
   overrideReason?: string | null;
 }
 
+/**
+ * Raised when a move needs a signature it does not have yet.
+ *
+ * Carries the request id so the caller can link straight to it — being told "needs approval" without
+ * being told WHICH request is the difference between a workflow and a wall.
+ */
+export class ApprovalRequiredException extends ConflictException {
+  constructor(transitionKey: string, requestId: string | null, reason: string) {
+    super({ message: reason, needsApproval: true, transitionKey, requestId });
+  }
+}
+
 /** Raised when the business rules on a transition are not satisfied. 409, not 400: the request is
  *  well-formed, the world is not ready for it. */
 export class GateNotSatisfiedException extends ConflictException {
@@ -248,6 +260,13 @@ export class StatusService {
       // flow does not contain is precisely the thing to stop: otherwise "the workflow says
       // new_rfq → confirmed" is advice, not a rule.
       if (!fromStep) continue;
+
+      // one lookup: the error messages, the approval key and the audit trail all want this
+      const fromCodeStr = ((await tx.execute(sql`
+        select coalesce(i.code, v.code) as code from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.id = ${fromStep.id}::uuid`))[0] as { code: string } | undefined)?.code ?? "current";
       if (!toStep) {
         const fc = (await tx.execute(sql`
           select coalesce(i.code, v.code) as code from workflow_steps s
@@ -265,11 +284,13 @@ export class StatusService {
       // everyone else that way"), and picking one arbitrarily made both `condition` and `priority`
       // meaningless. The first arrow whose condition holds is the one being taken.
       const candidates = (await tx.execute(sql`
-        select allowed_roles, handoff, gates, condition, priority from workflow_transitions
+        select allowed_roles, handoff, gates, condition, priority, requires_approval
+        from workflow_transitions
         where flow_id = ${flowId}::uuid and from_step_id = ${fromStep.id}::uuid and to_step_id = ${toStep.id}::uuid
         order by priority desc, created_at asc`)) as Array<{
         allowed_roles: string[] | null; handoff: string;
         gates: GateConfig[] | null; condition: Condition | null; priority: number;
+        requires_approval: boolean;
       }>;
 
       let edge: (typeof candidates)[number] | undefined;
@@ -341,6 +362,53 @@ export class StatusService {
 
         // everything that failed was overridable AND a reason was given — record what was waived
         if (failures.length) waived.push(...failures);
+      }
+
+      // ── does this move need a signature? ─────────────────────────────────────────────────
+      // Ordered AFTER the gates: telling someone to go and get an approval, when the lines are not
+      // priced and the move could not happen anyway, wastes an approver's time on a decision that
+      // is not ready to be made.
+      if (edge.requires_approval) {
+        const key = `${fromCodeStr}>${toCode}`;
+        const granted = (await tx.execute(sql`
+          select id from approval_requests
+          where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+            and entity_type = ${entity} and entity_id = ${m.id}::uuid
+            and transition_key = ${key}
+            and overall_status = 'approved' and consumed_at is null
+          limit 1 for update`))[0] as { id: string } | undefined;
+
+        if (granted) {
+          // Spend it. `where consumed_at is null` makes this the arbiter if two moves race for the
+          // same grant — the second finds nothing to consume and is turned away.
+          const spent = (await tx.execute(sql`
+            update approval_requests set consumed_at = now()
+            where id = ${granted.id}::uuid and consumed_at is null
+            returning id`)) as Array<{ id: string }>;
+          if (!spent.length) throw new ApprovalRequiredException(key, null, "that approval was just used");
+        } else {
+          // NOTHING GRANTED. The guard refuses and says so — it does NOT open the request itself.
+          //
+          // It cannot: this runs inside the caller's business transaction, and refusing rolls that
+          // transaction back, taking any request created here with it. The first cut did exactly
+          // that and produced a message saying "sent for sign-off" with nothing on the approvals
+          // screen — the worst kind of failure, because it looks like it worked.
+          //
+          // Asking for a signature is a deliberate act anyway. The caller gets everything it needs
+          // to offer it: which move, and whether one is already waiting.
+          const pending = (await tx.execute(sql`
+            select id from approval_requests
+            where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+              and entity_type = ${entity} and entity_id = ${m.id}::uuid
+              and transition_key = ${key} and overall_status = 'pending'
+            limit 1`))[0] as { id: string } | undefined;
+
+          throw new ApprovalRequiredException(
+            key,
+            pending?.id ?? null,
+            pending ? "already waiting for sign-off" : "this move needs sign-off before it can happen",
+          );
+        }
       }
 
       // ── custody: who is holding this record now that it has moved ────────────────────────

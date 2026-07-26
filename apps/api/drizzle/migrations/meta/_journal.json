@@ -365,6 +365,13 @@
       "when": 1785001410112,
       "tag": "0051_transition_gates",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1785001411112,
+      "tag": "0052_approval_gates",
+      "breakpoints": true
     }
   ]
 }

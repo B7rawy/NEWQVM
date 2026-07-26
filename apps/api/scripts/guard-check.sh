@@ -413,3 +413,60 @@ psql "delete from status_logs;
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'COND-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'COND-%'" > /dev/null
+
+# ── approval gates (0052 / QNEW-89 §6) ──────────────────────────────────────────────────────────
+# `requires_approval` was storable, drawn as a padlock, and enforced NOWHERE, while a complete
+# approvals engine sat in another module with zero references between them. This is the round trip.
+MGRID=$(psql "select id from users where email='manager@qparts.local'")
+MTOK2=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"manager@qparts.local","password":"manager1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+MR=(-H "Authorization: Bearer $MTOK2" -H "X-Tenant: riyadh" -H "Content-Type: application/json")
+
+wfclean
+psql "delete from approval_actions; delete from approval_requests; delete from approval_levels; delete from approval_policies" > /dev/null
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/approvals/policies" \
+  -d "$(printf '{"name":"Pricing sign-off","entityType":"rfq_item","levels":[{"approverUserId":"%s"}]}' "$MGRID")"
+FIDA=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-appr","nameAr":"موافقة","nameEn":"Appr","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$FIDA/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","requiresApproval":true}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$FIDA/activate"
+
+APR=$(pick_winner APPR-1)
+ok 1 "$(echo "$APR" | $PY -c "import sys,json;print(1 if json.load(sys.stdin).get('needsApproval') else 0)")" \
+  "a padlocked move is refused until it is signed off"
+ok "new_rfq>priced" "$(echo "$APR" | $PY -c "import sys,json;print(json.load(sys.stdin).get('transitionKey'))")" \
+  "and says WHICH move needs the signature"
+
+# the guard must not write: it runs inside the caller's transaction, which its own refusal rolls back
+ok 0 "$(psql "select count(*) from approval_requests")" \
+  "the refusal creates NO request — the guard judges, it does not write"
+
+APIT=$(psql "select i.id from rfq_items i join rfqs r on r.id=i.rfq_id where r.plate_number='APPR-1' limit 1")
+REQ1=$(curl -s "${AR[@]}" -X POST "$B/api/approvals/request-move" \
+  -d "$(printf '{"entityType":"rfq_item","entityId":"%s","transitionKey":"new_rfq>priced"}' "$APIT")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('requestId',''))")
+ok True "$(curl -s "${AR[@]}" -X POST "$B/api/approvals/request-move" \
+  -d "$(printf '{"entityType":"rfq_item","entityId":"%s","transitionKey":"new_rfq>priced"}' "$APIT")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('joined'))")" \
+  "asking twice joins the request already waiting instead of splitting the approvers"
+
+ACT=$(curl -s "${MR[@]}" -X POST "$B/api/approvals/requests/$REQ1/act" -d '{"action":"approve"}')
+ok True "$(echo "$ACT" | $PY -c "import sys,json;print(json.load(sys.stdin).get('moved'))")" \
+  "THE FINAL APPROVAL PERFORMS THE MOVE — nothing here would ever unstick it otherwise"
+ok priced "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$APIT'")" \
+  "and the record actually arrives at the status it was signed off for"
+ok 1 "$(psql "select count(*) from approval_requests where consumed_at is not null")" \
+  "the grant is spent, so it cannot authorise the same move twice"
+
+wfclean
+psql "delete from approval_actions; delete from approval_requests; delete from approval_levels; delete from approval_policies;
+      delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'APPR-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'APPR-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'APPR-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'APPR-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'APPR-%'" > /dev/null
