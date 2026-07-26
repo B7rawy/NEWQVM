@@ -92,6 +92,9 @@ export default function AppShell() {
     isCompanyAdmin: previewing ? true : me?.role === "company_admin",
     unscoped: persona === "platform" && !activeSlug,
   });
+  /** The system view administers the platform. It has no orders of its own and no mailbox, so the
+   *  workspace-scoped surfaces are hidden rather than shown permanently empty. */
+  const unscoped = persona === "platform" && !activeSlug;
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
   const portalLabel =
     ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider" } as const)[
@@ -224,54 +227,58 @@ export default function AppShell() {
 
         {/* bottom */}
         <div className="mt-auto border-t border-line-2 py-1.5">
-          {/* Communications — deliberately NOT a nav row.
-              This is the doorway to a separate portal where a workspace connects its OWN WhatsApp and
-              Gmail, so it should not read as one more page in the list. It is given its own treatment
-              so the eye lands on it, and it collapses to a single glyph like everything else. */}
-          <div className={collapsed ? "px-2 pb-1.5" : "px-2.5 pb-1.5"}>
-            <NavLink
-              to="/communications"
-              title={collapsed ? "Communications" : undefined}
-              className={({ isActive }) =>
-                `group relative flex items-center overflow-hidden rounded-lg border transition ${
-                  collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2.5"
-                } ${
-                  isActive
-                    ? "border-accent bg-accent-50"
-                    : "border-line-2 bg-surface hover:border-accent/40 hover:bg-accent-50/40"
-                }`
-              }
-            >
-              <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent text-white">
-                <MessagesSquare className="h-[15px] w-[15px]" />
-                {/* Anchored to the tile, not the row, so it survives the collapsed sidebar where the
-                    label is gone and the tile is all that is left. */}
-                {unread && (
-                  <span className="absolute -right-1.5 -top-1.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-panel bg-navy px-1 text-[10px] font-bold leading-none text-white">
-                    {unread}
+          {/* Communications belongs to a WORKSPACE — it is that company's own WhatsApp
+              number and Gmail. In the system view there is no workspace whose inbox this
+              could be. */}
+          {/* Deliberately NOT a nav row: this is the doorway to a separate portal, so it should not
+              read as one more page in the list. It gets its own treatment and collapses to a single
+              glyph like everything else. */}
+          {!unscoped && (
+            <div className={collapsed ? "px-2 pb-1.5" : "px-2.5 pb-1.5"}>
+              <NavLink
+                to="/communications"
+                title={collapsed ? "Communications" : undefined}
+                className={({ isActive }) =>
+                  `group relative flex items-center overflow-hidden rounded-lg border transition ${
+                    collapsed ? "justify-center px-0 py-2" : "gap-2.5 px-2.5 py-2.5"
+                  } ${
+                    isActive
+                      ? "border-accent bg-accent-50"
+                      : "border-line-2 bg-surface hover:border-accent/40 hover:bg-accent-50/40"
+                  }`
+                }
+              >
+                <span className="relative grid h-7 w-7 shrink-0 place-items-center rounded-md bg-accent text-white">
+                  <MessagesSquare className="h-[15px] w-[15px]" />
+                  {/* Anchored to the tile, not the row, so it survives the collapsed sidebar where the
+                      label is gone and the tile is all that is left. */}
+                  {unread && (
+                    <span className="absolute -right-1.5 -top-1.5 grid h-[17px] min-w-[17px] place-items-center rounded-full border-2 border-panel bg-navy px-1 text-[10px] font-bold leading-none text-white">
+                      {unread}
+                    </span>
+                  )}
+                </span>
+                {!collapsed && (
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] font-semibold leading-tight text-ink">
+                      Communications
+                    </span>
+                    <span className="block truncate text-[11px] leading-tight text-muted">
+                      WhatsApp &amp; Gmail
+                    </span>
                   </span>
                 )}
-              </span>
-              {!collapsed && (
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[13px] font-semibold leading-tight text-ink">
-                    Communications
-                  </span>
-                  <span className="block truncate text-[11px] leading-tight text-muted">
-                    WhatsApp &amp; Gmail
-                  </span>
-                </span>
-              )}
-              {!collapsed &&
-                (unread ? (
-                  <span className="shrink-0 rounded-full bg-navy px-1.5 py-0.5 text-[10.5px] font-bold leading-none text-white">
-                    {unread}
-                  </span>
-                ) : (
-                  <ArrowUpRight className="h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
-                ))}
-            </NavLink>
-          </div>
+                {!collapsed &&
+                  (unread ? (
+                    <span className="shrink-0 rounded-full bg-navy px-1.5 py-0.5 text-[10.5px] font-bold leading-none text-white">
+                      {unread}
+                    </span>
+                  ) : (
+                    <ArrowUpRight className="h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
+                  ))}
+              </NavLink>
+            </div>
+          )}
           <NavLink
             to="/developers"
             title={collapsed ? "Developers" : undefined}

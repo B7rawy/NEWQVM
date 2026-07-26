@@ -109,7 +109,6 @@ export const platformSystemNav: NavGroup[] = [
   {
     heading: "Platform",
     items: [
-      { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Management Overview", path: "/management-overview", icon: Gauge },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes },
     ],
