@@ -5,6 +5,7 @@ import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { envOf } from "../../common/env-guards.js";
 import { AiService } from "../../common/ai.service.js";
 import { ROUTABLE_PAGES, isPageKey, pageByKey } from "./pages.js";
+import { GATES, gateByKey } from "./gates.js";
 
 /**
  * Workflow authoring API (QNEW-64). Super-admin only for now — owner's decision: build the module
@@ -72,6 +73,24 @@ const transitionSchema = z.object({
   priority: z.number().int().min(0).max(999).optional().default(0),
   /** What this move does to custody — see 0049. */
   handoff: z.enum(["pool", "keep", "actor"]).optional().default("pool"),
+  /** Exit gates from the code-defined catalog — see gates.ts and 0051. */
+  gates: z
+    .array(
+      z.object({
+        gate: z.string().max(64),
+        params: z.record(z.unknown()).optional().default({}),
+        enforcement: z.enum(["block", "warn_override"]).optional(),
+      }),
+    )
+    .optional()
+    .default([])
+    .transform((gs) =>
+      gs.map((g) => ({
+        ...g,
+        // fall back to the catalog's own opinion; the stored row must satisfy the DB CHECK
+        enforcement: g.enforcement ?? gateByKey(g.gate)?.defaultEnforcement ?? "block",
+      })),
+    ),
 });
 
 /** One station a step sits on, and what that station may do about it. */
@@ -171,6 +190,10 @@ export class WorkflowService {
         vendorStatuses: vendor,
         roles: roles.map((r) => (r as { code: string }).code),
         pages: ROUTABLE_PAGES,
+        gates: GATES.map((g) => ({
+          key: g.key, labelEn: g.labelEn, labelAr: g.labelAr, helpEn: g.helpEn,
+          params: g.params, entities: g.entities, defaultEnforcement: g.defaultEnforcement,
+        })),
         holders: Object.fromEntries(holders.map((h) => [h.code, h.n])),
       };
     });
@@ -470,7 +493,7 @@ export class WorkflowService {
         select t.id,
                coalesce(fi.code, fv.code) as "from", coalesce(ti.code, tv.code) as "to",
                t.label_en, t.label_ar, t.requires_approval, t.allowed_roles, t.condition, t.priority,
-               t.handoff
+               t.handoff, t.gates
         from workflow_transitions t
         join workflow_steps fs on fs.id = t.from_step_id
         join workflow_steps ts on ts.id = t.to_step_id
@@ -547,11 +570,12 @@ export class WorkflowService {
         await tx.execute(sql`
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
-                                            condition, priority, handoff)
+                                            condition, priority, handoff, gates)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${id}::uuid, ${stepIds.get(t.from)!}::uuid,
                   ${stepIds.get(t.to)!}::uuid, ${t.labelEn ?? null}, ${t.labelAr ?? null},
                   ${t.requiresApproval}, ${JSON.stringify(t.allowedRoles)}::jsonb,
-                  ${JSON.stringify(t.condition)}::jsonb, ${t.priority}, ${t.handoff})`);
+                  ${JSON.stringify(t.condition)}::jsonb, ${t.priority}, ${t.handoff},
+                  ${JSON.stringify(t.gates)}::jsonb)`);
       }
 
       await tx.execute(sql`
@@ -654,19 +678,19 @@ export class WorkflowService {
       }
       const trs = (await tx.execute(sql`
         select from_step_id, to_step_id, label_en, label_ar, requires_approval, allowed_roles,
-               condition, priority, handoff
+               condition, priority, handoff, gates
         from workflow_transitions where flow_id = ${id}::uuid`)) as Array<Record<string, unknown>>;
       for (const t of trs) {
         await tx.execute(sql`
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
-                                            condition, priority, handoff)
+                                            condition, priority, handoff, gates)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${copy.id}::uuid,
                   ${map.get(t.from_step_id as string)!}::uuid, ${map.get(t.to_step_id as string)!}::uuid,
                   ${(t.label_en as string) ?? null}, ${(t.label_ar as string) ?? null},
                   ${t.requires_approval as boolean}, ${JSON.stringify(t.allowed_roles)}::jsonb,
                   ${JSON.stringify(t.condition)}::jsonb, ${t.priority as number},
-                  ${(t.handoff as string) ?? 'pool'})`);
+                  ${(t.handoff as string) ?? 'pool'}, ${JSON.stringify(t.gates ?? [])}::jsonb)`);
       }
       return { id: copy.id, flowKey: src.flow_key, version: next.v, status: "draft", copiedFrom: id };
     });
@@ -943,6 +967,14 @@ export class WorkflowService {
       dup.add(k);
     }
     if (errs.length) throw new BadRequestException(errs.join("; "));
+
+    for (const t of dto.transitions) {
+      const unknown = t.gates.filter((g) => !gateByKey(g.gate)).map((g) => g.gate);
+      if (unknown.length)
+        throw new BadRequestException(
+          `'${t.from}' → '${t.to}' uses unknown rule(s): ${unknown.join(", ")}`,
+        );
+    }
 
     for (const st of dto.steps) {
       const bad = st.pages.filter((p) => !isPageKey(p.page)).map((p) => p.page);

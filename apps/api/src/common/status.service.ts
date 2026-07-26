@@ -1,7 +1,8 @@
-import { BadRequestException, ForbiddenException, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import type { Tx } from "../db/db.service.js";
 import { envOf, type Environment } from "./env-guards.js";
+import { runGates, type GateConfig, type GateFailure } from "../modules/workflow/gates.js";
 
 /**
  * THE SINGLE STATUS-WRITE ENTRY POINT (QNEW-64 §7.6.1 / QNEW-75).
@@ -40,6 +41,28 @@ export interface StatusContext {
   tenantId: string | null;
   userId: string | null;
   environment?: Environment;
+  /**
+   * A written justification for bypassing a `warn_override` gate. Supplied by the caller who chose
+   * to override, recorded against the move it permitted. A `block` gate ignores it entirely — the
+   * point of block is that no reason is good enough.
+   */
+  overrideReason?: string | null;
+}
+
+/** Raised when the business rules on a transition are not satisfied. 409, not 400: the request is
+ *  well-formed, the world is not ready for it. */
+export class GateNotSatisfiedException extends ConflictException {
+  constructor(public readonly failures: GateFailure[]) {
+    super({
+      message: failures.map((f) => f.detail).join("; "),
+      gates: failures.map((f) => ({
+        gate: f.gate, label: f.label, detail: f.detail,
+        offending: f.offending, enforcement: f.enforcement,
+      })),
+      // the UI renders this on the disabled button, so it must be enough to act on without a lookup
+      canOverride: failures.every((f) => f.enforcement === "warn_override"),
+    });
+  }
 }
 
 @Injectable()
@@ -129,7 +152,10 @@ export class StatusService {
     const moving = before.filter((b) => b.status_id !== toStatusId);
 
     // ── the guard: is this move one the workspace's workflow actually permits? ──
-    await this.assertTransitionAllowed(tx, ctx, spec, input.entity, moving, toStatusId, input.toCode);
+    /** Gates that were waived on this move, so the log can say what was let through and why. */
+    const overridden = await this.assertTransitionAllowed(
+      tx, ctx, spec, input.entity, moving, toStatusId, input.toCode,
+    );
 
     if (moving.length > 0) {
       const movingIds = sql.join(
@@ -142,9 +168,12 @@ export class StatusService {
       for (const m of moving) {
         await tx.execute(sql`
           insert into status_logs (tenant_id, environment, entity_type, entity_id, status_domain,
-                                   from_status_id, to_status_id, changed_by)
+                                   from_status_id, to_status_id, changed_by,
+                                   override_reason, overridden_gates)
           values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${input.entity}, ${m.id}::uuid, ${spec.domain},
-                  ${m.status_id}::uuid, ${toStatusId}::uuid, ${ctx.userId}::uuid)`);
+                  ${m.status_id}::uuid, ${toStatusId}::uuid, ${ctx.userId}::uuid,
+                  ${overridden.length ? (ctx.overrideReason ?? null) : null},
+                  ${overridden.length ? JSON.stringify(overridden.map((f) => f.gate)) : null}::jsonb)`);
       }
     }
 
@@ -183,8 +212,9 @@ export class StatusService {
     moving: Array<{ id: string; status_id: string | null }>,
     toStatusId: string,
     toCode: string,
-  ): Promise<void> {
-    if (moving.length === 0 || !ctx.tenantId) return;
+  ): Promise<GateFailure[]> {
+    const waived: GateFailure[] = [];
+    if (moving.length === 0 || !ctx.tenantId) return waived;
 
     const active = (await tx.execute(sql`
       select id from workflow_flows
@@ -228,9 +258,12 @@ export class StatusService {
       }
 
       const edge = (await tx.execute(sql`
-        select allowed_roles, handoff from workflow_transitions
+        select allowed_roles, handoff, gates, condition from workflow_transitions
         where flow_id = ${flowId}::uuid and from_step_id = ${fromStep.id}::uuid and to_step_id = ${toStep.id}::uuid
-        limit 1`))[0] as { allowed_roles: string[] | null; handoff: string } | undefined;
+        limit 1`))[0] as {
+        allowed_roles: string[] | null; handoff: string;
+        gates: GateConfig[] | null; condition: Record<string, unknown> | null;
+      } | undefined;
       if (!edge) {
         const fromCode = (await tx.execute(sql`
           select coalesce(i.code, v.code) as code from workflow_steps s
@@ -266,6 +299,21 @@ export class StatusService {
               `only ${edgeRoles.join(" or ")} may perform '${toCode}' from here`,
             );
         }
+      }
+
+      // ── is the business ready for this move? ─────────────────────────────────────────────
+      // Ordered AFTER the role check on purpose: telling someone the lines are unpriced, when they
+      // were never allowed to confirm in the first place, sends them to fix the wrong thing.
+      const gateCfgs = (edge.gates ?? []) as GateConfig[];
+      if (gateCfgs.length) {
+        const failures = await runGates(tx, entity, m.id, gateCfgs);
+        const blocking = failures.filter(
+          (f) => f.enforcement === "block" || !ctx.overrideReason,
+        );
+        if (blocking.length) throw new GateNotSatisfiedException(blocking);
+
+        // everything that failed was overridable AND a reason was given — record what was waived
+        if (failures.length) waived.push(...failures);
       }
 
       // ── custody: who is holding this record now that it has moved ────────────────────────
@@ -318,6 +366,8 @@ export class StatusService {
               due_at           = excluded.due_at,
               updated_at       = now()`);
     }
+
+    return waived;
   }
 
   /** The status a record was at before its most recent move — what "reject and restore" needs

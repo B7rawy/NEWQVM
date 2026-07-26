@@ -295,3 +295,70 @@ if [ -n "$WFI" ]; then
                               where e->>'page'='workshop_requests')")" \
     "a watch placement is visible to the routing predicate (read-only, not hidden)"
 fi
+
+# ── exit gates (0051 / QNEW-89 §4) ──────────────────────────────────────────────────────────────
+# Drives a two-line RFQ where only ONE line gets a winning quote, then tries to confirm. A gate that
+# only returns true/false is useless on a disabled button, so these assert the NAMED offending line
+# as well as the refusal.
+gate_flow(){ # $1 = gates json for the confirm transition
+  wfclean
+  local F=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+    -d '{"flowKey":"smoke-gate","nameAr":"بوابة","nameEn":"Gate","isDefault":true}' \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/graph" -d "{\"selectionCondition\":{},
+   \"steps\":[{\"status\":\"new_rfq\",\"isEntry\":true,\"x\":80,\"y\":100},
+             {\"status\":\"priced\",\"x\":340,\"y\":100},
+             {\"status\":\"confirmed\",\"isTerminal\":true,\"x\":600,\"y\":100}],
+   \"transitions\":[{\"from\":\"new_rfq\",\"to\":\"priced\",\"labelEn\":\"Price\"},
+                   {\"from\":\"new_rfq\",\"to\":\"confirmed\",\"labelEn\":\"Confirm\",\"gates\":$1},
+                   {\"from\":\"priced\",\"to\":\"confirmed\",\"labelEn\":\"Confirm\",\"gates\":$1}]}"
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$F/activate"
+}
+
+half_priced_rfq(){ # two lines, only the first gets a winning quote -> echoes the confirm response
+  local rid tok it qi
+  rid=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"%s","items":[{"partNumber":"AA-1","quantity":1},{"partNumber":"BB-2","quantity":1}]}' "$BR" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  it=$(psql "select id from rfq_items where rfq_id='$rid' order by part_number limit 1")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$it")"
+  qi=$(psql "select id from rfq_vendor_items where rfq_item_id='$it' limit 1")
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$rid/items/$it/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$qi")"
+  curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/confirm" -d '{}'
+}
+
+gate_flow '[{"gate":"all_items_at_status","params":{"status":"priced"},"enforcement":"block"}]'
+GR=$(half_priced_rfq GATE-A)
+ok 1 "$(echo "$GR" | $PY -c "import sys,json;print(1 if json.load(sys.stdin).get('gates') else 0)")" \
+  "a gate refuses the move when the business is not ready"
+ok "BB-2" "$(echo "$GR" | $PY -c "
+import sys,json;g=json.load(sys.stdin)['gates'][0]
+print(g['offending'][0].split(' ')[0] if g['offending'] else 'none')")" \
+  "and NAMES the line standing in the way, so the button can say what to fix"
+ok False "$(echo "$GR" | $PY -c "import sys,json;print(json.load(sys.stdin)['canOverride'])")" \
+  "a block gate cannot be overridden"
+
+gate_flow '[{"gate":"all_items_at_status","params":{"status":"priced"},"enforcement":"warn_override"}]'
+ok True "$(half_priced_rfq GATE-B | $PY -c "import sys,json;print(json.load(sys.stdin)['canOverride'])")" \
+  "the same rule as warn_override offers an override instead"
+
+# enforcement must be resolved when it is STORED: the DB CHECK requires it, so a payload that omits
+# it used to produce a row Postgres refused while the API reported success.
+gate_flow '[{"gate":"min_quotes_per_item","params":{"n":3}}]'
+ok warn_override "$(psql "select distinct e->>'enforcement' from workflow_transitions t,
+                          lateral jsonb_array_elements(t.gates) e where jsonb_array_length(t.gates)>0")" \
+  "a gate saved without an enforcement takes the catalog's default"
+
+wfclean
+psql "delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'GATE-%');
+      delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'GATE-%'));
+      delete from orders where rfq_id in (select id from rfqs where plate_number like 'GATE-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'GATE-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'GATE-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'GATE-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'GATE-%'" > /dev/null
