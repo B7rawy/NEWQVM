@@ -87,6 +87,10 @@ const transitionSchema = z.object({
   priority: z.number().int().min(0).max(999).optional().default(0),
   /** What this move does to custody — see 0049. */
   handoff: z.enum(["pool", "keep", "actor"]).optional().default("pool"),
+  /** Fire this move by itself once its rules hold. Off by default — never inferred. */
+  autoAdvance: z.boolean().optional().default(false),
+  /** Fire automatically at most once per record, so a revisited status does not re-fire it. */
+  autoOnce: z.boolean().optional().default(true),
   /** Exit gates from the code-defined catalog — see gates.ts and 0051. */
   gates: z
     .array(
@@ -511,7 +515,7 @@ export class WorkflowService {
         select t.id,
                coalesce(fi.code, fv.code) as "from", coalesce(ti.code, tv.code) as "to",
                t.label_en, t.label_ar, t.requires_approval, t.allowed_roles, t.condition, t.priority,
-               t.handoff, t.gates
+               t.handoff, t.gates, t.auto_advance, t.auto_once
         from workflow_transitions t
         join workflow_steps fs on fs.id = t.from_step_id
         join workflow_steps ts on ts.id = t.to_step_id
@@ -588,12 +592,12 @@ export class WorkflowService {
         await tx.execute(sql`
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
-                                            condition, priority, handoff, gates)
+                                            condition, priority, handoff, gates, auto_advance, auto_once)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${id}::uuid, ${stepIds.get(t.from)!}::uuid,
                   ${stepIds.get(t.to)!}::uuid, ${t.labelEn ?? null}, ${t.labelAr ?? null},
                   ${t.requiresApproval}, ${JSON.stringify(t.allowedRoles)}::jsonb,
                   ${JSON.stringify(t.condition)}::jsonb, ${t.priority}, ${t.handoff},
-                  ${JSON.stringify(t.gates)}::jsonb)`);
+                  ${JSON.stringify(t.gates)}::jsonb, ${t.autoAdvance}, ${t.autoOnce})`);
       }
 
       await tx.execute(sql`
@@ -696,19 +700,20 @@ export class WorkflowService {
       }
       const trs = (await tx.execute(sql`
         select from_step_id, to_step_id, label_en, label_ar, requires_approval, allowed_roles,
-               condition, priority, handoff, gates
+               condition, priority, handoff, gates, auto_advance, auto_once
         from workflow_transitions where flow_id = ${id}::uuid`)) as Array<Record<string, unknown>>;
       for (const t of trs) {
         await tx.execute(sql`
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
-                                            condition, priority, handoff, gates)
+                                            condition, priority, handoff, gates, auto_advance, auto_once)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${copy.id}::uuid,
                   ${map.get(t.from_step_id as string)!}::uuid, ${map.get(t.to_step_id as string)!}::uuid,
                   ${(t.label_en as string) ?? null}, ${(t.label_ar as string) ?? null},
                   ${t.requires_approval as boolean}, ${JSON.stringify(t.allowed_roles)}::jsonb,
                   ${JSON.stringify(t.condition)}::jsonb, ${t.priority as number},
-                  ${(t.handoff as string) ?? 'pool'}, ${JSON.stringify(t.gates ?? [])}::jsonb)`);
+                  ${(t.handoff as string) ?? 'pool'}, ${JSON.stringify(t.gates ?? [])}::jsonb,
+                  ${(t.auto_advance as boolean) ?? false}, ${(t.auto_once as boolean) ?? true})`);
       }
       return { id: copy.id, flowKey: src.flow_key, version: next.v, status: "draft", copiedFrom: id };
     });

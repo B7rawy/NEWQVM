@@ -56,7 +56,19 @@ export interface StatusContext {
    * point of block is that no reason is good enough.
    */
   overrideReason?: string | null;
+  /**
+   * How many automatic moves deep we already are. THE LOOP GUARD.
+   *
+   * An automatic move can satisfy the conditions of another, which can satisfy the first — and this
+   * engine has a specific closed cycle available to it, because the final approval performs the move
+   * (0052). A hard depth cap is cruder than cycle detection and strictly better behaved: it stops in
+   * bounded time whatever shape the flow is.
+   */
+  autoDepth?: number;
 }
+
+/** Beyond this an automatic chain stops, rather than running an order to the end of the flow. */
+const MAX_AUTO_DEPTH = 3;
 
 /**
  * Raised when a move needs a signature it does not have yet.
@@ -207,13 +219,20 @@ export class StatusService {
         await tx.execute(sql`
           insert into status_logs (tenant_id, environment, entity_type, entity_id, status_domain,
                                    from_status_id, to_status_id, changed_by,
-                                   override_reason, overridden_gates)
+                                   override_reason, overridden_gates, auto_advanced)
           values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${input.entity}, ${m.id}::uuid, ${spec.domain},
-                  ${m.status_id}::uuid, ${toStatusId}::uuid, ${ctx.userId}::uuid,
+                  ${m.status_id}::uuid, ${toStatusId}::uuid,
+                  ${(ctx.autoDepth ?? 0) > 0 ? null : ctx.userId}::uuid,
                   ${overridden.length ? (ctx.overrideReason ?? null) : null},
-                  ${overridden.length ? JSON.stringify(overridden.map((f) => f.gate)) : null}::jsonb)`);
+                  ${overridden.length ? JSON.stringify(overridden.map((f) => f.gate)) : null}::jsonb,
+                  ${(ctx.autoDepth ?? 0) > 0})`);
       }
     }
+
+    // ── did that unlock a move the flow says should happen on its own? ────────────────────────
+    // Runs AFTER the write, inside the same transaction, so an automatic move that turns out to be
+    // impossible rolls back the move that triggered it rather than leaving the record half-advanced.
+    if (moving.length) await this.autoAdvance(tx, ctx, input.entity, moving.map((m) => m.id));
 
     return before.map((b) => ({
       changed: b.status_id !== toStatusId,
@@ -392,7 +411,10 @@ export class StatusService {
       // once on the step, and still single out one arrow for a manager.
       const ownerRoles = (fromStep.owner_roles ?? []) as string[];
       const edgeRoles = (edge.allowed_roles ?? []) as string[];
-      if (ownerRoles.length || edgeRoles.length) {
+      // An automatic move has no person behind it, so "who may do this" is not a question that can
+      // be asked of it. The gates and conditions still apply — the machine gets no shortcut past the
+      // business rules, only past the permissions of a human who is not there.
+      if ((ctx.autoDepth ?? 0) === 0 && (ownerRoles.length || edgeRoles.length)) {
         const held = await this.effectiveRoles(tx, ctx);
         // break-glass: a workspace that has restricted a step to a role nobody holds still needs a
         // way out, and refusing the platform owner would make that unrecoverable without SQL.
@@ -523,6 +545,108 @@ export class StatusService {
     }
 
     return waived;
+  }
+
+  /**
+   * Carry a record forward if the flow says a move should happen by itself and its rules now hold.
+   *
+   * THIS IS EVENT-DRIVEN, NOT SCHEDULED. There is no cron in this repo and none is needed: the
+   * moment that matters is when something CHANGES — a quote lands, a line gets priced — and that
+   * moment is exactly when a status was just written. So the trigger is the transition itself.
+   *
+   * Everything about it is bounded:
+   *   • only transitions explicitly marked `auto_advance` are considered — opt in, never inferred
+   *   • gates and conditions are evaluated normally; the machine gets no shortcut past the rules
+   *   • `auto_once` stops a flow that legitimately revisits a status from re-firing the same move
+   *   • MAX_AUTO_DEPTH stops any chain, including one this engine can genuinely form: the final
+   *     approval performs a move (0052), which could satisfy an auto transition, which could raise
+   *     another approval
+   *   • a failure is SWALLOWED, not raised. The human's move succeeded; an automatic follow-on that
+   *     cannot happen is not their problem to be told about mid-click.
+   */
+  private async autoAdvance(
+    tx: Tx,
+    ctx: StatusContext,
+    entity: StatusEntity,
+    ids: string[],
+  ): Promise<void> {
+    const depth = ctx.autoDepth ?? 0;
+    if (depth >= MAX_AUTO_DEPTH || !ctx.tenantId) return;
+    const spec = ENTITIES[entity];
+    if (!spec) return;
+
+    for (const id of ids) {
+      const bound = (await tx.execute(sql`
+        select flow_id from workflow_record_state
+        where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+          and entity_type = ${entity} and entity_id = ${id}::uuid limit 1`))[0] as
+        { flow_id: string } | undefined;
+      if (!bound) continue; // not executing a flow — nothing to carry it forward
+
+      const [cur] = (await tx.execute(sql`
+        select status_id from ${sql.raw(spec.table)} where id = ${id}::uuid`)) as Array<
+        { status_id: string | null }
+      >;
+      if (!cur?.status_id) continue;
+
+      const candidates = (await tx.execute(sql`
+        select t.condition, t.gates, t.auto_once,
+               coalesce(fi.code, fv.code) as from_code,
+               coalesce(ti.code, tv.code) as to_code
+        from workflow_transitions t
+        join workflow_steps fs on fs.id = t.from_step_id
+        join workflow_steps ts on ts.id = t.to_step_id
+        left join item_statuses fi on fi.id = fs.item_status_id
+        left join vendor_statuses fv on fv.id = fs.vendor_status_id
+        left join item_statuses ti on ti.id = ts.item_status_id
+        left join vendor_statuses tv on tv.id = ts.vendor_status_id
+        where t.flow_id = ${bound.flow_id}::uuid and t.auto_advance
+          and coalesce(fs.item_status_id, fs.vendor_status_id) = ${cur.status_id}::uuid
+        order by t.priority desc, t.created_at asc`)) as Array<{
+        condition: Condition | null; gates: GateConfig[] | null; auto_once: boolean;
+        from_code: string; to_code: string;
+      }>;
+      if (!candidates.length) continue;
+
+      const facts = await gatherFacts(tx, entity, id);
+      for (const c of candidates) {
+        if (!evaluate(c.condition, facts)) continue;
+        const key = `${c.from_code}>${c.to_code}`;
+
+        if (c.auto_once) {
+          const already = (await tx.execute(sql`
+            select 1 from workflow_auto_fired
+            where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+              and entity_type = ${entity} and entity_id = ${id}::uuid and transition_key = ${key}
+            limit 1`))[0];
+          if (already) continue;
+        }
+
+        const failures = await runGates(tx, entity, id, (c.gates ?? []) as GateConfig[]);
+        // an automatic move never overrides anything: nobody is there to give a reason
+        if (failures.length) continue;
+
+        try {
+          if (c.auto_once) {
+            await tx.execute(sql`
+              insert into workflow_auto_fired
+                (tenant_id, environment, entity_type, entity_id, transition_key)
+              values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${entity}, ${id}::uuid, ${key})
+              on conflict do nothing`);
+          }
+          await this.transitionMany(
+            tx,
+            { ...ctx, autoDepth: depth + 1 },
+            { entity, ids: [id], toCode: c.to_code },
+          );
+        } catch {
+          // The human's move already succeeded. An automatic follow-on that cannot happen — an
+          // approval it needs, a role it cannot satisfy — is not something to fail their click over.
+          // It stays where it is and a person picks it up.
+        }
+        break; // one automatic step per pass; the recursion handles the next one
+      }
+    }
   }
 
   /** The status a record was at before its most recent move — what "reject and restore" needs

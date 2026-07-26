@@ -550,3 +550,69 @@ psql "delete from workflow_exceptions;
       delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'EXC-%');
       delete from notification_log where template='vendor_rfq_invite';
       delete from rfqs where plate_number like 'EXC-%'" > /dev/null
+
+# ── auto-advance + loop prevention (0055 / QNEW-89 §5.2 + QNEW-90 item 5) ───────────────────────
+# These are tested together because they must SHIP together: automation without a loop guard walks
+# an order to the end of the flow, or round in a circle, in one transaction nobody asked for.
+auto_flow(){ # $1 = transitions json, $2 = plate suffix -> echoes the status it ENDED at
+  wfclean
+  psql "delete from workflow_auto_fired" > /dev/null
+  local F rid tok it qi
+  F=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+    -d '{"flowKey":"smoke-auto","nameAr":"تلقائي","nameEn":"Auto","isDefault":true}' \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/graph" -d "{\"selectionCondition\":{},
+   \"steps\":[{\"status\":\"new_rfq\",\"isEntry\":true,\"x\":80,\"y\":100},
+             {\"status\":\"priced\",\"x\":340,\"y\":100},
+             {\"status\":\"confirmed\",\"x\":600,\"y\":100},
+             {\"status\":\"processing\",\"isTerminal\":true,\"x\":860,\"y\":100}],
+   \"transitions\":$1}"
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$F/activate"
+  rid=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"AUTO-%s","items":[{"partNumber":"P1","quantity":1}]}' "$BR" "$2")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  it=$(psql "select id from rfq_items where rfq_id='$rid' limit 1")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$it")"
+  qi=$(psql "select id from rfq_vendor_items where rfq_item_id='$it' limit 1")
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$rid/items/$it/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$qi")"
+  echo "$it" > /tmp/qvm_auto_item
+  psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$it'"
+}
+
+ok priced "$(auto_flow '[{"from":"new_rfq","to":"priced","labelEn":"Price"},
+  {"from":"priced","to":"confirmed","labelEn":"Confirm"},
+  {"from":"confirmed","to":"processing","labelEn":"Process"}]' A)" \
+  "nothing moves on its own unless a transition opts in"
+
+ok processing "$(auto_flow '[{"from":"new_rfq","to":"priced","labelEn":"Price"},
+  {"from":"priced","to":"confirmed","labelEn":"Confirm","autoAdvance":true},
+  {"from":"confirmed","to":"processing","labelEn":"Process","autoAdvance":true}]' B)" \
+  "an opted-in chain carries the record forward by itself"
+ok 2 "$(psql "select count(*) from status_logs where entity_id='$(cat /tmp/qvm_auto_item)' and auto_advanced")" \
+  "and each automatic step is recorded AS automatic"
+ok 1 "$(psql "select count(*) from (select distinct changed_by from status_logs
+               where entity_id='$(cat /tmp/qvm_auto_item)' and auto_advanced and changed_by is null) x")" \
+  "with NO actor — attributing it to whoever triggered it would be a false audit record"
+
+# THE LOOP. Two transitions that each satisfy the other, both auto, both allowed to repeat.
+ok confirmed "$(auto_flow '[{"from":"new_rfq","to":"priced","labelEn":"Price"},
+  {"from":"priced","to":"confirmed","labelEn":"Confirm","autoAdvance":true,"autoOnce":false},
+  {"from":"confirmed","to":"priced","labelEn":"Back","autoAdvance":true,"autoOnce":false},
+  {"from":"confirmed","to":"processing","labelEn":"Process"}]' C)" \
+  "a deliberate cycle terminates instead of running forever"
+ok 3 "$(psql "select count(*) from status_logs where entity_id='$(cat /tmp/qvm_auto_item)' and auto_advanced")" \
+  "and stops at the depth cap — exactly 3 automatic moves, not more"
+
+wfclean
+psql "delete from workflow_auto_fired; delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'AUTO-%');
+      delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'AUTO-%'));
+      delete from orders where rfq_id in (select id from rfqs where plate_number like 'AUTO-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'AUTO-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'AUTO-%');
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'AUTO-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'AUTO-%'" > /dev/null
