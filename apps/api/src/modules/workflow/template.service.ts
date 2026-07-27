@@ -122,9 +122,19 @@ export class WorkflowTemplateService implements OnApplicationBootstrap {
   ): Promise<DomainOutcome> {
     return this.dbService.withContext(INTERNAL(environment), async (tx) => {
       // THE UNTOUCHABILITY CHECK, and it is deliberately about the DOMAIN and not about the key. A
-      // workspace that drew its own item flow under any name has answered the question "what is the
-      // workflow here", and dropping a second one in beside it would either fight it for the
+      // workspace that ACTIVATED its own item flow under any name has answered the question "what is
+      // the workflow here", and dropping a second one in beside it would either fight it for the
       // default slot or sit in the list as a decision nobody made.
+      //
+      // A DRAFT IS NOT AN ANSWER, and treating it as one was a real defect: a draft enforces
+      // nothing, so a workspace holding two abandoned empty drafts still had no working flow — which
+      // is the exact situation this feature exists to remove. Production proved it: both workspaces
+      // took the vendor default and neither took the item one, because each was carrying a test
+      // draft somebody had left behind months earlier.
+      //
+      // Provisioning alongside a draft takes nothing away. The draft is untouched and still
+      // activatable; the moment somebody activates it, it takes the default slot from this one by
+      // the ordinary retirement path below.
       // Ordered so the row reported back is the one that actually GOVERNS. A workspace can hold
       // several flows in a domain — a non-default active one, older retired versions — and only the
       // active default is consulted by status.service.ts. Ranking by status alone left two active
@@ -134,6 +144,7 @@ export class WorkflowTemplateService implements OnApplicationBootstrap {
         select id, flow_key, version, status from workflow_flows
         where tenant_id = ${tenantId}::uuid and environment = ${environment}
           and status_domain = ${template.statusDomain}
+          and status = 'active'
         order by (status = 'active' and is_default) desc,
                  case status when 'active' then 0 when 'draft' then 1 else 2 end,
                  version desc

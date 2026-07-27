@@ -302,7 +302,7 @@ ok "refused|refused" "$(psql "begin;
 ok 6 "$(psql "select count(*) from workflow_steps ws
               join workflow_flows f on f.id = ws.flow_id
               join tenants t on t.id = f.tenant_id and t.slug = 'riyadh'
-              where f.flow_key = 'standard'
+              where f.flow_key = 'standard' and f.environment = 'live'
                 and exists (select 1 from jsonb_array_elements(ws.pages) e where e->>'page'='rfqs')")" \
   "routing resolves a page key out of the new {page,mode} shape"
 
@@ -2559,3 +2559,38 @@ ok "1|1" "$(psql "select count(*)||'|'||count(*) filter (where status='active')
                   from workflow_flows f join tenants t on t.id=f.tenant_id
                   where t.slug='riyadh' and f.flow_key='standard'")" \
   "and the suite leaves the workspace with exactly one standard item flow, active"
+
+# ── a draft does not count as "this workspace already has a workflow" ────────────────────────────
+# The untouchability rule protects a workspace that answered "what is the workflow here" for itself.
+# A DRAFT has not answered it — a draft enforces nothing — so a workspace holding an abandoned one
+# was skipped by provisioning and left with no working flow at all, which is the exact situation
+# this feature exists to remove. Found on production: both workspaces took the vendor default and
+# neither took the item one, because each was carrying a test draft left behind months earlier.
+psql "delete from workflow_flows where flow_key='smoke-leftover-draft'" > /dev/null
+DRAFTT=$(psql "select id from tenants where slug='riyadh'")
+psql "insert into workflow_flows (tenant_id, environment, flow_key, version, name_en, name_ar,
+        status_domain, status, is_default)
+      values ('$DRAFTT'::uuid, 'sandbox', 'smoke-leftover-draft', 1, 'Left behind', 'مهملة',
+              'item', 'draft', false)" > /dev/null
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/provision" -H 'X-Environment: sandbox' -d '{}' \
+  > /dev/null 2>&1; psql "select count(*) from workflow_flows
+     where tenant_id='$DRAFTT'::uuid and environment='sandbox' and status_domain='item'
+       and status='active' and is_default")" \
+  "an abandoned draft does not stop a workspace getting its default flow"
+ok 1 "$(psql "select count(*) from workflow_flows where flow_key='smoke-leftover-draft' and status='draft'")" \
+  "and the draft it was carrying is left exactly where it was"
+# Children before parents, and record_state before either: workflow_record_state carries a composite
+# FK to the flow, so deleting the flow first fails on the constraint — silently, behind > /dev/null —
+# and leaves an ACTIVE sandbox flow that makes the next run's routing counts wrong.
+psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
+      delete from workflow_record_state where environment='sandbox';
+      delete from workflow_transitions where flow_id in (select id from workflow_flows where environment='sandbox');
+      delete from workflow_steps       where flow_id in (select id from workflow_flows where environment='sandbox');
+      delete from workflow_flows where environment='sandbox';
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
+ok 0 "$(psql "select count(*) from workflow_flows where environment='sandbox'")" \
+  "and this block leaves no sandbox flow behind to skew the next run" 
