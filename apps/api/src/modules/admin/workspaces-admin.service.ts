@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, type RlsContext } from "../../db/db.service.js";
+import { WorkflowTemplateService } from "../workflow/template.service.js";
 
 const INTERNAL: RlsContext = { tenantId: null, userId: null, isInternal: true };
 
@@ -23,7 +24,10 @@ export const updateWorkspaceSchema = z.object({
 /** Platform-only management of workspaces (tenants). The tenant is the root of the hierarchy. */
 @Injectable()
 export class WorkspacesAdminService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly workflowTemplate: WorkflowTemplateService,
+  ) {}
 
   /** Every workspace, with quick counts — the super-admin table. */
   async list() {
@@ -40,17 +44,24 @@ export class WorkspacesAdminService {
   }
 
   async create(actorUserId: string, dto: z.infer<typeof createWorkspaceSchema>) {
-    return this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
+    const t = await this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
       const clash = (
         (await tx.execute(sql`select 1 from tenants where slug = ${dto.slug} limit 1`)) as Array<unknown>
       )[0];
       if (clash) throw new ConflictException(`workspace slug '${dto.slug}' is already taken`);
-      const [t] = (await tx.execute(sql`
+      const [row] = (await tx.execute(sql`
         insert into tenants (name, slug, created_by, updated_by)
         values (${dto.name}, ${dto.slug}, ${actorUserId}::uuid, ${actorUserId}::uuid)
         returning id, slug`)) as Array<{ id: string; slug: string }>;
-      return { id: t.id, slug: t.slug };
+      return row;
     });
+
+    // A NEW WORKSPACE ARRIVES WITH ITS WORKFLOW, not with an empty canvas. Deliberately OUTSIDE the
+    // transaction above: the flow is provisioned in its own transaction so that a workspace is
+    // never half-created, and it is idempotent, so the boot-time pass picks up anything that failed
+    // here rather than leaving the workspace permanently without one.
+    const flows = await this.workflowTemplate.ensure(t.id, "live");
+    return { id: t.id, slug: t.slug, workflows: flows };
   }
 
   async get(id: string) {

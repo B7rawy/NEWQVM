@@ -1316,8 +1316,12 @@ export class WorkflowService {
   /**
    * Activation is stricter than saving: a draft may be half-drawn, but a LIVE flow that can wedge a
    * record is the failure mode this whole design exists to prevent.
+   *
+   * PUBLIC, not private, so that WorkflowTemplateService can put the standard flow through exactly
+   * this gate before activating it. A second copy of these rules is how a provisioned flow would
+   * end up live in a shape the Activate button itself would have refused.
    */
-  private async assertActivatable(
+  async assertActivatable(
     tx: Tx,
     id: string,
     flow: { is_default: boolean; selection_condition: unknown },

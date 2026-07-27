@@ -1,4 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, Post, Put, Req,
+  UseGuards,
+} from "@nestjs/common";
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
@@ -8,6 +11,7 @@ import {
   actionEntrySchema, assistSchema, createFlowSchema, placementSchema, saveGraphSchema,
   WorkflowService,
 } from "./workflow.service.js";
+import { WorkflowTemplateService } from "./template.service.js";
 
 /**
  * /admin/workflows — authoring surface for the workflow engine (QNEW-64).
@@ -26,7 +30,10 @@ import {
 @UseGuards(AuthGuard, RolesGuard)
 @PlatformOnly()
 export class WorkflowController {
-  constructor(private readonly svc: WorkflowService) {}
+  constructor(
+    private readonly svc: WorkflowService,
+    private readonly template: WorkflowTemplateService,
+  ) {}
 
   private ctx(req: Request) {
     const c = getContext(req);
@@ -123,6 +130,40 @@ export class WorkflowController {
   @Get("webhook-secret")
   webhookSecret(@Req() req: Request) {
     return this.svc.webhookSecret(this.ctx(req));
+  }
+
+  /**
+   * Make sure this workspace has its standard flows. IDEMPOTENT, and it never touches a workspace
+   * that already has one — see the header of template.service.ts.
+   *
+   * It exists as a route even though the same code runs at boot and at workspace creation, because
+   * "did this workspace get one?" is a question somebody will ask about a workspace that was
+   * created while the API was down or restored from a backup, and the honest answer to it is a
+   * button rather than a redeploy.
+   *
+   * Declared BEFORE @Get(":id") / @Post(":id/...") for the reason action-library is: a literal
+   * segment loses to a parameter registered first.
+   */
+  @Post("provision")
+  provision(@Req() req: Request) {
+    const c = this.ctx(req);
+    if (c.platformRole !== "super_admin")
+      throw new ForbiddenException("only a super admin can provision a workspace's workflow");
+    if (!c.tenantId)
+      throw new BadRequestException("pick a workspace first — a flow belongs to one workspace");
+    return this.template.ensure(c.tenantId, c.environment ?? "live");
+  }
+
+  /**
+   * Put this workspace's flow back to the standard one, as a NEW VERSION.
+   *
+   * Not a DELETE and not a PUT on an existing flow: the active flow is frozen by the database, and
+   * records already moving stay bound to the version they entered under. The response says how many
+   * those are so the screen can repeat it rather than imply otherwise.
+   */
+  @Post("reset")
+  reset(@Req() req: Request, @Body() body: { statusDomain?: "item" | "vendor" }) {
+    return this.template.reset(this.ctx(req), body?.statusDomain === "vendor" ? "vendor" : "item");
   }
 
   @Get(":id")

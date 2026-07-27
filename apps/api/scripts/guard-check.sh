@@ -17,6 +17,18 @@ AR=(-H "Authorization: Bearer $ATOK" -H "X-Tenant: riyadh" -H "Content-Type: app
 psql(){ docker exec qvm_postgres psql -U qvm -d qvm_platform -tA -c "$1"; }
 ok(){ if [ "$1" = "$2" ]; then echo "  PASS | $3"; else echo "  FAIL | $3  (got '$2' want '$1')"; fi; }
 
+# Every workspace now ARRIVES with an active default flow (template.ts / template.service.ts), and
+# nearly every test below installs a default flow of its own. Two active defaults in one status
+# domain is a unique-index violation (workflow_flows_default_uq), so wfclean PARKS the standard
+# flows back to 'draft' and wfrestore puts them back at the end of the file.
+#
+# Parked, not deleted: the standard flow is the workspace's real configuration and carries its
+# version history, and a test suite that deletes a customer's workflow to make room for its own is
+# one bad `psql` away from doing it somewhere that matters. Parking also keeps the existing "with NO
+# active workflow …" checks below honest — permissive-until-configured is still a real property, and
+# it is still asserted, on a workspace that genuinely has nothing active.
+STD_KEYS="'standard','standard-vendor'"
+
 wfclean(){
   psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
         alter table workflow_steps disable trigger trg_workflow_steps_freeze;
@@ -25,9 +37,28 @@ wfclean(){
         delete from workflow_steps       where flow_id in (select id from workflow_flows where flow_key like 'smoke-%');
         delete from workflow_record_state where flow_id in (select id from workflow_flows where flow_key like 'smoke-%');
         delete from workflow_flows where flow_key like 'smoke-%';
+        update workflow_flows set status='draft' where flow_key in ($STD_KEYS) and status='active';
         alter table workflow_flows enable trigger trg_workflow_flows_freeze;
         alter table workflow_steps enable trigger trg_workflow_steps_freeze;
         alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
+}
+
+# Put the workspace's own workflow back exactly as provisioning left it: the NEWEST version of each
+# standard key active again, older ones untouched (a reset test leaves a retired predecessor behind
+# and it must stay retired).
+#
+# A run that dies partway leaves the standard flows parked as drafts, and nothing repairs that on its
+# own — provisioning skips a workspace that already has a flow, so a restart will not undo it. The
+# repair is to run this suite again: its standard-flow section opens with wfrestore.
+wfrestore(){
+  psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+        with latest as (
+          select distinct on (tenant_id, environment, flow_key) id
+          from workflow_flows where flow_key in ($STD_KEYS)
+          order by tenant_id, environment, flow_key, version desc)
+        update workflow_flows set status='active'
+        where id in (select id from latest) and status='draft';
+        alter table workflow_flows enable trigger trg_workflow_flows_freeze" > /dev/null
 }
 
 # the branch must belong to a workshop LINKED to riyadh, or rfq creation 400s
@@ -265,9 +296,14 @@ ok "refused|refused" "$(psql "begin;
   rollback;" 2>&1 | /usr/bin/grep -o 'refused\|ACCEPTED' | /usr/bin/paste -sd'|' -)" \
   "the shape check refuses the old flat form and an unknown mode"
 
-# routing still resolves through the new shape
-ok 3 "$(psql "select count(*) from workflow_steps ws
-              where exists (select 1 from jsonb_array_elements(ws.pages) e where e->>'page'='rfqs')")" \
+# routing still resolves through the new shape. Read off the workspace's own STANDARD flow, which is
+# provisioned rather than seeded, so the number is a property of the template (template.ts) and not
+# of whatever a developer last drew: six item statuses are placed on the Requests screen.
+ok 6 "$(psql "select count(*) from workflow_steps ws
+              join workflow_flows f on f.id = ws.flow_id
+              join tenants t on t.id = f.tenant_id and t.slug = 'riyadh'
+              where f.flow_key = 'standard'
+                and exists (select 1 from jsonb_array_elements(ws.pages) e where e->>'page'='rfqs')")" \
   "routing resolves a page key out of the new {page,mode} shape"
 
 # A status can now be an `action` station on several screens, so two people pressing two buttons on
@@ -276,25 +312,37 @@ ok 3 "$(psql "select count(*) from workflow_steps ws
 ok 1 "$(/usr/bin/grep -c "order by id for update" "$(cd "$(dirname "$0")/.." && pwd)/src/common/status.service.ts")" \
   "the status gateway locks the rows it is about to move"
 
-# §3.4 — the canonical case: ONE status, two stations, two different roles
-WFI=$(psql "select id from workflow_flows where flow_key='insurance' limit 1")
-if [ -n "$WFI" ]; then
-  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WFI/placement" \
-    -d '{"status":"priced","pages":[{"page":"rfqs","mode":"action"},{"page":"workshop_requests","mode":"watch"}]}'
-  ok "action|watch" "$(psql "select string_agg(e->>'mode', '|' order by e->>'page')
-                             from workflow_steps s
-                             join item_statuses i on i.id = s.item_status_id,
-                             lateral jsonb_array_elements(s.pages) e
-                             where i.code='priced' and s.flow_id='$WFI'")" \
-    "one status can be ACTION on the desk that owns it and WATCH on the portal tracking it"
+# §3.4 — the canonical case: ONE status, two stations, two different roles.
+#
+# Built here rather than borrowed from a fixture. This used to reach into a seeded demo flow, which
+# has been removed because it drew statuses the product never writes; and the flow that replaced it
+# is the workspace's REAL, live default, so mutating its routing to prove a point about routing
+# would be changing live configuration from a test.
+wfclean
+WFI=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-place","nameAr":"أماكن","nameEn":"Placement","isDefault":false}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WFI/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced"},{"from":"priced","to":"confirmed"}]}'
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WFI/placement" \
+  -d '{"status":"priced","pages":[{"page":"rfqs","mode":"action"},{"page":"workshop_requests","mode":"watch"}]}'
+ok "action|watch" "$(psql "select string_agg(e->>'mode', '|' order by e->>'page')
+                           from workflow_steps s
+                           join item_statuses i on i.id = s.item_status_id,
+                           lateral jsonb_array_elements(s.pages) e
+                           where i.code='priced' and s.flow_id='$WFI'")" \
+  "one status can be ACTION on the desk that owns it and WATCH on the portal tracking it"
 
-  # a watch station still SHOWS the record — read-only is not invisible
-  ok 1 "$(psql "select count(*) from workflow_steps ws
-                where ws.flow_id='$WFI'
-                  and exists (select 1 from jsonb_array_elements(ws.pages) e
-                              where e->>'page'='workshop_requests')")" \
-    "a watch placement is visible to the routing predicate (read-only, not hidden)"
-fi
+# a watch station still SHOWS the record — read-only is not invisible
+ok 1 "$(psql "select count(*) from workflow_steps ws
+              where ws.flow_id='$WFI'
+                and exists (select 1 from jsonb_array_elements(ws.pages) e
+                            where e->>'page'='workshop_requests')")" \
+  "a watch placement is visible to the routing predicate (read-only, not hidden)"
+wfclean
 
 # ── exit gates (0051 / QNEW-89 §4) ──────────────────────────────────────────────────────────────
 # Drives a two-line RFQ where only ONE line gets a winning quote, then tries to confirm. A gate that
@@ -2209,3 +2257,305 @@ ok 0 "$(curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$HOKF/graph" -d '{"sel
   | $PY -c "import sys,json;print(1 if 'message' in json.load(sys.stdin) else 0)")" \
   "while an ordinary public https destination still saves"
 wfclean
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# THE STANDARD FLOW — every workspace arrives with one, and can put it back
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# Everything above this line tests the engine with flows written by hand for the occasion. This
+# section tests the flow the product SHIPS: the transcription in template.ts that is provisioned,
+# active, into every workspace. The load-bearing check is the business chain — turning enforcement
+# on is only safe if nothing the product does is refused, and that is not a claim to be reasoned
+# about, it is a claim to be driven end to end.
+wfrestore
+# This section is the only one that drives the chain past the order, so it is the only one that has
+# to take deliveries, invoices, returns and credit notes back out. `psql -c` runs the whole list as
+# ONE transaction, so a single wrong column name silently reverts the lot and the next run inherits
+# the leftovers — which is why the record-state sweep at the end is written as "a binding whose
+# record no longer exists" rather than as another list of ids to keep in step.
+STDLIKE="(select id from rfqs where plate_number like 'STD-%')"
+STDORD="(select id from orders where rfq_id in $STDLIKE)"
+stdclean(){
+  psql "delete from workflow_auto_fired; delete from workflow_action_runs; delete from status_logs;
+        delete from workflow_exceptions;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in $STDLIKE;
+        delete from credit_note_items where credit_note_id in (select id from credit_notes where order_id in $STDORD);
+        delete from return_items where return_id in (select id from returns where order_id in $STDORD);
+        delete from credit_notes where order_id in $STDORD;
+        delete from returns where order_id in $STDORD;
+        delete from return_issues where order_item_id in (select id from order_items where order_id in $STDORD);
+        delete from invoice_items where invoice_id in (select id from invoices where order_id in $STDORD);
+        delete from delivery_items where delivery_id in (select id from deliveries where order_id in $STDORD);
+        delete from invoices where order_id in $STDORD;
+        delete from deliveries where order_id in $STDORD;
+        delete from order_items where order_id in $STDORD;
+        delete from orders where rfq_id in $STDLIKE;
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in $STDLIKE);
+        delete from rfq_vendors where rfq_id in $STDLIKE;
+        delete from rfq_items where rfq_id in $STDLIKE;
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'STD-%';
+        delete from workflow_record_state rs
+         where not exists (select 1 from rfqs        x where x.id = rs.entity_id)
+           and not exists (select 1 from rfq_items   x where x.id = rs.entity_id)
+           and not exists (select 1 from rfq_vendors x where x.id = rs.entity_id)
+           and not exists (select 1 from orders      x where x.id = rs.entity_id)
+           and not exists (select 1 from order_items x where x.id = rs.entity_id)
+           and not exists (select 1 from returns     x where x.id = rs.entity_id)" > /dev/null
+}
+stdclean
+
+STDF=$(psql "select f.id from workflow_flows f join tenants t on t.id=f.tenant_id
+             where t.slug='riyadh' and f.status_domain='item' and f.status='active' and f.is_default")
+ok 1 "$([ -n "$STDF" ] && echo 1 || echo 0)" \
+  "the workspace ALREADY HAS an item workflow — nobody had to draw one"
+ok active "$(psql "select f.status from workflow_flows f join tenants t on t.id=f.tenant_id
+                   where t.slug='riyadh' and f.status_domain='vendor' and f.is_default and f.status='active'")" \
+  "and a VENDOR one too, or every rfq_vendor move would still be ungoverned"
+
+# ── THE LOAD-BEARING CHECK ───────────────────────────────────────────────────────────────────────
+# The complete business chain, with the standard flow ACTIVE and enforcing. Every one of these must
+# SUCCEED. A single refusal here means the template claims something the product does not do, and
+# the whole feature is a way to break a workspace on the day it is created.
+STDR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"STD-CHAIN","items":[{"partNumber":"GP","quantity":4}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$STDR" ] && echo 1 || echo 0)" "with the standard flow live, a request can still be raised"
+
+STDTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+ok 1 "$([ -n "$STDTOK" ] && echo 1 || echo 0)" "…sent to a vendor"
+
+STDIT=$(psql "select id from rfq_items where rfq_id='$STDR' limit 1")
+ok 0 "$(blocked "$(curl -s -X POST "$B/api/quote-access/$STDTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$STDIT")")")" \
+  "…quoted by that vendor (rfq_vendor rfq → priced, on the standard VENDOR flow)"
+
+STDQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$STDIT' limit 1")
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR/items/$STDIT/winning-quote" \
+  -d "$(printf '{"quoteItemId":"%s"}' "$STDQI")")")" \
+  "…a winner picked (rfq_item new_rfq → priced, the arrow the seeded demo flow got wrong)"
+
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR/confirm" -d '{}')")" \
+  "…confirmed into an order"
+STDO=$(psql "select id from orders where rfq_id='$STDR'")
+STDOI=$(psql "select id from order_items where order_id='$STDO' limit 1")
+
+# A PARTIAL delivery deliberately moves nothing, so this proves the arrow is not fired early…
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/orders/$STDO/deliveries" \
+  -d "$(printf '{"items":[{"orderItemId":"%s","qty":2}]}' "$STDOI")")")" \
+  "…delivered in part, which is allowed and moves nothing"
+ok confirmed "$(psql "select s.code from order_items i join item_statuses s on s.id=i.status_id where i.id='$STDOI'")" \
+  "…and the line is still 'confirmed', exactly as it was before the flow was enforcing"
+
+# …and this proves it fires when the line is complete.
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/orders/$STDO/deliveries" \
+  -d "$(printf '{"items":[{"orderItemId":"%s","qty":2}]}' "$STDOI")")")" \
+  "…delivered in full"
+ok delivered "$(psql "select s.code from order_items i join item_statuses s on s.id=i.status_id where i.id='$STDOI'")" \
+  "…which really does take the line to 'delivered'"
+
+# Asserted HERE, while the line is genuinely at 'delivered' and before the return below moves it:
+# the product already answers "raise a return instead", and the template must not have quietly turned
+# that refusal into a permission by drawing an arrow the product never takes.
+ok 1 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions" \
+  -d "$(printf '{"entityType":"order_item","entityId":"%s","kind":"cancellation","reason":"too late"}' "$STDOI")")")" \
+  "a delivered line still refuses a cancellation — the template drew no delivered → cancelled arrow"
+
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/orders/$STDO/invoice" -d '{}')")" \
+  "…invoiced (confirmed → invoice_issued: the order header never reaches 'delivered')"
+
+STDRET=$(curl -s "${AR[@]}" -X POST "$B/api/orders/$STDO/returns" \
+  -d "$(printf '{"items":[{"orderItemId":"%s","qty":1}]}' "$STDOI")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('returnId',''))")
+ok 1 "$([ -n "$STDRET" ] && echo 1 || echo 0)" "…returned"
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/returns/$STDRET/credit-note" -d '{}')")" \
+  "…and credited — the one arrow return → credit_note_issued serving both the line and the document"
+
+# The whole chain, read back off the audit trail rather than off the responses: eleven moves, none
+# of them refused, every one of them an arrow the template draws.
+ok 0 "$(psql "select count(*) from status_logs l
+              left join item_statuses fi on fi.id=l.from_status_id
+              left join vendor_statuses fv on fv.id=l.from_status_id
+              left join item_statuses ti on ti.id=l.to_status_id
+              left join vendor_statuses tv on tv.id=l.to_status_id
+              where coalesce(ti.code, tv.code) is null")" \
+  "and every move it made resolved to a real status, start to finish"
+
+# ── THE ARROWS THE HAPPY PATH DOES NOT WALK ──────────────────────────────────────────────────────
+# Insurance, and a cancellation approved on a confirmed order. Both were verified against the live
+# product before the template was drawn; here they are asserted against the template enforcing.
+STDINS=$(psql "select id from insurance_companies where tenant_id='$RIYADH' limit 1")
+[ -z "$STDINS" ] && STDINS=$(curl -s "${AR[@]}" -X POST "$B/api/insurance/companies" \
+  -d '{"name":"Standard Insurer"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+STDI=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"STD-INS","items":[{"partNumber":"GP","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$STDI/payer" \
+  -d "$(printf '{"payerType":"insurance","insuranceCompanyId":"%s"}' "$STDINS")"
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDI/insurance/send-for-approval")")" \
+  "an insurance request can still be sent to the insurer"
+ok 0 "$(blocked "$(curl -s "${MR[@]}" -X POST "$B/api/rfqs/$STDI/insurance/approve")")" \
+  "and the insurer's approval can still be recorded"
+
+STDC=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"STD-CANCEL","items":[{"partNumber":"GP","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+STDCE=$(curl -s "${AR[@]}" -X POST "$B/api/workflow/exceptions" \
+  -d "$(printf '{"entityType":"rfq","entityId":"%s","kind":"cancellation","reason":"customer changed their mind"}' "$STDC")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok cancelled "$(curl -s "${MR[@]}" -X POST "$B/api/workflow/exceptions/$STDCE/resolve" -d '{"decision":"approve"}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('movedTo'))")" \
+  "and an approved cancellation still lands on 'cancelled' rather than being refused by the flow"
+
+# The other refusal the product ALREADY makes must survive the template too, or drawing it changed
+# the product instead of describing it.
+ok 1 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR/confirm" -d '{}')")" \
+  "and a request already confirmed still refuses a second confirm"
+
+# ── PROVISIONING IS IDEMPOTENT, AND NEVER OVERWRITES ─────────────────────────────────────────────
+STDFB=$(psql "select count(*) from workflow_flows f join tenants t on t.id=f.tenant_id where t.slug='riyadh'")
+PROV=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/provision")
+ok "kept|kept" "$(echo "$PROV" | $PY -c "import sys,json;print('|'.join(r['outcome'] for r in json.load(sys.stdin)))")" \
+  "running provisioning again KEEPS what is there — it does not draw a second copy"
+ok "$STDFB" "$(psql "select count(*) from workflow_flows f join tenants t on t.id=f.tenant_id where t.slug='riyadh'")" \
+  "and the workspace still has exactly the same number of flows"
+ok "$STDF" "$(echo "$PROV" | $PY -c "
+import sys, json
+print(next(r['flowId'] for r in json.load(sys.stdin) if r['statusDomain'] == 'item'))")" \
+  "pointing at the SAME flow, not a replacement with the same drawing"
+
+# A WORKSPACE THAT DREW ITS OWN IS LEFT ALONE. Proved on a workspace created for the purpose, both
+# because the assertion needs a workspace whose only flow is hand-drawn, and because "a new
+# workspace arrives with one" is the other half of the same promise.
+psql "delete from tenants where slug='guard-provision'" > /dev/null 2>&1
+NEWWS=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workspaces" \
+  -d '{"name":"Guard Provisioning","slug":"guard-provision"}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok "item|vendor" "$(psql "select string_agg(status_domain::text, '|' order by status_domain)
+                          from workflow_flows where tenant_id='$NEWWS' and status='active' and is_default")" \
+  "a workspace created 30 seconds ago already has BOTH standard flows, active"
+
+# now give it one of its own instead, and ask provisioning to run again
+psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
+      delete from workflow_transitions where flow_id in (select id from workflow_flows where tenant_id='$NEWWS' and status_domain='item');
+      delete from workflow_steps where flow_id in (select id from workflow_flows where tenant_id='$NEWWS' and status_domain='item');
+      delete from workflow_flows where tenant_id='$NEWWS' and status_domain='item';
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
+NR=(-H "Authorization: Bearer $ATOK" -H "X-Tenant: guard-provision" -H "Content-Type: application/json")
+OWNF=$(curl -s "${NR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"their-own","nameAr":"مسارهم","nameEn":"Their own flow","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${NR[@]}" -X PUT "$B/api/admin/workflows/$OWNF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"confirmed","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"confirmed","labelEn":"Confirm"}]}'
+curl -s -o /dev/null "${NR[@]}" -X POST "$B/api/admin/workflows/$OWNF/activate"
+ok "$OWNF" "$(curl -s "${NR[@]}" -X POST "$B/api/admin/workflows/provision" | $PY -c "
+import sys, json
+print(next(r['flowId'] for r in json.load(sys.stdin) if r['statusDomain'] == 'item'))")" \
+  "a workspace that drew its OWN flow is left alone — provisioning returns theirs, untouched"
+ok 0 "$(psql "select count(*) from workflow_flows where tenant_id='$NEWWS' and flow_key='standard'")" \
+  "and no standard flow is dropped in beside it"
+
+# Reset republishes the rulebook a whole workspace runs on, so it sits behind the same door as every
+# other write to a flow: platform staff may look, only a super admin may change. Needs a NON-super
+# platform member, minted here — the seeded admin is super_admin and would pass the check while
+# proving nothing, and the one the role tests used earlier in this file was deleted with them.
+psql "insert into users (email, full_name, password_hash, is_active)
+      values ('resetcheck@qparts.local','Reset Check','$HASH',true)
+      on conflict (email) do update set is_active=true;
+      insert into platform_members (user_id, role, is_active)
+      select id,'purchasing',true from users where email='resetcheck@qparts.local'
+      on conflict do nothing" > /dev/null
+RTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"resetcheck@qparts.local","password":"admin1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+ok 403 "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/api/admin/workflows/reset" \
+  -H "Authorization: Bearer $RTOK" -H 'X-Tenant: riyadh' -H 'Content-Type: application/json' \
+  -d '{"statusDomain":"item"}')" \
+  "platform staff below super admin cannot reset a workspace's workflow"
+psql "delete from platform_members where user_id in (select id from users where email='resetcheck@qparts.local');
+      delete from users where email='resetcheck@qparts.local'" > /dev/null
+
+# ── RESET PUBLISHES A NEW VERSION; IT DOES NOT EDIT THE LIVE ONE ─────────────────────────────────
+# The whole reason reset is not a button that redraws the active flow: an order halfway through must
+# not have its rules rewritten underneath it.
+STDV1=$(psql "select version from workflow_flows where id='$STDF'")
+INFLIGHT=$(psql "select flow_id from workflow_record_state rs
+                 join rfqs r on r.id = rs.entity_id
+                 where rs.entity_type='rfq' and r.plate_number='STD-CHAIN'")
+ok "$STDF" "$INFLIGHT" "a record raised under the standard flow is bound to the version it entered under"
+
+RES=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/reset" -d '{"statusDomain":"item"}')
+STDF2=$(echo "$RES" | $PY -c "import sys,json;print(json.load(sys.stdin).get('flowId',''))")
+ok $((STDV1 + 1)) "$(echo "$RES" | $PY -c "import sys,json;print(json.load(sys.stdin).get('version'))")" \
+  "reset publishes the NEXT VERSION of the flow"
+ok 1 "$([ "$STDF2" != "$STDF" ] && echo 1 || echo 0)" \
+  "as a different flow row — the active one was not edited"
+ok retired "$(psql "select status from workflow_flows where id='$STDF'")" \
+  "the version it replaced is retired rather than deleted"
+ok active "$(psql "select status from workflow_flows where id='$STDF2'")" "and the new one is live"
+ok 10 "$(psql "select count(*) from workflow_steps where flow_id='$STDF'")" \
+  "the retired version keeps its whole graph, because records are still executing it"
+
+ok "$STDF" "$(psql "select flow_id from workflow_record_state rs
+                    join rfqs r on r.id = rs.entity_id
+                    where rs.entity_type='rfq' and r.plate_number='STD-CHAIN'")" \
+  "and a record already in flight STAYS on the version it started under, not the new one"
+ok 1 "$(echo "$RES" | $PY -c "
+import sys, json
+print(1 if json.load(sys.stdin).get('inFlightKeepingOldRules', 0) > 0 else 0)")" \
+  "which the reset itself reports, so the screen can say it rather than imply otherwise"
+
+# The workspace is still workable after a reset — the new version is the same drawing, so the same
+# move that succeeded before it must succeed after it.
+STDR2=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"STD-AFTER","items":[{"partNumber":"GP","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok "$STDF2" "$(psql "select flow_id from workflow_record_state rs join rfqs r on r.id=rs.entity_id
+                     where rs.entity_type='rfq' and r.plate_number='STD-AFTER'")" \
+  "while a record raised AFTER the reset binds to the new version"
+STDTOK2=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR2/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+STDIT2=$(psql "select id from rfq_items where rfq_id='$STDR2' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$STDTOK2/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$STDIT2")"
+STDQI2=$(psql "select id from rfq_vendor_items where rfq_item_id='$STDIT2' limit 1")
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$STDR2/items/$STDIT2/winning-quote" \
+  -d "$(printf '{"quoteItemId":"%s"}' "$STDQI2")")")" \
+  "and it can be worked exactly as before — a reset restores the drawing, it does not stop the shop"
+
+# ── put the workspace back the way provisioning left it ──────────────────────────────────────────
+# The reset test necessarily leaves a v2 behind. Removing it and un-retiring v1 keeps a repeated run
+# of this suite from stacking versions for ever. The records go FIRST, in their own statement: psql
+# runs a multi-statement -c as one transaction, so a foreign key that bites halfway rolls the whole
+# thing back and leaves the workspace holding the test's leftovers.
+stdclean
+psql "delete from workflow_record_state where flow_id in
+        (select id from workflow_flows where flow_key in ($STD_KEYS) and version > 1);
+      alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
+      delete from workflow_transitions where flow_id in
+        (select id from workflow_flows where flow_key in ($STD_KEYS) and version > 1);
+      delete from workflow_steps where flow_id in
+        (select id from workflow_flows where flow_key in ($STD_KEYS) and version > 1);
+      delete from workflow_flows where flow_key in ($STD_KEYS) and version > 1;
+      update workflow_flows set status='active'
+        where flow_key in ($STD_KEYS) and version = 1 and status = 'retired';
+      delete from workflow_transitions where flow_id in (select id from workflow_flows where tenant_id='$NEWWS');
+      delete from workflow_steps where flow_id in (select id from workflow_flows where tenant_id='$NEWWS');
+      delete from workflow_record_state where tenant_id='$NEWWS';
+      delete from workflow_flows where tenant_id='$NEWWS';
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions enable trigger trg_workflow_transitions_freeze;
+      delete from tenants where id='$NEWWS'" > /dev/null
+stdclean
+ok "1|1" "$(psql "select count(*)||'|'||count(*) filter (where status='active')
+                  from workflow_flows f join tenants t on t.id=f.tenant_id
+                  where t.slug='riyadh' and f.flow_key='standard'")" \
+  "and the suite leaves the workspace with exactly one standard item flow, active"

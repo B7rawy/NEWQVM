@@ -3,6 +3,7 @@ import { WorkflowController } from "./workflow.controller.js";
 import { WorkflowService } from "./workflow.service.js";
 import { WorkflowDigestService } from "./digest.service.js";
 import { WorkflowWebhookDispatchService } from "./webhook-dispatch.service.js";
+import { WorkflowTemplateService } from "./template.service.js";
 
 /**
  * WorkflowDigestService and WorkflowWebhookDispatchService have no controller and are exported to
@@ -20,6 +21,10 @@ import { WorkflowWebhookDispatchService } from "./webhook-dispatch.service.js";
  */
 @Module({
   controllers: [WorkflowController],
-  providers: [WorkflowService, WorkflowDigestService, WorkflowWebhookDispatchService],
+  providers: [WorkflowService, WorkflowDigestService, WorkflowWebhookDispatchService,
+    WorkflowTemplateService],
+  // Exported for ONE caller: creating a workspace has to hand it its standard workflow in the same
+  // breath, or "every workspace has one" would be true only of workspaces that survived a restart.
+  exports: [WorkflowTemplateService],
 })
 export class WorkflowModule {}

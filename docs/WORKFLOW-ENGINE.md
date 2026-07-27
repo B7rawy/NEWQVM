@@ -597,7 +597,86 @@ the `ran_at` default, so a move straddling midnight is measured against, and cou
 
 ---
 
-## 11. What is NOT built
+## 11. The standard flow — every workspace arrives with one
+
+Until this existed, a workspace's workflow started as nothing: an empty canvas, and the only worked
+example in the database was a seeded demo that would have broken the product on the first click if
+anyone had pressed Activate (it drew `new_rfq → tendering → priced`, and nothing in this product
+ever writes `tendering`). The owner's instruction was the obvious one — a workspace should already
+HAVE its working flow, anyone who wants to change it opens it and changes it, and there should be a
+way to put it back.
+
+### The template is CODE (`apps/api/src/modules/workflow/template.ts`)
+
+It sits beside `gates.ts`, `actions.ts` and `pages.ts` for the same reason those do: it is reviewed
+as a diff, next to the service line each arrow claims to describe. Every `TemplateMove` carries a
+`performedBy` naming the endpoint that performs it, so the claim is checkable rather than asserted.
+
+Two flows, because the flow lookup is per `status_domain` and a workspace with only an item flow
+leaves every `rfq_vendor` move ungoverned:
+
+| key | domain | steps | moves | entry | terminal |
+|---|---|---|---|---|---|
+| `standard` | item | 10 | 21 | `new_rfq` | `cancelled`, `credit_note_issued` |
+| `standard-vendor` | vendor | 3 | 2 | `rfq` | `confirmed` |
+
+**The item flow is the UNION of five entities.** `rfq`, `rfq_item`, `order`, `order_item` and the
+`return` document all execute it — the lookup filters on domain only, and the database enforces one
+default per domain. So `confirmed` has four outgoing arrows belonging to three different record
+kinds: `→ delivered` (order line), `→ invoice_issued` (order header), `→ return` (partially
+delivered order line), `→ cancelled` (all of them).
+
+**It contains only statuses the code actually writes** — 10 of the 26 item statuses, 3 of the 14
+vendor ones. Adding a dead status is not harmless decoration: §7's guard is asymmetric, so including
+a status is what switches enforcement on for everything leaving it, and the activation check then
+demands an exit from it.
+
+**Nothing is added that the product does not already do.** No approvals, no gates, no actions, no
+`auto_advance`, no SLA hours, and `owner_roles` empty on every step. Each of those refuses or causes
+something, and the template's whole claim is that turning it on changes nothing. `owner_roles` in
+particular is a permission *and* an activation blocker — activation refuses a role nobody in the
+workspace holds — so a template that guessed at desks would simply fail to provision.
+
+**Page placement is derived, not guessed.** Routing's safety rule (§6) makes partial placement
+dangerous and complete placement safe, so each status is placed on exactly the pages that list an
+entity able to hold it. `confirmed` and `cancelled` are on the request screens AND the order
+screens, because both an RFQ header and an order header reach them.
+
+### Provisioning (`template.service.ts`)
+
+Runs at `onApplicationBootstrap` for every existing workspace, and again inside
+`WorkspacesAdminService.create` so a workspace made thirty seconds ago has one too. A migration
+could not do it — the template is TypeScript, and a SQL copy would be a second definition of the
+product's behaviour — and a one-off script would leave whichever workspace nobody remembered.
+
+The rule that outranks everything else: **a workspace that already has a flow is never touched.**
+`ensure` checks for ANY flow in the (workspace, environment, `status_domain`) it is about to fill —
+draft, active or retired — and does nothing if one is there. `POST /admin/workflows/provision`
+exposes the same call for a workspace created while the API was down.
+
+**It arrives ACTIVE, not as a draft**, which is what the owner asked for: it should genuinely BE the
+workspace's workflow, not a suggestion. That is only defensible because the template is a
+transcription, and the transcription is proved by driving the complete chain against it with
+enforcement on (`guard-check.sh`, the section headed THE STANDARD FLOW).
+
+**Live only.** Sandbox is the drawing board (ADR-0012); pre-activating a rulebook in the one
+environment whose purpose is trying rules out would contradict permissive-until-configured.
+
+### Reset (`POST /admin/workflows/reset`)
+
+It publishes a NEW VERSION from the template and activates it, retiring whatever held the default
+slot. It cannot do anything else — an active flow's steps and transitions are frozen by database
+trigger (§4).
+
+The consequence is the point, and the screen says it in the same words: **records already in flight
+are bound to the version they entered under and finish under the rules they started with.** A reset
+that silently re-pointed live orders at a different rulebook would be worse than an edit, because
+the person pressing it believes they are restoring a default, not changing an order. The response
+returns `inFlightKeepingOldRules` so the UI can state the number rather than imply it.
+
+---
+
+## 12. What is NOT built
 
 Verified by reading the code and by grep across `apps/api/src` and `apps/web/src`.
 
@@ -703,16 +782,21 @@ The joins at `workflow.service.ts:167-176` cover `rfq`, `order`, `rfq_item`, `or
 
 ### There is no promote-to-live path
 
-Flows are per-environment, and `newVersion` clones within `envOf(ctx)` (`:428`). A flow built and tested in Sandbox must be rebuilt by hand in Live. `Workflows.tsx:121-126` says so to the user: "Build and test here, then recreate it in Live once you are happy with it."
+Flows are per-environment, and `newVersion` clones within `envOf(ctx)` (`:428`). A flow built and
+tested in Sandbox must be rebuilt by hand in Live, and Sandbox is not provisioned with the standard
+flow either. `Workflows.tsx` says both to the user in the Sandbox banner: "workflows here are
+completely separate from Live, and a workspace is not given the standard flow here."
 
 ---
 
-## 12. Reading order
+## 13. Reading order
 
 1. `apps/api/drizzle/schema/workflow.ts` — the four tables and most of the reasoning.
 2. `apps/api/drizzle/migrations/0047_workflow_engine.sql` → `0048` → `0049` — the constraints and triggers, in the order they were argued out.
 3. `apps/api/src/common/status.service.ts` — the single write path, then the guard at `:170`.
 4. `apps/api/src/modules/workflow/workflow.service.ts` — authoring, `assist` at `:499`, `assertActivatable` at `:758`.
 5. `apps/api/src/modules/workflow/routing.ts` and `pages.ts` — routing and the safety rule.
+5b. `apps/api/src/modules/workflow/template.ts` and `template.service.ts` — the flow every workspace
+    arrives with, and the rules for handing it out and putting it back.
 6. `apps/web/src/pages/admin/WorkflowCanvas.tsx` — the one-document shape as the client sees it.
 7. `apps/api/scripts/guard-check.sh` — the executable spec. Run it against a freshly seeded local stack; it is the fastest way to see the engine actually bite.
