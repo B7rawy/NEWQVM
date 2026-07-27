@@ -787,3 +787,284 @@ for COL in actions gates auto_advance auto_once; do
 done
 
 wfclean
+
+# ── THE RUN LOG GETS A SCREEN (QNEW-90 item 6) ───────────────────────────────────────────────────
+# /workflow/run-log is the ONLY place an action failure is visible. runActions() may never throw, so
+# a rule that breaks leaves the record moved, the flow looking configured, and nothing anywhere
+# saying otherwise. Every check below is a way that visibility could be lost while the suite stayed
+# green: the log showing one half of the story, the failure filter swallowing or inventing rows, the
+# count going blind past the page, the wrong people locked out or let in.
+rlclean(){
+  psql "delete from workflow_action_runs; delete from workflow_exceptions; delete from status_logs;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'RLOG-%');
+        delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'RLOG-%'));
+        delete from orders where rfq_id in (select id from rfqs where plate_number like 'RLOG-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'RLOG-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'RLOG-%');
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'RLOG-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'RLOG-%'" > /dev/null
+}
+wfclean; rlclean
+
+# One flow, all three outcomes, on purpose:
+#   new_rfq → priced    fires on the LINE, and set_field is header-only        → skipped
+#   new_rfq → confirmed fires on the HEADER: shipping_type is writable         → ok
+#                                            client_po is not, on an rfq       → failed
+RLF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-rl","nameAr":"سجل التشغيل","nameEn":"Run log","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RLF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[
+   {"from":"new_rfq","to":"priced","labelEn":"Price","actions":[{"action":"set_field","params":{"field":"shipping_type","value":"express"}}]},
+   {"from":"priced","to":"confirmed","labelEn":"Confirm line"},
+   {"from":"new_rfq","to":"confirmed","labelEn":"Confirm header","actions":[
+      {"action":"set_field","params":{"field":"shipping_type","value":"express"}},
+      {"action":"set_field","params":{"field":"client_po","value":"PO-9"}}]}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$RLF/activate"
+
+RLR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"RLOG-1","items":[{"partNumber":"RLOG-P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+RLTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$RLR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+RLIT=$(psql "select id from rfq_items where rfq_id='$RLR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$RLTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$RLIT")"
+RLQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$RLIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$RLR/items/$RLIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$RLQI")"
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$RLR/confirm" -d '{}'
+
+# BOTH HALVES OR THE SCREEN IS MISNAMED. status_logs answers "what moved", workflow_action_runs
+# answers "what the engine did about it"; a screen headed "Status Logs" that served only one is a
+# lie by omission, and serving only actions is the easier mistake to make.
+ok "action,move" "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?limit=200" \
+  | $PY -c "import sys,json;print(','.join(sorted({r['kind'] for r in json.load(sys.stdin)['rows']})))")" \
+  "the run log serves BOTH the moves and the engine's actions, in one stream"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?limit=200" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin)['rows'];print(1 if all(r['reference'] for r in d if r['entity_type'] in ('rfq','rfq_item')) else 0)")" \
+  "and names the record a human recognises, not a uuid"
+# A move has no outcome because a move that failed was rolled back and never written. Leaving moves
+# in the failure view would render them as failures whose detail is missing.
+ok "action|failed" "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?outcome=failed" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin)['rows'];print('|'.join(sorted({r['kind'] for r in d}))+'|'+'|'.join(sorted({r['outcome'] for r in d})))")" \
+  "outcome=failed narrows to action rows and to failures only"
+# The count is the alarm, so it is taken over the whole log. Computed over the returned page it would
+# read 0 the moment somebody shortened the window — a broken rule reporting itself as healthy.
+ok 1 "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?limit=1" | $PY -c "import sys,json;print(json.load(sys.stdin)['failed'])")" \
+  "the failure count spans the whole log, not just the page returned"
+ok 0 "$(curl -s "${AR[@]}" -H 'X-Environment: sandbox' "$B/api/workflow/run-log" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(len(d['rows'])+d['failed'])")" \
+  "and Live activity is invisible from Sandbox, log and count alike"
+
+# WHO MAY READ IT. Not @PlatformOnly: the person who must act on a failed rule is the workspace's own
+# manager, and hiding the log behind platform staff would mean a workspace learns its flow has been
+# failing for a week by asking us. Not open either — the log spans every record in the workspace.
+RLMGR=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"manager@qparts.local","password":"manager1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+RLADV=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"staff@qparts.local","password":"staff1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "$B/api/workflow/run-log?limit=1" \
+  -H "Authorization: Bearer $RLMGR" -H 'X-Tenant: riyadh')" \
+  "the workspace's own manager can read the run log"
+ok 403 "$(curl -s -o /dev/null -w '%{http_code}' "$B/api/workflow/run-log?limit=1" \
+  -H "Authorization: Bearer $RLADV" -H 'X-Tenant: riyadh')" \
+  "an ordinary workspace user cannot — it spans records that are not theirs"
+
+wfclean; rlclean
+
+# ── THE DAILY CEILING (QNEW-90 item 9) ───────────────────────────────────────────────────────────
+# A cap that blocks is easy; a cap that blocks the right thing, records that it did, and still lets a
+# person's click through is the whole difficulty. Every check below is a way this could go wrong while
+# the suite stayed green: the ceiling failing a legitimate move, the refusal going unrecorded, a
+# refusal spending the allowance it was refused for, one kind of action's ceiling holding down the
+# others, or a busy day reporting itself as a broken flow.
+#
+# lock_record is the subject because its ceiling is the lowest (500 — every success puts an item in
+# front of a human being), so the day can be filled with one INSERT instead of ten thousand.
+capclean(){
+  psql "delete from workflow_action_runs; delete from workflow_exceptions; delete from status_logs;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'CAP-%');
+        delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'CAP-%'));
+        delete from orders where rfq_id in (select id from rfqs where plate_number like 'CAP-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'CAP-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'CAP-%');
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'CAP-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'CAP-%'" > /dev/null
+}
+wfclean; capclean
+
+# The database is the last line: a fifth outcome nothing knows how to render must not be storable.
+ok t "$(psql "select pg_get_constraintdef(oid) like '%capped%' from pg_constraint
+               where conname='workflow_action_runs_outcome_ck'")" \
+  "the outcome column accepts 'capped' as a fourth value, not as a note inside 'skipped'"
+ok 1 "$(psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, action, outcome)
+               select id, 'live', 'rfq_item', gen_random_uuid(), 'lock_record', 'invented' from tenants limit 1" 2>&1 \
+        | /usr/bin/grep -c 'violates check constraint')" \
+  "and still refuses a value the run log has no way to render"
+
+CPF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-cap","nameAr":"سقف يومي","nameEn":"Daily cap","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$CPF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[
+   {"from":"new_rfq","to":"priced","labelEn":"Price","actions":[{"action":"lock_record","params":{"reason":"the price needs a look"}}]},
+   {"from":"priced","to":"confirmed","labelEn":"Confirm line"},
+   {"from":"new_rfq","to":"confirmed","labelEn":"Confirm header","actions":[{"action":"set_field","params":{"field":"shipping_type","value":"express"}}]}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$CPF/activate"
+
+# Spend the whole day's allowance for lock_record. 'ok' rows because those are the ones that count —
+# a run that worked is exactly what the ceiling is counting.
+psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, transition_key,
+        action, params, outcome, detail)
+      select t.id, 'live', 'rfq_item', gen_random_uuid(), 'new_rfq>priced', 'lock_record', '{}'::jsonb,
+             'ok', 'filler: the day is full' from tenants t, generate_series(1, 500) where t.slug='riyadh'" > /dev/null
+
+CPR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"CAP-1","items":[{"partNumber":"CAP-P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+CPTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$CPR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+CPIT=$(psql "select id from rfq_items where rfq_id='$CPR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$CPTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$CPIT")"
+CPQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$CPIT' limit 1")
+CPMOVE=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$CPR/items/$CPIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$CPQI")")
+
+# THE POINT OF THE WHOLE FEATURE, in two checks. A ceiling on follow-up work is not a reason to
+# refuse somebody's correct click: the move was already judged legitimate before any action ran.
+ok 0 "$(blocked "$CPMOVE")" "a workspace at its daily ceiling can still make the move"
+ok priced "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$CPIT'")" \
+  "and the record arrives where it was going"
+ok capped "$(psql "select outcome from workflow_action_runs where entity_id='$CPIT' and action='lock_record'")" \
+  "while the action it would have run is blocked AND recorded, not silently dropped"
+ok 1 "$(psql "select count(*) from workflow_action_runs
+               where entity_id='$CPIT' and action='lock_record' and detail like '%500 of its 500%'")" \
+  "with the count and the ceiling in the line, since the reader is asking why a rule stopped working"
+ok 0 "$(psql "select count(*) from workflow_exceptions where entity_id='$CPIT'")" \
+  "and nothing reached the queue a person works from — a blocked hold is not a quiet hold"
+
+# A refusal that consumed the allowance it was refused for would make the log unable to reconstruct
+# the number that was actually enforced, and would push the count up forever under a runaway flow.
+ok 500 "$(psql "select count(*) from workflow_action_runs where action='lock_record'
+                 and outcome in ('ok','failed') and environment='live'
+                 and tenant_id=(select id from tenants where slug='riyadh')")" \
+  "a capped attempt does not spend allowance — 500 spent, not 501"
+
+# PER KIND, NOT PER WORKSPACE. set_field costs a write; lock_record costs somebody's attention. One
+# shared ceiling would let the cheapest action in a flow switch off the most careful one.
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$CPR/confirm" -d '{}'
+ok express "$(psql "select coalesce(shipping_type,'') from rfqs where id='$CPR'")" \
+  "lock_record being at its ceiling does not stop set_field, which has its own"
+ok ok "$(psql "select outcome from workflow_action_runs where entity_id='$CPR' and action='set_field'")" \
+  "and that run is logged as having worked, on the same flow, in the same minute"
+
+# The run log is where a capped action becomes visible. It must be findable, and it must NOT ring the
+# failure alarm: a busy day is not a broken flow, and an operator who is paged for one stops reading.
+ok "action|capped" "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?outcome=capped" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin)['rows'];print('|'.join(sorted({r['kind'] for r in d}))+'|'+'|'.join(sorted({r['outcome'] for r in d})))")" \
+  "the run log can be asked what the ceiling refused"
+ok 0 "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?limit=1" | $PY -c "import sys,json;print(json.load(sys.stdin)['failed'])")" \
+  "and a capped action is not counted as a failure"
+
+# ONE DAY, not all time. Counting every run ever would turn a containment cap into a lifetime quota:
+# the flow would work for a fortnight and then stop for good, which is not what anybody configured.
+psql "update workflow_action_runs set ran_at = now() - interval '2 days' where detail='filler: the day is full'" > /dev/null
+CPR2=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"CAP-2","items":[{"partNumber":"CAP-P2","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+CPTOK2=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$CPR2/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+CPIT2=$(psql "select id from rfq_items where rfq_id='$CPR2' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$CPTOK2/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$CPIT2")"
+CPQI2=$(psql "select id from rfq_vendor_items where rfq_item_id='$CPIT2' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$CPR2/items/$CPIT2/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$CPQI2")"
+ok ok "$(psql "select outcome from workflow_action_runs where entity_id='$CPIT2' and action='lock_record'")" \
+  "yesterday's runs do not hold today's ceiling down — the window is one day"
+# Midnight in the workspace's business-calendar timezone, not UTC: 'Asia/Riyadh' is the column default
+# and InfraService's own fallback, so for a Saudi product the day turns at 00:00 in Riyadh (21:00 UTC).
+ok "21:00:00" "$(psql "select to_char((select date_trunc('day', now() at time zone z.name) at time zone z.name
+                 from (select coalesce((select n.name from business_calendar_settings b
+                                         join pg_timezone_names n on n.name = b.timezone
+                                        where b.tenant_id=(select id from tenants where slug='riyadh')),
+                                       'Asia/Riyadh') as name) z) at time zone 'UTC', 'HH24:MI:SS')")" \
+  "and the day starts at midnight in the workspace's own timezone, not at midnight UTC"
+
+wfclean; capclean
+
+# ── the run log must not misattribute work (0059) ────────────────────────────────────────────────
+# Every assertion here was a confirmed defect on the screen built for item 6, and every one of them
+# was invisible to the person who built it, because they tested as a platform admin — the one reader
+# for whom the broken join worked. The suite tests as the MANAGER for that reason.
+wfclean
+psql "delete from workflow_action_runs; delete from status_logs" > /dev/null
+RLR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"RLOG-1","items":[{"partNumber":"P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+RLTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$RLR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+RLIT=$(psql "select id from rfq_items where rfq_id='$RLR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$RLTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$RLIT")"
+RLQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$RLIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$RLR/items/$RLIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$RLQI")"
+
+# A platform admin made those moves. The workspace manager must be told SOMETHING true about who —
+# not the label the screen reserves for a vendor arriving with no session at all.
+ok 0 "$(curl -s "${MR[@]}" "$B/api/workflow/run-log?limit=20" | $PY -c "
+import sys, json
+d = json.load(sys.stdin)
+rows = d.get('rows', [])
+# a row with an actor recorded but no label is what rendered as 'no signed-in user'
+print(len([r for r in rows if r.get('has_actor') and not r.get('actor_name')]) if rows else 'no rows')")" \
+  "a workspace reader is never told a named colleague's move had no signed-in user"
+ok 1 "$(curl -s "${MR[@]}" "$B/api/workflow/run-log?limit=20" | $PY -c "
+import sys, json
+rows = json.load(sys.stdin).get('rows', [])
+print(1 if any(r.get('actor_name') for r in rows) else 0)")" \
+  "and does get a real label back — platform staff resolve to a role, not to nothing"
+
+# Both source tables default their timestamp to now(), which is the TRANSACTION timestamp, so a move
+# and everything it caused tie exactly. Ordering has to be deterministic anyway.
+ok 1 "$(for i in 1 2 3; do curl -s "${MR[@]}" "$B/api/workflow/run-log?limit=20" | $PY -c "
+import sys, json
+print('|'.join(r['kind'] + ':' + str(r.get('group_key')) for r in json.load(sys.stdin).get('rows', [])))"; done | /usr/bin/sort -u | /usr/bin/wc -l | /usr/bin/tr -d ' ')" \
+  "the same log read three times comes back in the same order"
+ok 0 "$(curl -s "${MR[@]}" "$B/api/workflow/run-log?limit=20" | $PY -c "
+import sys, json
+from collections import defaultdict
+pos = defaultdict(list)
+for i, r in enumerate(json.load(sys.stdin).get('rows', [])):
+    if r.get('group_key'): pos[r['group_key']].append(r['kind'])
+bad = [k for k, v in pos.items() if 'move' in v and 'action' in v and v.index('move') > v.index('action')]
+print(len(bad))")" \
+  "and a move is listed above the actions it caused — subject before verb"
+
+# An action the engine ran by itself has no actor BY DESIGN. Without the recorded flag the log said
+# 'no signed-in user' for the engine's own work, one line under the move that said 'the workflow'.
+ok t "$(psql "select count(*) > 0 from information_schema.columns
+              where table_name='workflow_action_runs' and column_name='auto_advanced'")" \
+  "an action run records whether the engine or a person triggered it"
+
+# One failure a workspace had once must not light the alarm for the rest of the product's life.
+psql "insert into workflow_action_runs
+        (tenant_id, environment, entity_type, entity_id, transition_key, action, params, outcome, detail, ran_at)
+      select t.id, 'live', 'rfq', '$RLR'::uuid, 'x>y', 'set_field', '{}'::jsonb, 'failed',
+             'stale failure', now() - interval '1 year'
+      from tenants t where t.slug='riyadh'" > /dev/null
+ok 0 "$(curl -s "${MR[@]}" "$B/api/workflow/run-log?limit=5" | $PY -c "
+import sys, json; print(json.load(sys.stdin).get('failed'))")" \
+  "the failure alarm is bounded to a window, so a year-old failure does not light it forever"
+
+psql "delete from workflow_action_runs; delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id='$RLR';
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id='$RLR');
+      delete from rfq_vendors where rfq_id='$RLR'; delete from rfq_items where rfq_id='$RLR';
+      delete from notification_log where template='vendor_rfq_invite'; delete from rfqs where id='$RLR'" > /dev/null
+wfclean

@@ -96,7 +96,7 @@ export const platformNav: NavGroup[] = [
       { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
-      { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
+      { label: "Status Logs", path: "/status-logs", icon: History },
       { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
     ],
   },
@@ -135,7 +135,7 @@ export const platformSystemNav: NavGroup[] = [
   {
     heading: "System",
     items: [
-      { label: "Status Logs", path: "/status-logs", icon: History, soon: true },
+      { label: "Status Logs", path: "/status-logs", icon: History },
       { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
       { label: "Settings", path: "/settings", icon: Settings },
     ],
@@ -194,7 +194,7 @@ export const workspaceNav: NavGroup[] = [
       { label: "Providers", path: "/providers", icon: Handshake, adminOnly: true },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, adminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users, adminOnly: true },
-      { label: "Status Logs", path: "/status-logs", icon: History, soon: true, adminOnly: true },
+      { label: "Status Logs", path: "/status-logs", icon: History, adminOnly: true },
       { label: "Settings", path: "/settings", icon: Settings, adminOnly: true },
     ],
   },

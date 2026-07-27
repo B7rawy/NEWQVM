@@ -407,6 +407,20 @@
       "when": 1785001415113,
       "tag": "0057_workflow_holds",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1785001415114,
+      "tag": "0058_action_daily_cap",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1785001415115,
+      "tag": "0059_run_log_attribution",
+      "breakpoints": true
     }
   ]
 }

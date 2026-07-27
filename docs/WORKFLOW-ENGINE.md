@@ -426,10 +426,45 @@ delivers none of them — the same defect as a padlock that enforces nothing. A 
 problem: outbound HTTP inside the business transaction means a rollback leaves the receiver
 believing something happened.
 
-Every attempt is written to `workflow_action_runs` with `ok` / `failed` / `skipped`. `skipped` is a
-first-class outcome, not an absence: "did not apply to this record" and "broke" are different facts.
+Every attempt is written to `workflow_action_runs` with `ok` / `failed` / `skipped` / `capped` (the
+fourth arrived with the daily ceiling, 0058 — see below). `skipped` is a first-class outcome, not an
+absence: "did not apply to this record" and "broke" are different facts.
 An action whose failure were invisible would be worse than no action, because the flow would look
 configured and quietly not be.
+
+### The run log has a screen (QNEW-90 item 6)
+
+`GET /workflow/run-log?outcome=&limit=` → `apps/web/src/pages/StatusLogs.tsx`, at `/status-logs`.
+
+**One interleaved timeline, not two lists.** `status_logs` answers *what moved*;
+`workflow_action_runs` answers *what the engine did about it, and whether that worked*. Neither is
+legible alone — an action run with no move above it is a verb with no subject — so the two are
+`union all`-ed and ordered by time. Columns that do not apply to a row are NULL rather than invented:
+a **move has no outcome**, because a move that failed was rolled back and never written; an **action
+has no from/to status**, because it moved nothing. `kind` says which a row is. The union also gives
+one honest `limit` — two lists limited separately and merged client-side produce a tail that lies.
+
+**Not on `WorkflowController`.** That class is `@PlatformOnly()`, which is right for authoring a flow
+and wrong for its log: the person who must act on a failed action is the workspace's own manager, and
+hiding this behind platform staff would mean a workspace discovers its flow has been failing for a
+week by asking us. The route is `AuthGuard, RolesGuard` + `@Roles("company_admin")`, mirroring the nav
+(`Status Logs` is `adminOnly` in `workspaceNav`) and letting platform staff through by the existing
+rule. `requireTenantCtx` — the log is per workspace, so an unscoped platform session is asked to pick
+one rather than served a cross-tenant firehose. `tenant_id` is filtered explicitly in the SQL because
+the RLS tenant policy ends in `OR app_is_internal()`.
+
+The failure count is taken over the whole environment, not the returned page, because it is the alarm:
+computed over the page it would read 0 the moment somebody shortened the window. Export is a
+client-side CSV of exactly the rows on screen, in the same wording, following the only other
+Blob/download in the app (`BulkAccountsDialog.tsx`). `occurred_at` is rendered as real ISO-8601 by the
+API, since that column leaves the product in a file somebody opens elsewhere. Unlike
+`status.service.ts` `history()`, this query resolves BOTH status vocabularies, so a `rfq_vendor` move
+does not render as an empty arrow.
+
+**The daily failure digest is deliberately NOT built.** `NotificationsService.send()` records an
+attempt and dispatches nothing, so a digest would promise an email that never arrives — worse than
+telling somebody to look at the screen, and the same defect as `notify` being absent from the action
+catalog above. Until delivery is real, this screen is the notification.
 
 ### A hold is not a cancellation (0057)
 
@@ -466,6 +501,68 @@ A consequence of a move must not retroactively veto the move it followed, nor th
 belonging to the same business operation. `xmin` is the row's writing transaction, so the clause
 reads exactly as intended: somebody else's freeze, recorded earlier, still bites. `guard-check.sh`
 proves both halves — the hold does not eat its own operation, and it does stop the next one.
+
+### A daily ceiling on automated work (0058, QNEW-90 item 9)
+
+Containment, not metering. Nothing is billed and no workspace should feel it while trading normally;
+the cap is there so a flow that has started running away — a loop somebody drew, a condition that
+matches every record — hits a wall inside one day instead of writing until a person notices.
+
+**"Per channel" means per action kind.** There is no email or webhook channel to cap (neither was
+built, see above). The three kinds we have do not cost the same thing, so they do not share a ceiling,
+and what the number tracks is *who pays*:
+
+| Action | Cap/day | Why that number |
+| --- | --- | --- |
+| `set_field` | 10,000 | One UPDATE on one row. Nothing outside the database learns it happened. |
+| `unlock_record` | 2,000 | Touches the queue a person works from, but only ever removes from it. |
+| `lock_record` | 500 | Every success puts an item in front of a human being. Human-scaled, like the benchmark's email ceiling, for the same reason: the scarce resource is attention. |
+
+The numbers live in the catalog beside the code they govern (`actions.ts`), with `DEFAULT_DAILY_CAP =
+500` for any action added later that forgets to declare one — the lowest, so forgetting fails toward
+containment. Not configurable per workspace: a raisable ceiling needs a screen, a rule about who may
+raise it and a record of who did, which is governance built on top of containment.
+
+**Blocked AND logged.** A fourth outcome, `capped`, not `'skipped'` with a note in `detail`.
+`skipped` is a statement about FIT — this action never applied to this record, nothing for anybody to
+do, badged grey. `capped` is a statement about VOLUME — it applied, it would have changed the record,
+and it was refused, so somebody has to decide whether the flow is misconfigured or the day was
+genuinely that busy. Folding the two together would leave the difference legible only to whoever
+thought to read a free-text column, and "what did the engine refuse yesterday" would be answered by
+matching strings. The run log filters on it and badges it amber; it is deliberately **not** counted in
+the failure alarm, because a busy day is not a broken flow.
+
+The check is a fourth branch in `runActions()`'s chain, so the refused attempt still writes its row,
+and it never fails the caller — the move was judged legitimate before any action ran, and a ceiling on
+follow-up work is not a reason to refuse a correct click.
+
+**Counted off `workflow_action_runs`, not off a counter row.** `order_number_counters` was the wrong
+precedent to copy: an order number must be exact and gapless, so it pays for a serialised counter,
+whereas an upsert here would take a row lock held until the surrounding *business* transaction commits
+— every automated action of a kind in the workspace queueing behind the slowest status move in it. A
+counter would also be a second place the same truth lives, and the log is what a person reads. The
+cost of counting instead is that the ceiling is exact only up to concurrency: two transactions can
+each see 499 of 500, so a busy workspace may overshoot by roughly the number of moves in flight. For
+containment that is the right trade. `workflow_action_runs_quota_idx` is partial on
+`outcome in ('ok','failed')`, which is also what makes the check cheap under exactly the conditions it
+exists for — capped rows are not in the index, so a flow hammering the wall does not make the next
+check more expensive.
+
+**Which rows spend allowance:** `ok` and `failed`. Not `skipped` — the action declined itself, and a
+flow whose records are all already on hold would otherwise burn its budget on refusals and then start
+capping the real holds. Not `capped` — a refusal must not consume what it refused, or the log could no
+longer reconstruct the number enforced. A failure does spend: it tried, it may have written something
+before it broke, and a rule failing ten thousand times a day is the runaway being contained.
+
+**Where the day starts:** midnight in the workspace's own `business_calendar_settings.timezone`,
+falling back to `'Asia/Riyadh'` — the column's default and the same fallback `InfraService.load()`
+already uses. No workspace has saved a calendar yet, so in practice the day turns at 00:00 Riyadh
+(21:00 UTC) for a Saudi product, rather than at 3am local from a UTC day. The lookup joins
+`pg_timezone_names` so an unrecognised name falls back instead of raising: `at time zone` throws on a
+zone postgres does not know, and this statement runs inside somebody's status move. There is no
+try/catch around it, because after a failed statement postgres refuses the rest of the transaction —
+a catch could not deliver what it appeared to promise. `now()` is the transaction timestamp and so is
+the `ran_at` default, so a move straddling midnight is measured against, and counted into, one day.
 
 ---
 
