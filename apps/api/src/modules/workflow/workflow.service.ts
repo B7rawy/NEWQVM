@@ -7,6 +7,7 @@ import { AiService } from "../../common/ai.service.js";
 import { ROUTABLE_PAGES, isPageKey, pageByKey } from "./pages.js";
 import { GATES, gateByKey } from "./gates.js";
 import { ACTIONS, actionByKey } from "./actions.js";
+import { validateWebhookUrl } from "./webhook-url.js";
 import { CONDITION_FIELDS, conditionFieldByKey } from "./conditions.js";
 
 /**
@@ -311,6 +312,59 @@ export class WorkflowService {
       this.libraryRows(tx, { ...ctx, tenantId }),
     );
     return { count: rows.length, entries: rows };
+  }
+
+  /**
+   * The key this workspace's webhook deliveries are signed with, and how to check one.
+   *
+   * WITHOUT THIS THE SIGNATURE WOULD BE THEATRE. Every delivery carries an HMAC, but a receiver can
+   * only verify it if somebody can tell the receiver's author what the key is — and nothing else in
+   * this system can read the column. An unverifiable signature is worse than none: it looks like
+   * authentication on the screen and on the wire, and the receiving end ends up trusting the URL,
+   * which is the exact thing the signature exists to stop being enough.
+   *
+   * IT IS A READ, AND IT IS STILL super_admin. `library()` above is readable by any platform staff
+   * because a list of named configurations is not a credential; this is one, and handing it out is
+   * handing out the ability to forge a call that another system will act on. There is deliberately
+   * no rotation endpoint: rotation without a way to publish two valid keys at once is an outage for
+   * every receiver at the moment it is pressed, and the honest version of that feature is bigger
+   * than this ticket.
+   *
+   * THE SECRET IS MINTED IF THIS WORKSPACE HAS NEVER HAD ONE, by an INSERT that names only the
+   * workspace and the environment — the value comes from the column default, which is the database's
+   * own CSPRNG. Nothing in this API can supply one; see the header of migration 0064.
+   */
+  async webhookSecret(ctx: RlsContext & { platformRole?: string | null }) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    const environment = envOf(ctx);
+    return this.dbService.withContext(ctx, async (tx) => {
+      await tx.execute(sql`
+        insert into workflow_webhook_secrets (tenant_id, environment)
+        values (${tenantId}::uuid, ${environment}::environment_type)
+        on conflict (tenant_id, environment) do nothing`);
+      const [row] = (await tx.execute(sql`
+        select secret from workflow_webhook_secrets
+        where tenant_id = ${tenantId}::uuid and environment = ${environment}::environment_type`)) as
+        Array<{ secret: string }>;
+      return {
+        environment,
+        secret: row?.secret ?? null,
+        // Returned rather than left to documentation because the person calling this is, right
+        // then, writing the code that has to verify it. The full scheme — including why the
+        // timestamp is inside the signed message and why the comparison must be constant-time — is
+        // in the header of migration 0064.
+        scheme: {
+          algorithm: "HMAC-SHA256",
+          signedMessage: "<x-qvm-timestamp> + '.' + <raw request body>",
+          headers: {
+            "x-qvm-delivery": "delivery id — identical on every retry; de-duplicate on it",
+            "x-qvm-timestamp": "unix seconds; reject anything more than a few minutes old",
+            "x-qvm-signature": "v1=<hex hmac>",
+          },
+        },
+      };
+    });
   }
 
   /**
@@ -1226,6 +1280,22 @@ export class WorkflowService {
         throw new BadRequestException(
           `'${t.from}' → '${t.to}' uses unknown action(s): ${[...new Set(badActions)].join(", ")}`,
         );
+
+      // A webhook destination is refused HERE as well as at run time, for the same reason the line
+      // above refuses an unknown action key: the run-time guard makes the address SAFE — nothing is
+      // ever queued or sent to it — but it does so silently, weeks later, in a run log nobody is
+      // watching. An admin who types a private address gets no error, saves, activates, and learns
+      // about it when an order crosses the arrow. Two gates for two different failures: this one
+      // stops a mistake being authored, the run-time one stops a name that resolves somewhere else
+      // by the time we dial it.
+      for (const a of t.actions) {
+        if (a.action !== "webhook") continue;
+        const verdict = validateWebhookUrl(String((a.params as Record<string, unknown>)?.url ?? ""));
+        if (!verdict.ok)
+          throw new BadRequestException(
+            `'${t.from}' → '${t.to}' sends a webhook to a destination this server will refuse: ${verdict.reason}`,
+          );
+      }
 
       const unknown = t.gates.filter((g) => !gateByKey(g.gate)).map((g) => g.gate);
       if (unknown.length)

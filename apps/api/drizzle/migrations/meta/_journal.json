@@ -449,6 +449,13 @@
       "when": 1785001415119,
       "tag": "0063_workflow_failure_digest",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1785001415120,
+      "tag": "0064_workflow_webhook_outbox",
+      "breakpoints": true
     }
   ]
 }

@@ -1902,3 +1902,310 @@ psql "update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (se
       delete from users where email='workvendor@qparts.local';
       delete from in_app_notifications; delete from notification_log where channel='in_app';
       delete from workflow_action_runs; delete from status_logs" > /dev/null
+
+# ── THE WEBHOOK ACTION: AN OUTBOX, A GUARD, AND A DISPATCHER (QNEW-90 item 3) ────────────────────
+# `webhook` was held back through 0056 and 0061 while the other four actions shipped, for two
+# objections that are both real and both about something other than "does it call the URL":
+#
+#   (a) IT IS THE FIRST OUTBOUND REQUEST IN THIS SYSTEM WHOSE DESTINATION A USER CHOOSES. There is
+#       exactly one other outbound call in the whole codebase (common/ai.service.ts, to a hostname
+#       written in the source). Unguarded, this action is a "fetch any URL for me" primitive issued
+#       from a process that can reach the database, the other services on the box, and — on any
+#       cloud host — the metadata endpoint that hands out credentials to whoever asks.
+#   (b) A WEBHOOK SENT FROM INSIDE THE BUSINESS TRANSACTION CAN OUTLIVE IT. Tell the receiver, then
+#       roll back, and the receiver has booked a shipment against an order that does not exist.
+#
+# The checks below are grouped by which objection they answer. The ones that matter most are the
+# pair proving a refused move leaves NO delivery behind and a committed one leaves exactly one:
+# that is objection (b) answered by construction rather than by care, and it is the property that
+# silently stops being true the moment anybody moves the send out of the dispatcher.
+whclean(){
+  psql "delete from workflow_webhook_outbox;
+        delete from workflow_action_runs; delete from workflow_exceptions; delete from status_logs;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'HOOK-%');
+        delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'HOOK-%'));
+        delete from orders where rfq_id in (select id from rfqs where plate_number like 'HOOK-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'HOOK-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'HOOK-%');
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'HOOK-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'HOOK-%'" > /dev/null
+}
+runwebhooks(){ (cd "$API_DIR" && ./node_modules/.bin/tsx scripts/run-webhooks.ts 2>/dev/null | /usr/bin/grep '^SUMMARY'); }
+outbox(){ psql "select count(*) from workflow_webhook_outbox"; }
+wfclean; whclean
+
+# ── (a) THE GUARD. Two proof files, folded in whole ──────────────────────────────────────────────
+# The exhaustive table belongs in process, not in shell: forty-odd spellings of "this machine", each
+# a single function call against the real exported guard, is affordable there and would be four
+# checks here. Both files print this file's own PASS/FAIL shape, so their cases land in the totals.
+#
+# EACH IS FOLLOWED BY A CHECK THAT IT RAN. A tsx script that dies on an import error prints nothing,
+# and nothing greps clean — a suite that counts lines would report a silently absent proof as zero
+# failures, which is the shape of every green build that was not testing anything.
+SSRFOUT=$(cd "$API_DIR" && ./node_modules/.bin/tsx scripts/prove-ssrf-guard.ts 2>&1)
+echo "$SSRFOUT" | /usr/bin/grep -E '^  (PASS|FAIL)'
+ok 1 "$([ "$(echo "$SSRFOUT" | /usr/bin/grep -c '^  PASS')" -ge 70 ] && echo 1 || echo 0)" \
+  "the SSRF spelling table really executed — a proof that silently does not run counts as nothing"
+
+DELOUT=$(cd "$API_DIR" && ./node_modules/.bin/tsx scripts/prove-webhook-delivery.ts 2>&1)
+echo "$DELOUT" | /usr/bin/grep -E '^  (PASS|FAIL)'
+ok 1 "$([ "$(echo "$DELOUT" | /usr/bin/grep -c '^  PASS')" -ge 20 ] && echo 1 || echo 0)" \
+  "and so did the one that stands up a real listener and checks the signature on the wire"
+
+# The loose AddressPolicy is what lets that listener be reached at all. It is a test-only value, and
+# this is the check that keeps it one: an `if (process.env.ALLOW_INSECURE_WEBHOOKS)` would be three
+# fewer lines and exactly the switch that gets set on a staging box and inherited by production.
+# Comment lines are stripped before counting: webhook-url.ts DESCRIBES this very check in its own
+# header, and a grep that cannot tell code from the prose about the code would fail on a file that
+# is doing exactly the right thing — which teaches the next reader to loosen the assertion.
+nocomment(){ /usr/bin/grep -vE ':[0-9]+: *(\*|//|#)'; }
+ok 0 "$(/usr/bin/grep -rnE "allowLoopback: true|trustAnyCertificate: true" "$API_DIR/src" | nocomment | /usr/bin/wc -l | /usr/bin/tr -d ' ')" \
+  "no shipped code path can select the policy that permits loopback — it exists only under scripts/"
+
+# The dispatcher is a background job, and the digest's section above asserts the same two facts for
+# the same reason: a "continuous" delivery loop with nothing to fire it is a method nobody calls, and
+# a second registration is a second ticker.
+ok 1 "$(/usr/bin/grep -nE "setInterval" "$API_DIR/src/modules/workflow/webhook-dispatch.service.ts" \
+        | /usr/bin/grep -vE '^[0-9]+: *(\*|//)' | /usr/bin/wc -l | /usr/bin/tr -d ' ')" \
+  "there is a real ticker behind the dispatcher, not a method waiting to be called by hand"
+ok 1 "$(/usr/bin/grep -rl "WorkflowWebhookDispatchService" "$API_DIR/src" | /usr/bin/grep -c "module\.ts$")" \
+  "and exactly ONE module owns it"
+
+# The floor under the guard. validateWebhookUrl is the real check; this is what remains true after a
+# hand-fix on a live database, which is the one path that never goes through TypeScript.
+ok 1 "$(psql "insert into workflow_webhook_outbox (tenant_id, environment, entity_type, entity_id, url)
+               select id, 'live', 'rfq', gen_random_uuid(), 'http://169.254.169.254/latest/meta-data/'
+               from tenants where slug='riyadh'" 2>&1 | /usr/bin/grep -c 'violates check constraint')" \
+  "the database itself refuses a non-https destination, not only the code that writes it"
+
+# ── THE SIGNING KEY ──────────────────────────────────────────────────────────────────────────────
+# A URL is not an authenticator: anyone who reads a flow definition or a proxy log learns it. The
+# signature is how a receiver tells our call from theirs — and it is worth nothing if nobody can be
+# told the key, which is why the endpoint exists at all.
+ok 0 "$(psql "select count(*) from workflow_webhook_secrets where secret !~ '^[0-9a-f]{64,}$'")" \
+  "every signing key is hex from the database's own CSPRNG — none was chosen by a person"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/admin/workflows/webhook-secret" | $PY -c "
+import sys, json
+d = json.load(sys.stdin)
+print(1 if len(d.get('secret') or '') >= 64 and d.get('scheme', {}).get('algorithm') == 'HMAC-SHA256' else 0)")" \
+  "whoever writes the receiving end can be told the key AND the scheme, or the signature is theatre"
+ok 403 "$(code "${MR[@]}" "$B/api/admin/workflows/webhook-secret")" \
+  "and a workspace manager cannot read it — it is a credential, not a setting"
+
+# ── (b) THE OUTBOX: A REFUSED MOVE TELLS NOBODY ──────────────────────────────────────────────────
+# The same composition the actions section uses, because it is the only path in the product where an
+# action provably runs and is then rolled back: pricing the line files a hold, and the hold refuses
+# the later confirm — after the header's actions have already run inside that transaction.
+whclean
+WHF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-hook","nameAr":"ويب هوك","nameEn":"Webhook","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WHF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[
+   {"from":"new_rfq","to":"priced","labelEn":"Price","actions":[{"action":"lock_record","params":{"reason":"the price needs a look"}}]},
+   {"from":"priced","to":"confirmed","labelEn":"Confirm line"},
+   {"from":"new_rfq","to":"confirmed","labelEn":"Confirm header",
+    "actions":[{"action":"webhook","params":{"url":"https://hooks.qvm-guard.invalid/qvm"}}]}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$WHF/activate"
+
+WHR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"HOOK-1","items":[{"partNumber":"HP1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+WHTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$WHR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+WHIT=$(psql "select id from rfq_items where rfq_id='$WHR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$WHTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$WHIT")"
+WHQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$WHIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$WHR/items/$WHIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$WHQI")"
+
+WHCONF=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$WHR/confirm" -d '{}')
+ok 1 "$(echo "$WHCONF" | $PY -c "import sys,json;print(1 if 'on hold' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "a hold refuses the confirm, so the header's actions run and are then rolled back"
+# THE CHECK THE WHOLE DESIGN EXISTS FOR. The webhook action ran — it validated the destination and
+# inserted a row — and the transaction that carried it was refused. A dispatcher that sends from
+# inside the move would already have told the receiver by now.
+ok 0 "$(outbox)" \
+  "and the delivery goes with it: a refused move leaves NO outbox row, so nobody was told"
+
+WHEID=$(psql "select id from workflow_exceptions where entity_id='$WHIT'")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/workflow/exceptions/$WHEID/release" -d '{"note":"looked at"}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$WHR/confirm" -d '{}'
+ok 1 "$(outbox)" "and the same move, once it really commits, leaves exactly ONE"
+ok pending "$(psql "select status from workflow_webhook_outbox")" \
+  "queued as pending — the action's job ends at the row"
+# THE ACTION NEVER SENDS, asserted about the source rather than about the row. The obvious check —
+# "attempts is still 0" — races the server's own ticker, which is armed during this suite and may
+# legitimately have claimed the row in the millisecond since the confirm. That would make a true
+# property flaky, and a suite people learn to re-run is a suite nobody trusts. This cannot race:
+# there is no way to open a socket from a file that can neither import the sender nor reach https.
+ok 0 "$(/usr/bin/grep -cE "postGuarded|https\.request|node:https" "$API_DIR/src/modules/workflow/actions.ts")" \
+  "and it CANNOT send — nothing in actions.ts can open a socket at all"
+ok ok "$(psql "select outcome from workflow_action_runs where action='webhook'")" \
+  "the run log records the action as having queued a delivery"
+ok 1 "$(psql "select count(*) from workflow_action_runs where action='webhook' and detail like 'queued a delivery%'")" \
+  "and says QUEUED rather than sent, because at that moment nothing had dialled anything"
+
+# What actually leaves the building. The delivery id is the row's own id and it is INSIDE the body,
+# which is the copy the signature covers — a receiver de-duplicating on the header alone would be
+# trusting a value nobody authenticated.
+ok "true|new_rfq>confirmed|rfq" "$(psql "select ((payload->>'delivery') = id::text)::text ||'|'||
+       (payload->'transition'->>'key') ||'|'|| (payload->'record'->>'type') from workflow_webhook_outbox")" \
+  "the row's own id is the delivery id in the signed body, beside the move that caused it"
+
+# ── THE DISPATCHER: RETRIED, THEN GIVEN UP ON, THEN VISIBLE ──────────────────────────────────────
+# The destination is a name that cannot resolve, so no request leaves this machine and the failure is
+# the same one a receiver that is simply down produces.
+psql "update workflow_webhook_outbox set next_attempt_at = now()" > /dev/null
+runwebhooks > /dev/null
+ok pending "$(psql "select status from workflow_webhook_outbox")" \
+  "a delivery that fails is kept for another try rather than thrown away"
+ok true "$(psql "select (next_attempt_at > now())::text from workflow_webhook_outbox")" \
+  "and is pushed into the future by the backoff, so a broken receiver is not hammered"
+ok 1 "$(psql "select count(*) from workflow_webhook_outbox where last_error <> ''")" \
+  "with the reason on the row, because 'it did not work' is not an answer"
+
+# RETRIES END. A queue that retries forever is a queue that hides a permanent failure behind an
+# infinite supply of hope. Driven by hand rather than by waiting out a schedule that spans 11 hours.
+for _ in 1 2 3 4 5 6 7 8; do
+  psql "update workflow_webhook_outbox set next_attempt_at = now() where status = 'pending'" > /dev/null
+  runwebhooks > /dev/null
+done
+ok dead "$(psql "select status from workflow_webhook_outbox")" \
+  "a delivery that cannot be made is eventually given up on, not retried for ever"
+ok 6 "$(psql "select attempts from workflow_webhook_outbox")" \
+  "after the attempt ceiling, which is the length of the backoff schedule and not a second constant"
+# A terminal state that is not actually terminal is the worst of both worlds: it reads as "we gave
+# up" on the screen and goes on generating load for ever. Make it due again and run a pass — the
+# claim filters on status='pending', so nothing may move.
+psql "update workflow_webhook_outbox set next_attempt_at = now()" > /dev/null
+runwebhooks > /dev/null
+ok "dead|6" "$(psql "select status||'|'||attempts from workflow_webhook_outbox")" \
+  "and a dead row is never claimed again, however overdue it looks"
+
+# A DEAD DELIVERY MUST BE VISIBLE, IN THE PLACES THAT ALREADY EXIST. The run log is where a failed
+# action is found and the digest is what tells somebody without their going to look; a third screen
+# would mean two answers to "where do I check" and no rule about which is authoritative.
+ok 1 "$(psql "select count(*) from workflow_action_runs where action='webhook_delivery' and outcome='failed'")" \
+  "giving up is written to the run log, under its own key — the flow queued it, the dispatcher lost it"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/workflow/run-log?outcome=failed" | $PY -c "
+import sys, json
+print(len([r for r in json.load(sys.stdin)['rows'] if r.get('action') == 'webhook_delivery']))")" \
+  "and the screen a person opens really renders it"
+
+dgclean
+seedfail "$RIYADH" live webhook_delivery 1
+rundigest > /dev/null
+ok 1 "$(psql "select count(*) from in_app_notifications where kind='digest' and body like 'A call to another system%'")" \
+  "and the daily digest names it in words, rather than leaking the raw key into the one legible message"
+dgclean
+
+# ── THE DESTINATION IS REFUSED BEFORE A ROW EXISTS ──────────────────────────────────────────────
+# The end-to-end half of the SSRF table: not a function call, but a real flow an admin configured
+# with the address that hands out this server's cloud credentials.
+wfclean; whclean
+WHF2=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-hook2","nameAr":"وجهة مرفوضة","nameEn":"Refused","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+# Saved with a LEGITIMATE destination, then rewritten in the database to the forbidden one — because
+# the save path now refuses this address outright and would not let the flow be created. That is not
+# a way around the test, it IS the test: it reproduces a row that got in before the save gate existed,
+# or one written by somebody with database access, and proves the dispatcher refuses it anyway. The
+# save gate stops a mistake being authored; this asserts the layer that stops it being delivered.
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WHF2/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price",
+   "actions":[{"action":"webhook","params":{"url":"https://example.com/hook"}}]}]}'
+psql "update workflow_transitions set actions = jsonb_build_array(jsonb_build_object(
+        'action', 'webhook',
+        'params', jsonb_build_object('url', 'https://169.254.169.254/latest/meta-data/iam/security-credentials/')))
+      where flow_id = '$WHF2'::uuid" > /dev/null
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$WHF2/activate"
+pick_winner HOOK-SSRF > /dev/null
+ok failed "$(psql "select outcome from workflow_action_runs where action='webhook'")" \
+  "a flow pointed at the cloud metadata endpoint fails the action"
+ok 1 "$(psql "select count(*) from workflow_action_runs where action='webhook' and detail like '%metadata%'")" \
+  "naming what was actually being attempted, not a CIDR the reader has to look up"
+ok 0 "$(outbox)" \
+  "and NOTHING is queued — a destination the dispatcher would refuse never becomes a row it retries"
+ok 1 "$(psql "select count(*) from rfq_items i join item_statuses s on s.id=i.status_id
+               join rfqs r on r.id=i.rfq_id where r.plate_number='HOOK-SSRF' and s.code='priced'")" \
+  "while the move itself still happens — a bad destination is a broken rule, not a refused click"
+
+# ── THE DAILY CEILING ────────────────────────────────────────────────────────────────────────────
+# A webhook lands on a machine, not on somebody's attention, so it sits at the high end of the scale
+# beside set_field. High is not absent: each one is a delivery a dispatcher will attempt and retry.
+wfclean; whclean
+WHF3=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-hook3","nameAr":"سقف","nameEn":"Ceiling","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$WHF3/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price",
+   "actions":[{"action":"webhook","params":{"url":"https://hooks.qvm-guard.invalid/qvm"}}]}]}'
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$WHF3/activate"
+psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, transition_key,
+        action, params, outcome, detail)
+      select t.id, 'live', 'rfq_item', gen_random_uuid(), 'new_rfq>priced', 'webhook', '{}'::jsonb,
+             'ok', 'filler: the day is full' from tenants t, generate_series(1, 10000) where t.slug='riyadh'" > /dev/null
+pick_winner HOOK-CAP > /dev/null
+ok capped "$(psql "select outcome from workflow_action_runs where action='webhook' and detail not like 'filler%'")" \
+  "the ten-thousandth delivery in a day is the last one — the ceiling applies to webhook too"
+ok 0 "$(outbox)" \
+  "and a capped action queues nothing, so a runaway flow cannot fill the outbox it was refused from"
+ok 1 "$(psql "select count(*) from rfq_items i join item_statuses s on s.id=i.status_id
+               join rfqs r on r.id=i.rfq_id where r.plate_number='HOOK-CAP' and s.code='priced'")" \
+  "while the move still goes through, because a ceiling on follow-up work is not a veto on the click"
+
+wfclean; whclean
+psql "delete from workflow_webhook_outbox; delete from workflow_action_runs; delete from status_logs;
+      delete from in_app_notifications; delete from notification_log where channel='in_app';
+      delete from workflow_failure_digests" > /dev/null
+
+# ── a webhook destination is refused when it is TYPED, not only when it is dialled ───────────────
+# The dial-time guard is the real defence and is asserted elsewhere: it resolves the name itself and
+# hands the socket the address it judged, so nothing reaches a private network however the name
+# behaves. But safe-later is not told-now. Before this, an admin could save a webhook pointing at
+# 127.0.0.1, activate the flow, and find out weeks later from a run log nobody watches. Two gates,
+# two different failures: this one stops the mistake being authored, the other stops a name that
+# resolves somewhere else by the time we dial it.
+wfclean
+hookrefused(){ # $1 = url, $2 = label
+  local F R
+  F=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+    -d '{"flowKey":"smoke-hook","nameAr":"هوك","nameEn":"Hook","isDefault":false}' \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  R=$(curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/graph" -d "{\"selectionCondition\":{},
+   \"steps\":[{\"status\":\"new_rfq\",\"isEntry\":true,\"x\":80,\"y\":100},{\"status\":\"priced\",\"isTerminal\":true,\"x\":340,\"y\":100}],
+   \"transitions\":[{\"from\":\"new_rfq\",\"to\":\"priced\",\"labelEn\":\"P\",
+     \"actions\":[{\"action\":\"webhook\",\"params\":{\"url\":\"$1\"}}]}]}")
+  psql "delete from workflow_transitions where flow_id='$F'; delete from workflow_steps where flow_id='$F';
+        delete from workflow_flows where id='$F'" > /dev/null
+  ok 1 "$(echo "$R" | $PY -c "import sys,json;print(1 if 'message' in json.load(sys.stdin) else 0)")" \
+    "a webhook to $2 is refused when the flow is saved"
+}
+hookrefused "http://example.com/hook"                  "plain http"
+hookrefused "https://127.0.0.1/hook"                   "loopback"
+hookrefused "https://localhost/hook"                   "the name localhost"
+hookrefused "https://[::1]/hook"                       "IPv6 loopback"
+hookrefused "https://2130706433/hook"                  "127.0.0.1 written as an integer"
+hookrefused "https://169.254.169.254/latest/meta-data" "the cloud metadata service"
+hookrefused "https://10.0.0.5/hook"                    "private 10/8"
+hookrefused "https://192.168.1.1/hook"                 "private 192.168/16"
+hookrefused "https://[fd00::1]/hook"                   "IPv6 unique-local"
+hookrefused "https://user:pass@127.0.0.1/hook"         "credentials in the URL"
+hookrefused "file:///etc/passwd"                       "a file:// URL"
+
+# and a real destination still saves, or the guard is just a wall
+HOKF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-hook","nameAr":"هوك","nameEn":"Hook","isDefault":false}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 0 "$(curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$HOKF/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"P","actions":[{"action":"webhook","params":{"url":"https://example.com/hook"}}]}]}' \
+  | $PY -c "import sys,json;print(1 if 'message' in json.load(sys.stdin) else 0)")" \
+  "while an ordinary public https destination still saves"
+wfclean

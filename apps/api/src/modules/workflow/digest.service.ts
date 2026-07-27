@@ -334,6 +334,13 @@ export class WorkflowDigestService implements OnApplicationBootstrap, OnModuleDe
       lock_record: "Put it on hold",
       unlock_record: "Take it off hold",
       notify: "Tell somebody",
+      webhook: "Call another system",
+      // NOT A CATALOG ENTRY, and it is here for exactly that reason. `webhook` is the action a move
+      // ran — it validated an address and queued a delivery. `webhook_delivery` is what the
+      // dispatcher recorded hours later when that delivery finally gave up, and it is a failure a
+      // workspace has to hear about. Without this line the fallback would render it as the raw key
+      // in the one message whose job is to be legible.
+      webhook_delivery: "A call to another system",
     };
     return NAMES[key] ?? key;
   }

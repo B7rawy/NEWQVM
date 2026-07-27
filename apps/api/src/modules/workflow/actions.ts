@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import type { Tx } from "../../db/db.service.js";
 import type { Environment } from "../../common/env-guards.js";
 import type { NotificationsService } from "../notifications/notifications.service.js";
+import { validateWebhookUrl } from "./webhook-url.js";
 
 /**
  * WHAT A MOVE DOES — QNEW-90 items 3 and 4.
@@ -21,9 +23,23 @@ import type { NotificationsService } from "../notifications/notifications.servic
  * missing, so the row this action writes is read back by this same application on a screen the
  * recipient already has open. That is why it ships now and did not ship then.
  *
- * `webhook` IS STILL ABSENT, and for a reason the notification channel does not share: firing
- * outbound HTTP from inside the business transaction means a rollback leaves the receiver believing
- * something happened. Nothing about in-app delivery fixes that, so it goes on waiting.
+ * `webhook` WAITED FOR AN ANSWER TO TWO OBJECTIONS, AND NOW HAS BOTH.
+ *
+ * THE FIRST WAS ORDERING. Firing outbound HTTP from inside the business transaction tells the
+ * receiver something happened and then lets the transaction roll back — the receiver has booked a
+ * shipment against an order that does not exist, and nothing here knows. Migration 0064 answers it
+ * by construction rather than by care: the action WRITES A ROW to workflow_webhook_outbox in the
+ * caller's own transaction and sends nothing, so a rollback takes the row with it and there is
+ * nothing left to deliver. A separate dispatcher sends what committed.
+ *
+ * THE SECOND WAS THAT THIS IS THE FIRST OUTBOUND REQUEST IN THE SYSTEM WHOSE DESTINATION A USER
+ * CHOOSES. There is exactly one other outbound call in the whole codebase (common/ai.service.ts, to
+ * a hostname written in the source). A webhook whose URL comes from a workflow definition, issued
+ * from a process that can reach the database, the other services on the box and the cloud metadata
+ * endpoint, is a "fetch any URL for me" primitive handed to whoever can edit a flow. webhook-url.ts
+ * is the answer, and it is deliberately a separate file with a separate test: https only, a public
+ * address only, judged at SEND time against what the name actually resolves to, connected to that
+ * same address, and no redirects.
  */
 
 /**
@@ -120,7 +136,7 @@ export interface ActionDef {
  *
  * WHAT THE NUMBERS MEASURE: who pays for the action. The benchmark this came from gives its cheap
  * channels 10,000 a day and email 500, and the reason is not that email is slow — it is that each
- * email lands on somebody. Our four kinds split the same way:
+ * email lands on somebody. Our five kinds split the same way:
  *
  *   set_field      10,000 — one UPDATE on one row of one record. Nothing outside the database ever
  *                           learns it happened, so the only thing a runaway costs is writes.
@@ -138,6 +154,22 @@ export interface ActionDef {
  *                           Deliberately equal to lock_record rather than higher — an unread badge
  *                           that never empties is a queue nobody works, which costs the workspace
  *                           exactly what a pile of unexplained holds costs it.
+ *   webhook        10,000 — the benchmark's cheap-channel number, and it belongs at that end for the
+ *                           reason the whole scale is built on: A WEBHOOK LANDS ON A MACHINE. Ten
+ *                           thousand HTTP requests spread over a day is a rounding error to a
+ *                           receiver built to take them, whereas ten thousand notifications is a
+ *                           person's inbox destroyed. It is not free — each one is a queued delivery
+ *                           a dispatcher will attempt, and retry — which is why it is a ceiling at
+ *                           all rather than no limit; but the scarce resource here is somebody
+ *                           else's bandwidth, not somebody's attention, and those are three orders
+ *                           of magnitude apart.
+ *
+ *                           WHAT THE CEILING COUNTS IS DELIVERIES QUEUED, NOT DELIVERIES MADE. A
+ *                           delivery that fails and is retried five times is one action run against
+ *                           the allowance, because the ceiling is measuring what a FLOW did and the
+ *                           retries are the dispatcher's business. The dispatcher records its own
+ *                           outcomes under a different key (`webhook_delivery`) precisely so a run
+ *                           of failures cannot silently halve the cap a workspace configured.
  *
  * WHAT THE CEILING COUNTS IS ACTION RUNS, NOT PEOPLE TOLD. One `notify` addressed to a step owned by
  * six people is one run against the allowance. That is the right unit: the ceiling exists to stop a
@@ -171,17 +203,24 @@ const WRITABLE: Record<string, Array<{ key: string; labelEn: string; column: str
 };
 
 /**
- * ── WHAT `notify` MAY SAY, AND ABOUT WHAT ────────────────────────────────────────────────────────
+ * ── WHAT AN ACTION MAY SAY ABOUT A RECORD, AND HOW IT READS IT ───────────────────────────────────
  *
- * How to read one record well enough to write a sentence about it, per entity kind. A CURATED map,
- * exactly like WRITABLE above and for the same reason: the alternative is letting an admin name a
- * column, and a message template that can name any column is a way to read any column — including
- * the cost fields a workshop user must never see — out through a channel that then persists it.
+ * How to read one record well enough to describe it, per entity kind. A CURATED map, exactly like
+ * WRITABLE above and for the same reason: the alternative is letting an admin name a column, and a
+ * template that can name any column is a way to read any column — including the cost fields a
+ * workshop user must never see — out through a channel that then persists it.
+ *
+ * TWO ACTIONS READ IT NOW, AND THE SECOND ONE IS WHY THE CURATION MATTERS MOST. `notify` puts these
+ * facts on a screen inside this product, where the reader is at least somebody with an account.
+ * `webhook` puts them in a POST body that leaves the building for an address a workspace admin
+ * chose. Anything reachable through this map is therefore something we have decided is safe to hand
+ * to a third party, which is exactly the decision a "name any column" design would be making by
+ * accident, once, on somebody's behalf.
  *
  * The expressions are interpolated with sql.raw, so nothing in this map may ever come from a
  * request. Every value here is a literal written in this file.
  */
-const NOTIFY_SUBJECT: Record<string, { table: string; reference: string; part: string; page: string }> = {
+const RECORD_FACTS: Record<string, { table: string; reference: string; part: string; page: string }> = {
   rfq: { table: "rfqs", reference: "r.order_number", part: "null", page: "/rfqs" },
   rfq_item: {
     table: "rfq_items",
@@ -405,7 +444,7 @@ export const ACTIONS: ActionDef[] = [
       const audience = String(params.to ?? "assignee_and_step_owners");
       if (!(NOTIFY_AUDIENCES as readonly string[]).includes(audience))
         return { outcome: "failed", detail: `'${audience}' is not an audience this action understands` };
-      const subject = NOTIFY_SUBJECT[entity];
+      const subject = RECORD_FACTS[entity];
       if (!subject) return { outcome: "failed", detail: `a ${entity.replace(/_/g, " ")} cannot be described` };
 
       const alsoTell = String(params.alsoTell ?? "nobody");
@@ -524,6 +563,103 @@ export const ACTIONS: ActionDef[] = [
       return {
         outcome: "ok",
         detail: `told ${recipients.size} ${recipients.size === 1 ? "person" : "people"} (${reasons})`,
+      };
+    },
+  },
+
+  {
+    key: "webhook",
+    labelEn: "Call another system",
+    labelAr: "أبلغ نظاماً آخر",
+    helpEn:
+      "Sends a signed message to another system when the record gets here, so it can react without " +
+      "anybody re-typing anything. The address must be https. Nothing is sent until this move is " +
+      "safely saved — if the move is refused, the other system is never told it happened.",
+    params: [{ key: "url", labelEn: "Destination (https)", type: "text" }],
+    entities: ["rfq", "rfq_item", "order", "order_item"],
+    dailyCap: 10_000,
+    /**
+     * ITS ENTIRE JOB IS TO VALIDATE A DESTINATION AND WRITE ONE ROW. It does not open a socket, it
+     * does not resolve a name, and it does not wait for anything — see the header of this file and
+     * of migration 0064 for why sending from here would be wrong no matter how carefully it was
+     * done. The row it writes lives or dies with the caller's transaction, which is the whole
+     * guarantee: a receiver is only ever told about a move that really committed.
+     *
+     * IT CANNOT THROW. runActions catches, but a queued delivery must never be able to unwind the
+     * move that caused it, so every miss below returns an outcome instead of raising. The INSERT is
+     * the only statement here that could, and every value in it is either produced by this function
+     * or already an enum-typed column of the row we just read — there is no user-supplied value in
+     * it that has not been through validateWebhookUrl first. A try/catch would not help in any
+     * case: after a failed statement postgres refuses the rest of the transaction, so a catch could
+     * not deliver what it appeared to promise. The same reasoning refuseOverDailyCap sets out.
+     *
+     * THE DELIVERY ID IS MINTED HERE, NOT LEFT TO THE COLUMN DEFAULT, so that the same value can go
+     * inside the payload as well as on the row. Only the body is covered by the signature, so a
+     * delivery id that existed only as a header would be a value the receiver cannot trust — and
+     * de-duplicating on an untrusted id is how a replayed request gets processed as a new one.
+     */
+    async run(tx, ctx, entity, id, params) {
+      if (!ctx.tenantId) return { outcome: "failed", detail: "there is no workspace to send from" };
+
+      const verdict = validateWebhookUrl(String(params.url ?? ""));
+      // A bad destination is a configuration error rather than a runtime one, and it is refused
+      // here — before a row exists — so the outbox never fills with deliveries that could not have
+      // gone anywhere. The reason is quoted verbatim because the person reading the run log is the
+      // person who typed the address.
+      if (!verdict.ok) return { outcome: "failed", detail: `that destination was refused — ${verdict.reason}` };
+
+      const subject = RECORD_FACTS[entity];
+      if (!subject) return { outcome: "failed", detail: `a ${entity.replace(/_/g, " ")} cannot be described` };
+
+      // One read for everything the payload says about the record, plus the workspace's own name and
+      // the transaction timestamp. `now()` rather than a JavaScript clock so the `occurredAt` a
+      // receiver sees is the SAME instant status_logs and workflow_action_runs recorded for this
+      // move — three timestamps that disagree by milliseconds are three timestamps nobody can join.
+      const [facts] = (await tx.execute(sql`
+        select ${sql.raw(subject.reference)} as reference,
+               ${sql.raw(subject.part)} as part,
+               (select slug from tenants where id = ${ctx.tenantId}::uuid) as workspace,
+               to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as occurred_at
+        from ${sql.raw(subject.table)} r
+        where r.id = ${id}::uuid`)) as Array<{
+        reference: string | null; part: string | null; workspace: string | null; occurred_at: string;
+      }>;
+      if (!facts) return { outcome: "failed", detail: "the record was not there to describe" };
+
+      const [fromCode, toCode] = ctx.transitionKey.split(">");
+      const deliveryId = randomUUID();
+      // WHAT LEAVES THE BUILDING, in full. Everything here comes from RECORD_FACTS or from the move
+      // itself; there is no way to widen it from a flow definition, which is the point — a payload
+      // an admin could compose would be a way to post any column of any record to any address.
+      const payload = {
+        delivery: deliveryId,
+        event: "workflow.transition",
+        workspace: facts.workspace,
+        environment: ctx.environment,
+        occurredAt: facts.occurred_at,
+        transition: { key: ctx.transitionKey, from: fromCode ?? null, to: toCode ?? null },
+        // Whether a person made this move or the engine carried the record forward on its own. A
+        // receiver that opens a ticket per event needs to know which, or an auto-advance chain
+        // becomes three tickets nobody asked for.
+        automatic: ctx.automatic,
+        record: { type: entity, id, reference: facts.reference, part: facts.part },
+      };
+
+      await tx.execute(sql`
+        insert into workflow_webhook_outbox
+          (id, tenant_id, environment, entity_type, entity_id, transition_key, url, payload)
+        values (${deliveryId}::uuid, ${ctx.tenantId}::uuid, ${ctx.environment}::environment_type,
+                ${entity}::entity_type, ${id}::uuid, ${ctx.transitionKey},
+                ${verdict.url.toString()}, ${JSON.stringify(payload)}::jsonb)`);
+
+      // Says QUEUED, not sent, because that is what happened. A line claiming delivery here would be
+      // wrong twice over: the move has not committed yet, and nothing has dialled anything. The
+      // dispatcher writes its own line under `webhook_delivery` when the attempt actually resolves.
+      return {
+        outcome: "ok",
+        detail:
+          `queued a delivery to ${verdict.url.host} — it is sent once this move is saved, and ` +
+          `logged again when it succeeds or gives up`,
       };
     },
   },

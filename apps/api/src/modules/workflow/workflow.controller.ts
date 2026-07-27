@@ -109,6 +109,22 @@ export class WorkflowController {
     return this.svc.removeLibraryEntry(this.ctx(req), entryId);
   }
 
+  /**
+   * The key this workspace's webhook deliveries are signed with, and how to verify one.
+   *
+   * WITHOUT A ROUTE THE SIGNATURE IS THEATRE. Every delivery carries an HMAC and nothing else in the
+   * system can read the column that produced it, so a receiver would have no way to check one and
+   * would end up trusting the URL — which is the exact thing the signature exists to stop being
+   * enough. The service refuses anyone below super_admin: this is a credential, not a setting.
+   *
+   * Declared BEFORE @Get(":id") for the reason action-library is: a literal segment loses to a
+   * parameter registered first, and "webhook-secret" would be read as a flow id.
+   */
+  @Get("webhook-secret")
+  webhookSecret(@Req() req: Request) {
+    return this.svc.webhookSecret(this.ctx(req));
+  }
+
   @Get(":id")
   get(@Req() req: Request, @Param("id") id: string) {
     return this.svc.get(this.ctx(req), id);
