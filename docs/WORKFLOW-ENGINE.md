@@ -687,17 +687,21 @@ modules are wired together through `approval_requests.transition_key`, and the f
 PERFORMS the move — without that, an approved request would sit there with nothing to unstick it.
 The inbox is `apps/web/src/pages/Approvals.tsx`. See section 10.
 
-### Auto-transitions — EVENT-driven only; still no scheduler
+### ~~Auto-transitions have no scheduler~~ — THERE IS ONE NOW
 
-`auto_advance` (0055) carries a record forward the moment a move satisfies the next arrow, capped at
-three hops, with `auto_once` to stop a flow re-firing the same automatic move every time it
-legitimately returns to an earlier status. Automatic moves are recorded with `auto_advanced = true`
-and `changed_by = NULL` — attributing them to whoever tripped the rule would be a false audit record.
+`auto_advance` (0055) is still event-driven: a record moves the moment a move satisfies the next
+arrow, capped at three hops, with `auto_once` so a flow that legitimately returns to an earlier
+status does not re-fire.
 
-What is still missing is TIME. There is no timer, no queue worker, no cron: grep for `@Cron`,
-`setInterval`, `ScheduleModule`, `node-cron` across `apps/api/src` returns zero hits, and
-`@nestjs/schedule` is not a dependency. A flow still cannot say "after 24 hours in `tendering`, move
-to `unavailable`" — only "as soon as the rules are met".
+What changed is that the repo now has a scheduler at all — two, on the same deliberate shape: one
+`setInterval` armed at boot, one method, and a table that makes running it twice harmless
+(`digest.service.ts` for the daily failure digest, `webhook-dispatch.service.ts` for the outbox).
+Everything a scheduling library would provide — retries, backoff, distributed locking — is answered
+by a unique key instead, so at-least-once delivery and exactly-once reporting are the same thing.
+
+STILL MISSING: a rule that fires on the CLOCK rather than on an event. "After 24 hours in
+`tendering`, move to `unavailable`" remains unexpressible. The machinery to do it now exists; the
+rule does not.
 
 ### Escalation — not built
 
@@ -720,11 +724,13 @@ The guard resolves the applicable flow with `… and status = 'active' and is_de
 `Workflows.tsx` now sends `isDefault: true`. Every flow created before that fix was permanently
 stuck in draft with no way to satisfy `assertActivatable` from any screen.
 
-### "My work" is unreachable for the people custody assigns work to
+### ~~"My work" is unreachable for the people custody assigns work to~~ — FIXED
 
-`WorkflowController` carries `@PlatformOnly()` at class level, so `GET /my-work` and `POST /records/:e/:id/claim` are platform-staff-only. The `/my-work` route is registered for every persona (`App.tsx:122`) but the nav link appears only in `platformNav` and `platformSystemNav` (`nav.tsx:57`, `:110`) — and a non-platform user who reached the page anyway would get a rejected API call.
-
-But custody assigns to `tenant_memberships` roles — `company_admin`, `branch_manager`, `service_advisor` — and `guard-check.sh:215` proves a pooled record lands on a workspace manager. Those users have neither the link nor API access to see it. The personal-queue payoff currently reaches only Qparts staff.
+`WorkflowController` still carries `@PlatformOnly()` at class level, because everything on it is
+flow AUTHORING and that is ours. Two routes are exceptions and are marked `@WorkspaceRoute`:
+`my-work` and `claim`. Custody assigns to `tenant_memberships` roles, so the people it hands work to
+can now see and take it. The suite asserts both halves — a workspace manager gets 200 on `my-work`
+and 403 on creating a flow.
 
 ### Routing reaches six of the seven pages
 
@@ -772,9 +778,13 @@ The joins at `:332-333` are conditioned on `l.status_domain = 'item'`. A `vendor
 
 The joins at `workflow.service.ts:167-176` cover `rfq`, `order`, `rfq_item`, `order_item`. The other six entities the status gateway can track (`rfq_vendor`, `purchase_order`, `delivery`, `return`, `invoice`, `credit_note` — see `ENTITIES` at `status.service.ts:24-35`) appear with `reference: null` and `status: null`.
 
-### One service still bypasses the gateway entirely
+### ~~One service still bypasses the gateway entirely~~ — FIXED
 
-`apps/api/src/modules/insurance/insurance.service.ts:100` does a raw `update rfqs set status_id = …`. It has its own hand-written state machine, but the move produces no `status_logs` row and is not checked against the workflow. Insurance status changes are invisible to My Work, to time-in-status, and to the guard.
+`insurance.service.ts` was the last place doing `update rfqs set status_id` by hand. Its moves left
+no `status_logs` row, were invisible to My Work and to the run log, and no workflow rule applied to
+them. It goes through `StatusService` now; its own hand-written state machine is unchanged, it
+simply stopped writing the status itself. `StatusService` is the single write path with no
+exceptions.
 
 ### No ADR
 
