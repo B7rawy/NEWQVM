@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  ArrowRight, Check, Mail, MessageCircle, MessagesSquare, Plug, Send, ShieldCheck, Users,
+  ArrowRight, Bell, Check, CheckCheck, Inbox, Mail, MessageCircle, MessagesSquare, Plug, Send,
+  ShieldCheck, Users,
 } from "lucide-react";
+import { api } from "../lib/api";
+import { refreshUnread } from "../lib/unread";
 
 /**
  * COMMUNICATIONS PORTAL.
@@ -9,11 +13,196 @@ import {
  * The place a workspace connects its OWN WhatsApp Business number and its OWN Gmail, and then talks
  * to workshops and vendors from inside QVM instead of from a phone and a separate inbox.
  *
- * Nothing is connected yet — the providers are not wired. This page is deliberately honest about
- * that rather than showing a fake inbox: every channel says exactly what it will do and what it
- * still needs. A screen that pretends to be live is worse than one that says "not yet", because the
- * first thing anyone does with a messaging feature is trust it with a message.
+ * TWO KINDS OF THING LIVE HERE, AND THE PAGE MUST NOT BLUR THEM:
+ *
+ *   IN-APP NOTIFICATIONS (top)  — real. They are rows this application writes and reads, so there is
+ *                                 no provider to be missing and nothing being claimed on credit. The
+ *                                 sidebar badge counts exactly what this list shows.
+ *
+ *   WHATSAPP AND GMAIL (below)  — still not connected. The providers are not wired, so no message can
+ *                                 leave QVM through this portal. Those cards describe what each
+ *                                 channel WILL do and what it still needs, and they say so in the
+ *                                 present tense. A screen that pretends to be live is worse than one
+ *                                 that says "not yet", because the first thing anyone does with a
+ *                                 messaging feature is trust it with a message.
  */
+
+/** One row of the in-app inbox, exactly as GET /notifications returns it. */
+interface Note {
+  id: string;
+  title: string;
+  body: string | null;
+  /** An in-app router path; the API refuses anything else at write time. */
+  link: string | null;
+  kind: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+function ago(iso: string): string {
+  const h = (Date.now() - new Date(iso).getTime()) / 36e5;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m ago`;
+  if (h < 48) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+const KIND_LABEL: Record<string, string> = {
+  approval: "Approval",
+  workflow: "Workflow",
+  digest: "Digest",
+  system: "System",
+};
+
+/**
+ * THE IN-APP INBOX — the only part of this page that is connected to anything.
+ *
+ * Marking read tells the badge immediately via refreshUnread(). Waiting for the badge's own poll
+ * would leave the sidebar contradicting the list the reader is looking at, and a count that
+ * disagrees with the screen beside it is how an unread number stops being believed.
+ */
+function InAppInbox() {
+  const [rows, setRows] = useState<Note[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api.get<{ rows: Note[] }>("/notifications?limit=30");
+      setRows(r.rows ?? []);
+      setErr(null);
+    } catch (e) {
+      // Say the read failed. An error rendered as an empty inbox tells the reader they have nothing
+      // waiting, which is a stronger claim than "I could not find out".
+      setErr(e instanceof Error ? e.message : "could not load notifications");
+      setRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function markOne(id: string) {
+    setBusy(true);
+    try {
+      await api.post(`/notifications/${id}/read`);
+      await load();
+      refreshUnread();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markAll() {
+    setBusy(true);
+    try {
+      await api.post("/notifications/read-all");
+      await load();
+      refreshUnread();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const unread = (rows ?? []).filter((n) => !n.read_at).length;
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="flex items-center gap-3 border-b border-line px-4 py-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent text-white">
+          <Bell className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-[14px] font-semibold text-ink">
+            Notifications
+            {unread > 0 && (
+              <span className="ml-2 rounded-full bg-navy px-1.5 py-0.5 text-[10.5px] font-bold leading-none text-white">
+                {unread}
+              </span>
+            )}
+          </h2>
+          <p className="mt-0.5 text-[12px] text-muted">
+            Raised inside QVM and delivered inside QVM — this list needs no provider, which is why it
+            works while the channels below do not.
+          </p>
+        </div>
+        {unread > 0 && (
+          <button disabled={busy} onClick={markAll} className="btn btn-sm shrink-0">
+            <CheckCheck className="h-3.5 w-3.5" /> Mark all read
+          </button>
+        )}
+      </div>
+
+      {err && (
+        <p className="border-b border-line px-4 py-2.5 text-[12.5px] text-accent">{err}</p>
+      )}
+
+      {rows === null ? (
+        <p className="px-4 py-6 text-center text-[12.5px] text-muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <div className="px-4 py-8 text-center">
+          <Inbox className="mx-auto h-5 w-5 text-faint" />
+          <p className="mt-2 text-[13px] font-medium text-ink">Nothing waiting on you</p>
+          <p className="mx-auto mt-0.5 max-w-md text-[12px] leading-relaxed text-muted">
+            Notifications land here when the system needs a person — an approval sitting on your
+            decision, for instance. Empty means empty, not unwired.
+          </p>
+        </div>
+      ) : (
+        <ul>
+          {rows.map((n) => (
+            <li
+              key={n.id}
+              className={`flex items-start gap-3 border-b border-line px-4 py-3 last:border-0 ${
+                n.read_at ? "" : "bg-accent-50/30"
+              }`}
+            >
+              {/* The unread marker is a dot, not a colour alone — colour alone is invisible to a
+                  reader who cannot distinguish it. */}
+              <span
+                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read_at ? "bg-transparent" : "bg-accent"}`}
+                aria-hidden
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-ink">{n.title}</p>
+                {n.body && <p className="mt-0.5 text-[12.5px] leading-relaxed text-sub">{n.body}</p>}
+                <p className="mt-0.5 text-[11px] text-faint">
+                  {KIND_LABEL[n.kind] ?? n.kind} · {ago(n.created_at)}
+                  {n.read_at && " · read"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {n.link && (
+                  <Link
+                    to={n.link}
+                    onClick={() => {
+                      // Opening it IS reading it. Leaving it unread after the reader has gone to the
+                      // screen it points at would make the badge outlive the thing it is about.
+                      if (!n.read_at) void markOne(n.id);
+                    }}
+                    className="btn btn-sm"
+                  >
+                    Open <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                )}
+                {!n.read_at && (
+                  <button
+                    disabled={busy}
+                    onClick={() => markOne(n.id)}
+                    className="btn btn-sm"
+                    title="Mark read"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 type ChannelKey = "whatsapp" | "gmail";
 
@@ -139,19 +328,25 @@ export default function Communications() {
         <div>
           <h1 className="text-[20px] font-semibold text-ink">Communications</h1>
           <p className="mt-0.5 text-[13px] text-muted">
-            Connect your own WhatsApp number and Gmail, and talk to workshops and vendors from inside
-            QVM — with every message kept against the order it belongs to.
+            Everything the system has to tell a person, in one place — and, once the channels below
+            are connected, everything this workspace says to workshops and vendors too.
           </p>
         </div>
       </div>
 
-      {/* the honest status line — this is the most important sentence on the page */}
+      {/* REAL. Kept above the "not connected" notice so the notice cannot be read as covering it. */}
+      <InAppInbox />
+
+      {/* the honest status line — this is still the most important sentence on the page */}
       <div className="rounded-lg border border-[var(--chip-amber-bg)] bg-[var(--chip-amber-bg)]/30 px-4 py-3">
-        <p className="text-[13px] font-medium text-ink">Nothing is connected yet</p>
+        <p className="text-[13px] font-medium text-ink">
+          WhatsApp and email are not connected
+        </p>
         <p className="mt-0.5 text-[12.5px] leading-relaxed text-sub">
-          The providers are not wired up, so no message can leave QVM through this portal today.
-          Everything below describes what each channel will do once it is connected — it is a plan,
-          not a live integration.
+          Their providers are not wired up, so no message can leave QVM through this portal today.
+          The notifications above are a different thing: they are delivered inside the product, to the
+          person they are addressed to. Everything below describes what each outbound channel will do
+          once it is connected — it is a plan, not a live integration.
         </p>
       </div>
 

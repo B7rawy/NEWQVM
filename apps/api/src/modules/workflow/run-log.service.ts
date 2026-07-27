@@ -26,14 +26,14 @@ import { envOf } from "../../common/env-guards.js";
  * A union also gives one honest LIMIT. Two lists limited separately and merged client-side produce
  * a tail that silently lies: 200 moves and 200 actions merged is not "the newest 200 events".
  *
- * WHAT IS DELIBERATELY NOT HERE: the daily failure digest the ticket also asks for.
+ * WHERE THE DAILY DIGEST WENT. It was withheld from this ticket's first pass because
  * NotificationsService.send() records an attempt in `notification_log` and dispatches nothing —
- * there is no provider behind it. A digest built on that would tell an operator "you will be
- * emailed when a rule breaks", and then no email would arrive, which is strictly worse than telling
- * them to look at this screen. It is the same defect the previous ticket found in `requires_approval`
- * being drawn as a padlock that enforced nothing, and the same reason `notify` is absent from the
- * action catalog (see actions.ts). The digest ships when delivery is real; until then THIS is the
- * notification, which is why the failure count is returned separately from the page window below.
+ * there is no provider behind it — so a digest built on that would have told an operator "you will
+ * be emailed when a rule breaks" and then no email would have arrived. Migration 0061 changed the
+ * fact rather than the argument: in-app delivery needs no provider, so the digest now exists and is
+ * delivered there, by WorkflowDigestService. It links here, because a message saying something broke
+ * without saying where to look is an alarm with no map — which is why the failure count is still
+ * returned separately from the page window below.
  */
 
 export const runLogQuerySchema = z.object({

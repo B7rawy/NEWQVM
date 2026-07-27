@@ -89,6 +89,21 @@ export class DeliveryService {
         .map(([orderItemId]) => orderItemId);
       await this.status.transitionMany(tx, ctx, { entity: "order_item", ids: fullyDelivered, toCode: "delivered" });
 
+      /**
+       * A DELIVERY BEING RECORDED IS A CHILD EVENT (QNEW-90 item 7).
+       *
+       * The lines that completed were moved above, and moving a record already re-examines THAT
+       * record — but nothing looked at the order. "Every line has reached a status" is a gate on the
+       * HEADER, and the last line going out is the moment it becomes satisfiable, so an order that
+       * the flow says should close itself once everything has shipped would otherwise wait for a
+       * person to press a button the rules had already earned.
+       *
+       * Always asked, even when this delivery completed no line: a partial delivery can still be the
+       * one that satisfies a header rule counting quantities rather than line statuses, and the pass
+       * costs one query against a record we already have in hand.
+       */
+      await this.status.reevaluate(tx, ctx, "order", [orderId]);
+
       return { deliveryId: delivery.id, orderId, deliveredItems: dto.items.length };
     });
   }

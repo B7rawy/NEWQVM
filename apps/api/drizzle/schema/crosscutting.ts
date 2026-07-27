@@ -1,4 +1,5 @@
-import { bigint, boolean, integer, jsonb, pgTable, text, uuid, index, unique } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { bigint, boolean, integer, jsonb, pgTable, text, timestamp, uuid, index, unique } from "drizzle-orm/pg-core";
 import { audit, pk, timestamps } from "./_shared";
 import { entityType, environmentType, statusDomain } from "./enums";
 import { tenants } from "./tenancy";
@@ -113,6 +114,57 @@ export const notificationLog = pgTable(
   (t) => [
     index("notification_log_tenant_idx").on(t.tenantId),
     index("notification_log_created_by_idx").on(t.createdBy),
+  ],
+);
+
+/**
+ * IN-APP NOTIFICATION INBOX — the one channel with real delivery (migration 0061).
+ *
+ * notificationLog above records OUTBOUND attempts against providers that do not exist yet. This
+ * table is different in kind: the row IS the delivery, because the reader is this same application.
+ * It is therefore the only notification anything in this system may claim to have sent.
+ *
+ * Addressed to a PERSON. A RESTRICTIVE policy limits SELECT/UPDATE/DELETE to recipient_user_id, so
+ * the app_is_internal() escape in the tenant policy cannot read somebody's inbox. INSERT is not
+ * covered by it — delivery is written inside the transaction of whoever CAUSED the notification —
+ * which is why the delivery path must never use `.returning()` (RETURNING re-checks the SELECT
+ * policy and would fail whenever the writer is not the recipient).
+ */
+export const inAppNotifications = pgTable(
+  "in_app_notifications",
+  {
+    id: pk(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    environment: environmentType("environment").notNull().default("live"),
+    recipientUserId: uuid("recipient_user_id")
+      .notNull()
+      .references(() => users.id),
+    title: text("title").notNull(),
+    body: text("body"),
+    /** In-app router path ("/approvals"); a DB check refuses absolute and protocol-relative URLs. */
+    link: text("link"),
+    kind: text("kind").notNull().default("system"),
+    /** NULL = unread. The unread count is served by a PARTIAL index on exactly this predicate. */
+    readAt: timestamp("read_at", { withTimezone: true }),
+    ...audit,
+  },
+  (t) => [
+    // PARTIAL, and the predicate is the point: "how many unread do I have" is asked on every page
+    // load, and an index over unread rows only stays small however large the read history grows.
+    // Declared here exactly as migration 0061 creates it — a declaration that quietly omitted the
+    // WHERE would make the next `drizzle-kit generate` propose replacing the fast index with a slow
+    // one, which is a performance regression nobody would read as a schema change.
+    index("in_app_notifications_unread_idx")
+      .on(t.recipientUserId, t.tenantId, t.environment)
+      .where(sql`read_at is null`),
+    index("in_app_notifications_inbox_idx").on(
+      t.recipientUserId,
+      t.tenantId,
+      t.environment,
+      t.createdAt.desc(),
+    ),
   ],
 );
 

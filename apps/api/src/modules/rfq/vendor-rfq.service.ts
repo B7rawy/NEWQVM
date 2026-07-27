@@ -214,11 +214,28 @@ export class VendorRfqService {
           alternative_part_number = excluded.alternative_part_number, notes = excluded.notes,
           status_id = excluded.status_id, updated_at = now()`);
     }
-    await this.status.transitionMany(
-      tx,
-      { tenantId: ids.tenantId, userId: ids.actorUserId, environment: ids.environment },
-      { entity: "rfq_vendor", ids: [ids.rfqVendorId], toCode: "priced" },
-    );
+    const statusCtx = { tenantId: ids.tenantId, userId: ids.actorUserId, environment: ids.environment };
+    await this.status.transitionMany(tx, statusCtx, {
+      entity: "rfq_vendor",
+      ids: [ids.rfqVendorId],
+      toCode: "priced",
+    });
+
+    /**
+     * A QUOTE LANDING IS A CHILD EVENT (QNEW-90 item 7).
+     *
+     * The rows written just above are exactly what min_quotes_per_item counts, and the invitation
+     * moving to 'priced' says nothing about the REQUEST — the request is a different record in a
+     * different status vocabulary, and nothing was re-examining it. So a workspace could configure
+     * "move on by itself once every line has three quotes", watch the third quote arrive, and see
+     * the request sit still until somebody opened it. The rule was right, the moment to apply it
+     * simply never came.
+     *
+     * Lines first, then the header, for the same reason creation does it that way: a gate on the
+     * header asks a question about the lines.
+     */
+    await this.status.reevaluate(tx, statusCtx, "rfq_item", items.map((i) => i.rfqItemId));
+    await this.status.reevaluate(tx, statusCtx, "rfq", [ids.rfqId]);
     return { quoted: items.length, status: "priced" as const };
   }
 

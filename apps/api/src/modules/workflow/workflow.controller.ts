@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from 
 import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
-import { PlatformOnly } from "../../common/roles.decorator.js";
+import { PlatformOnly, WorkspaceRoute } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
   actionEntrySchema, assistSchema, createFlowSchema, placementSchema, saveGraphSchema,
@@ -14,6 +14,10 @@ import {
  *
  * PlatformOnly at the door; super_admin enforced per-write in the service (same split as
  * /admin/platform: platform staff may LOOK, only a super admin may CHANGE).
+ *
+ * TWO ROUTES ARE NOT AUTHORING AND ARE MARKED @WorkspaceRoute: my-work and claim. They are the
+ * workspace's own queue, and the class-level door made them unreachable for the exact people
+ * custody hands work to. See the decorator's own comment for why the exception is per-route.
  *
  * Every route is scoped to the caller's active workspace AND environment, so a flow is built and
  * tested in Sandbox and activated separately in Live (ADR-0012).
@@ -56,7 +60,17 @@ export class WorkflowController {
     return this.svc.pageView(this.ctx(req));
   }
 
+  /**
+   * The queue a workspace actually works from, so it is open to the roles custody assigns to.
+   * Platform staff pass the roles check unconditionally (RolesGuard), which is what keeps this
+   * screen working for an account manager looking after the workspace as well.
+   *
+   * A vendor or workshop session is refused here rather than filtered: myWork() would in fact return
+   * nothing for them — their roles hold no steps — but "you would see nothing anyway" is a property
+   * of today's data, and this controller is the workspace's internal work queue by definition.
+   */
   @Get("my-work")
+  @WorkspaceRoute("company_admin", "branch_manager", "service_advisor")
   myWork(@Req() req: Request) {
     return this.svc.myWork(this.ctx(req));
   }
@@ -111,12 +125,19 @@ export class WorkflowController {
     return this.svc.saveGraph(this.ctx(req), id, saveGraphSchema.parse(body));
   }
 
-  /** Draft a graph from a description. Returns a PROPOSAL — the canvas renders it, the human saves. */
+  /**
+   * Picking work up off the pool. Same door as my-work for the same reason — a queue you can see
+   * and cannot take from is a list, not a queue. The service still refuses to hand a record to
+   * somebody who does not hold the step's role, so opening the route widens who may CLAIM, never
+   * who may end up holding.
+   */
   @Post("/records/:entity/:id/claim")
+  @WorkspaceRoute("company_admin", "branch_manager", "service_advisor")
   claim(@Req() req: Request, @Param("entity") entity: string, @Param("id") id: string, @Body() body: { userId?: string }) {
     return this.svc.claim(this.ctx(req), entity, id, body?.userId);
   }
 
+  /** Draft a graph from a description. Returns a PROPOSAL — the canvas renders it, the human saves. */
   @Post(":id/assist")
   assist(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.assist(this.ctx(req), id, assistSchema.parse(body));

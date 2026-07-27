@@ -17,12 +17,12 @@ import { useAuth } from "../lib/auth";
  * configured and quietly is not. This page is where they stop being silent, which is why a failed
  * row is coloured, badged and counted at the top rather than left to be spotted.
  *
- * AND NO, NOTHING EMAILS YOU ABOUT IT. The ticket also asked for a daily digest of failures. It is
- * deliberately not built: NotificationsService.send() records an attempt and dispatches nothing —
- * there is no provider behind it — so a digest would promise an email that never arrives, which is
- * worse than telling somebody to look here. The reasoning is written out at the top of
- * apps/api/src/modules/workflow/run-log.service.ts. Until delivery is real, this screen IS the
- * notification, and the failure count is the alarm.
+ * AND SOMETHING NOW TELLS YOU TO COME HERE. Once a day, a workspace's managers get one in-app
+ * notification summarising the failures of the previous day, grouped by which action broke — a
+ * digest, never one message per failure, because a rule wired onto an arrow every order crosses
+ * would otherwise bury the rule that broke once. It links straight to this screen, which stays the
+ * place the actual detail lives. Email is still not it: nothing in this system can send one. See
+ * apps/api/src/modules/workflow/digest.service.ts.
  */
 
 interface Row {
@@ -57,6 +57,7 @@ const ACTION: Record<string, string> = {
   set_field: "Fill in a field",
   lock_record: "Put it on hold",
   unlock_record: "Take it off hold",
+  notify: "Tell somebody",
 };
 
 /**

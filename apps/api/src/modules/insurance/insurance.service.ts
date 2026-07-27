@@ -4,6 +4,7 @@ import { z } from "zod";
 import { DbService, schema, type RlsContext } from "../../db/db.service.js";
 import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
 import { assertEnvironment } from "../../common/env-guards.js";
+import { StatusService } from "../../common/status.service.js";
 
 export const createInsurerSchema = z.object({
   name: z.string().min(1).max(120),
@@ -18,7 +19,10 @@ export const setPayerSchema = z.object({
 
 @Injectable()
 export class InsuranceService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   async createCompany(ctx: RlsContext, dto: z.infer<typeof createInsurerSchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
@@ -73,13 +77,24 @@ export class InsuranceService {
    * Move the RFQ to a target insurance status (QNEW-45) with a real state machine: only insurance-
    * payer RFQs, never a confirmed one, and only along allowed edges (send only from a pre-approval
    * state; approve only from 'sent_insurance_approval') — no double-approve, no out-of-order jumps.
+   *
+   * ── IT NO LONGER WRITES THE STATUS ITSELF ────────────────────────────────────────────────────
+   * This was the last service in the system still doing `update rfqs set status_id = …` by hand, and
+   * the consequences were not cosmetic. An insurance move wrote no status_logs row, so it was absent
+   * from the history of the record and from stage-speed reporting; it left workflow_record_state
+   * untouched, so the request quietly vanished from whoever's My Work it was resting in; and — the
+   * one that matters most — no workflow rule applied to it, so a workspace could draw a flow that
+   * governed every arrow except the two an insurer is involved in.
+   *
+   * THE HAND-WRITTEN STATE MACHINE BELOW STAYS. It says something the graph does not: these are the
+   * only two insurance moves, they only apply to an insurance-payer request, and they only run in
+   * order. Deleting it in favour of the flow would mean a workspace that has drawn no flow (the
+   * permissive default, deliberately) could double-approve. So both hold, and the order is the
+   * point: this service decides whether the move makes SENSE, and the gateway decides whether the
+   * workspace PERMITS it. The gateway is the only thing that writes.
    */
   private async transition(ctx: RlsContext, rfqId: string, code: "sent_insurance_approval" | "insurance_approved") {
     return this.dbService.withContext(ctx, async (tx) => {
-      const st = (
-        (await tx.execute(sql`select id from item_statuses where code = ${code} limit 1`)) as Array<{ id: string }>
-      )[0];
-      if (!st) throw new BadRequestException(`status '${code}' is not configured`);
       // lock the RFQ row alone (FOR UPDATE can't touch the outer-joined item_statuses), then read its status.
       const rfq = (
         (await tx.execute(sql`
@@ -97,7 +112,9 @@ export class InsuranceService {
         throw new BadRequestException(`cannot send for approval from '${from}'`);
       if (code === "insurance_approved" && from !== "sent_insurance_approval")
         throw new BadRequestException(`cannot approve from '${from}' — send for approval first`);
-      await tx.execute(sql`update rfqs set status_id = ${st.id} where id = ${rfqId}::uuid`);
+      // Inside the SAME transaction as the checks above, so a move the workflow refuses takes the
+      // whole request with it rather than leaving a half-applied insurance decision behind.
+      await this.status.transition(tx, ctx, { entity: "rfq", id: rfqId, toCode: code });
       return { rfqId, status: code };
     });
   }

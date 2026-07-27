@@ -151,6 +151,11 @@ export const workspaceNav: NavGroup[] = [
   {
     heading: "Dashboard",
     items: [
+      // FIRST, AND DELIBERATELY NOT adminOnly. Custody assigns work to company_admin,
+      // branch_manager and service_advisor alike, so a branch manager holding three overdue
+      // records is exactly the person this link is for. It sits above Overview because "what is
+      // waiting on me" is the question a workspace user opens the product to answer.
+      { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Management Overview", path: "/management-overview", icon: Gauge, adminOnly: true },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes, adminOnly: true },

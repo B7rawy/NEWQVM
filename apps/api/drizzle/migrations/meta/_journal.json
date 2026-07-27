@@ -428,6 +428,27 @@
       "when": 1785001415116,
       "tag": "0060_workflow_action_library",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1785001415117,
+      "tag": "0061_in_app_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1785001415118,
+      "tag": "0062_record_removals",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1785001415119,
+      "tag": "0063_workflow_failure_digest",
+      "breakpoints": true
     }
   ]
 }

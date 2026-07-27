@@ -5,6 +5,7 @@ import { z } from "zod";
 import { DbService } from "../../db/db.service.js";
 import { schema } from "../../db/db.service.js";
 import type { RlsContext } from "../../db/db.service.js";
+import { StatusService } from "../../common/status.service.js";
 
 export const createRfqSchema = z.object({
   workshopBranchId: z.string().uuid(),
@@ -30,12 +31,21 @@ export type CreateRfqDto = z.infer<typeof createRfqSchema>;
 
 @Injectable()
 export class RfqService {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    private readonly dbService: DbService,
+    private readonly status: StatusService,
+  ) {}
 
   /**
    * Create an RFQ header + items in one tenant-scoped transaction. The order number is issued by
    * the atomic next_order_number() (no MAX()+1). RLS + the audit trigger apply automatically; the
    * customer lives at the header (workshop_branch_id), the winning-quote wiring comes later.
+   *
+   * CREATION IS AN ENTRY EVENT (QNEW-90 item 7). The rows are inserted with NO status and the status
+   * is then written by StatusService.enter(), so a new request begins its history properly: a
+   * status_logs row saying it arrived at new_rfq from nothing, and a binding to the flow version
+   * that was live at the moment it was raised. Writing status_id in the INSERT — as this did until
+   * now — made the first status of every record the one status that left no trace.
    */
   async create(ctx: RlsContext, dto: CreateRfqDto) {
     const env = ctx.environment ?? "live";
@@ -64,12 +74,9 @@ export class RfqService {
         )) as Array<{ n: string }>
       )[0].n;
 
-      const newStatusId = (
-        (await tx.execute(
-          sql`select id from item_statuses where code = 'new_rfq' limit 1`,
-        )) as Array<{ id: string }>
-      )[0].id;
-
+      // status_id is deliberately absent from both INSERTs: it is written below by the status
+      // gateway, which is the only thing in this system allowed to write it (QNEW-75). The column is
+      // nullable and the NULL never leaves this transaction.
       const [rfq] = await tx
         .insert(schema.rfqs)
         .values({
@@ -83,24 +90,36 @@ export class RfqService {
           model: dto.model,
           orderType: dto.orderType,
           deliveryType: dto.deliveryType,
-          statusId: newStatusId,
           customerNameSnapshot: branch.workshop_name, // frozen at creation (QNEW-71 §6.1)
         })
         .returning({ id: schema.rfqs.id });
 
-      await tx.insert(schema.rfqItems).values(
-        dto.items.map((it) => ({
-          tenantId: ctx.tenantId!,
-          environment: env, // a line always lives in the same environment as its RFQ
-          rfqId: rfq.id,
-          partNumber: it.partNumber,
-          partDescription: it.partDescription,
-          quantity: it.quantity,
-          brandClassId: it.brandClassId,
-          partCategoryId: it.partCategoryId,
-          statusId: newStatusId,
-        })),
-      );
+      const items = await tx
+        .insert(schema.rfqItems)
+        .values(
+          dto.items.map((it) => ({
+            tenantId: ctx.tenantId!,
+            environment: env, // a line always lives in the same environment as its RFQ
+            rfqId: rfq.id,
+            partNumber: it.partNumber,
+            partDescription: it.partDescription,
+            quantity: it.quantity,
+            brandClassId: it.brandClassId,
+            partCategoryId: it.partCategoryId,
+          })),
+        )
+        .returning({ id: schema.rfqItems.id });
+
+      // LINES ENTER BEFORE THE HEADER, on purpose. Entering runs the same auto-advance pass every
+      // move does, and a gate on an arrow out of new_rfq asks a question about the lines
+      // ("every line has reached a status"). With the header first, that pass would judge a request
+      // whose lines still had no status at all and answer for a record that does not exist yet.
+      await this.status.enterMany(tx, ctx, {
+        entity: "rfq_item",
+        ids: items.map((i) => i.id),
+        toCode: "new_rfq",
+      });
+      await this.status.enter(tx, ctx, { entity: "rfq", id: rfq.id, toCode: "new_rfq" });
 
       return { id: rfq.id, orderNumber, itemCount: dto.items.length };
     });

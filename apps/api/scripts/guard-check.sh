@@ -1147,3 +1147,758 @@ psql "delete from workflow_actions; delete from workflow_action_runs; delete fro
       delete from rfq_vendors where rfq_id='$LIBR'; delete from rfq_items where rfq_id='$LIBR';
       delete from notification_log where template='vendor_rfq_invite'; delete from rfqs where id='$LIBR'" > /dev/null
 wfclean
+
+# ── in-app notification delivery (0061) ─────────────────────────────────────────────────────────
+# The one notification channel with no provider missing behind it, and therefore the one this system
+# is allowed to say it SENT. Everything asserted here is a way the feature could look finished and be
+# a lie: the message never reaching its recipient, reaching the wrong person, or the badge counting
+# something other than what the inbox shows.
+#
+# Driven through the APPROVALS engine rather than by inserting rows, because a delivery path nothing
+# calls is exactly the theatre this codebase refuses. approvals.service.ts notifies the approver a
+# decision has landed on — the gap the Approvals page's own header describes ("nothing tells an
+# approver that a decision is sitting on them").
+nclean(){
+  psql "delete from in_app_notifications;
+        delete from notification_log where channel='in_app';
+        delete from approval_actions where request_id in (select id from approval_requests where entity_type='notify_probe');
+        delete from approval_requests where entity_type='notify_probe';
+        delete from approval_levels where policy_id in (select id from approval_policies where entity_type='notify_probe');
+        delete from approval_policies where entity_type='notify_probe'" > /dev/null
+}
+nclean
+
+NMGRID=$(psql "select id from users where email='manager@qparts.local'")
+NMTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"manager@qparts.local","password":"manager1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+NM=(-H "Authorization: Bearer $NMTOK" -H "X-Tenant: riyadh" -H "Content-Type: application/json")
+nunread(){ curl -s "$@" "$B/api/notifications/unread-count" | $PY -c "import sys,json;print(json.load(sys.stdin).get('unread'))"; }
+
+ok 0 "$(nunread "${NM[@]}")" "the badge starts at zero — it counts rows, it does not invent a number"
+
+# A policy whose only approver is the MANAGER, opened by the ADMIN: the notification is written in
+# somebody else's transaction, which is the case a FOR ALL restrictive policy would have broken.
+NPOL=$(curl -s "${AR[@]}" -X POST "$B/api/approvals/policies" \
+  -d "$(printf '{"name":"Notify probe","entityType":"notify_probe","levels":[{"approverUserId":"%s"}]}' "$NMGRID")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$NPOL" ] && echo 1 || echo 0)" "an approval policy naming the manager as approver exists"
+NENT=$($PY -c "import uuid;print(uuid.uuid4())")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/approvals/requests" \
+  -d "$(printf '{"entityType":"notify_probe","entityId":"%s"}' "$NENT")"
+
+# THE ONE THAT MATTERS: it arrived, at the person it was addressed to.
+ok "An approval is waiting on you" "$(curl -s "${NM[@]}" "$B/api/notifications?limit=5" | $PY -c "
+import sys, json
+rows = json.load(sys.stdin).get('rows', [])
+print(rows[0]['title'] if rows else 'NOTHING ARRIVED')")" \
+  "a notification raised by one person REACHES the person it is addressed to"
+ok /approvals "$(curl -s "${NM[@]}" "$B/api/notifications?limit=5" | $PY -c "
+import sys, json
+rows = json.load(sys.stdin).get('rows', [])
+print(rows[0].get('link') if rows else '')")" \
+  "and points at the screen that can act on it, rather than being a nag with no destination"
+ok 1 "$(nunread "${NM[@]}")" "the unread count is the number of unread rows"
+
+NID=$(psql "select id from in_app_notifications order by created_at desc limit 1")
+
+# ADDRESSED TO A PERSON. The admin is a platform super_admin and break-glass everywhere else in this
+# system by design — an inbox is where that has to stop. Asserted for the READ, the WRITE, and at the
+# DATABASE, because the API filter and the RLS policy must each hold on their own: if only one does,
+# the other is a hole waiting for the next endpoint that forgets it.
+ok 0 "$(curl -s "${AR[@]}" "$B/api/notifications?limit=50" | $PY -c "
+import sys, json; print(len(json.load(sys.stdin).get('rows', [])))")" \
+  "another user — even a platform super admin — cannot read it"
+ok 0 "$(nunread "${AR[@]}")" "and it is not counted in anybody else's badge"
+ok 0 "$(curl -s "${AR[@]}" -X POST "$B/api/notifications/$NID/read" | $PY -c "
+import sys, json; print(json.load(sys.stdin).get('updated'))")" \
+  "nor can they mark somebody else's notification read"
+ok 0 "$(curl -s "${AR[@]}" -X POST "$B/api/notifications/read-all" | $PY -c "
+import sys, json; print(json.load(sys.stdin).get('updated'))")" \
+  "and read-all empties only the caller's own inbox"
+ok 1 "$(nunread "${NM[@]}")" "so after all of that the recipient's notification is STILL unread"
+
+# The floor under the API. app_is_internal() is an OR-escape in the tenant policy, so without the
+# RESTRICTIVE addressee policy this query returns the row and every future endpoint inherits the hole.
+NTID=$(psql "select id from tenants where slug='riyadh'")
+NAID=$(psql "select id from users where email='admin@qparts.local'")
+ok 0 "$(docker exec -e PGPASSWORD=qvm_app_local_dev qvm_postgres psql -U qvm_app -d qvm_platform -tA -c "
+  select set_config('app.tenant_id','$NTID',false), set_config('app.user_id','$NAID',false),
+         set_config('app.is_internal','true',false), set_config('app.environment','live',false);
+  select count(*) from in_app_notifications" | /usr/bin/tail -1)" \
+  "RLS ITSELF refuses it — an internal session reads zero rows, not just a filtered endpoint"
+
+# ADR-0012. A rehearsal in Sandbox must not appear in the Live inbox of the person who ran it.
+ok 0 "$(nunread -H "Authorization: Bearer $NMTOK" -H 'X-Tenant: riyadh' -H 'X-Environment: sandbox')" \
+  "and a Live notification is invisible from Sandbox"
+
+# THE BADGE MUST BE ABLE TO REACH ZERO. A count that always shows a number is the demo constant this
+# replaced, in a different font.
+ok 1 "$(curl -s "${NM[@]}" -X POST "$B/api/notifications/$NID/read" | $PY -c "
+import sys, json; print(json.load(sys.stdin).get('updated'))")" "the recipient can mark it read"
+ok 0 "$(nunread "${NM[@]}")" "and the unread count drops to zero"
+ok 1 "$(curl -s "${NM[@]}" "$B/api/notifications?limit=5" | $PY -c "
+import sys, json; print(len(json.load(sys.stdin).get('rows', [])))")" \
+  "the notification itself is still there — read is not deleted"
+ok 0 "$(curl -s "${NM[@]}" -X POST "$B/api/notifications/$NID/read" | $PY -c "
+import sys, json; print(json.load(sys.stdin).get('updated'))")" \
+  "marking an already-read one read again changes nothing (the button is safe to press twice)"
+
+# The unread index is PARTIAL. Without the WHERE clause the count degrades to a scan of a table that
+# only ever grows, which is invisible in a test database and fatal in a workspace two years old.
+# indpred rather than a LIKE over indexdef: pg_get_indexdef re-prints the predicate with its own
+# parenthesisation, so a string match asserts the formatter's habits and not the property.
+ok true "$(psql "select (indpred is not null)::text from pg_index
+               where indexrelid='in_app_notifications_unread_idx'::regclass")" \
+  "the unread count is served by a PARTIAL index, not a scan of the whole inbox"
+
+# in_app is the ONLY channel allowed to record status='sent', because it is the only one that sends.
+ok "in_app|sent" "$(psql "select channel||'|'||status from notification_log where channel='in_app' limit 1")" \
+  "in-app delivery is recorded as SENT — the one channel where that is a true statement"
+ok 0 "$(psql "select count(*) from notification_log where channel <> 'in_app' and status='sent'")" \
+  "and no provider-backed channel claims to have sent anything, because none of them can"
+
+nclean
+
+# ── entry, child events, and removals (0062 / QNEW-90 item 7 + the third lever of item 5) ────────
+# The taxonomy the benchmark offers is created / edited / created-or-edited / deleted, and the
+# verdict was to adopt it MINIMALLY. What is asserted here is that minimum, and — more importantly —
+# the two things it must never cost:
+#   • creation must not become refusable. A workspace with a half-drawn flow still has to trade.
+#   • the engine must not be able to reopen the rules on itself, or the depth cap never bites.
+mkrfq(){ # $1 = plate -> echoes the new rfq id ('' if the API refused)
+  curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"%s","items":[{"partNumber":"EP","quantity":1}]}' "$BR" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))"
+}
+mkflow(){ # $1 = key suffix, $2 = graph json -> echoes the id of an ACTIVE default flow
+  local F
+  F=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+    -d "$(printf '{"flowKey":"smoke-%s","nameAr":"مسار","nameEn":"Entry","isDefault":true}' "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/graph" -d "$2"
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$F/activate"
+  echo "$F"
+}
+rfqstatus(){ psql "select s.code from rfqs r join item_statuses s on s.id=r.status_id where r.id='$1'"; }
+entryclean(){
+  wfclean
+  psql "delete from workflow_auto_fired; delete from workflow_action_runs; delete from status_logs;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%');
+        delete from delivery_items where delivery_id in (select id from deliveries where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%')));
+        delete from deliveries where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%'));
+        delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%'));
+        delete from orders where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%');
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'ENTRY-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'ENTRY-%';
+        delete from workflow_record_removals" > /dev/null
+}
+entryclean
+
+# 1) NO FLOW AT ALL. The rollout promise, now applied to the moment a record is born.
+ENT1=$(mkrfq ENTRY-NOFLOW)
+ok 1 "$([ -n "$ENT1" ] && echo 1 || echo 0)" "with no workflow at all an RFQ can still be raised"
+ok "|new_rfq" "$(psql "select coalesce(f.code,'')||'|'||t.code from status_logs l
+                       left join item_statuses f on f.id=l.from_status_id
+                       join item_statuses t on t.id=l.to_status_id
+                       where l.entity_type='rfq' and l.entity_id='$ENT1'")" \
+  "and its arrival is a real event in the history: from nothing, to new_rfq"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq_item'
+               and entity_id in (select id from rfq_items where rfq_id='$ENT1')")" \
+  "the lines record their arrival too, not just the header"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$ENT1' and changed_by is not null")" \
+  "credited to the person who raised it, taken from the JWT"
+ok 0 "$(psql "select count(*) from workflow_record_state where entity_id='$ENT1'")" \
+  "and bound to nothing, because there is nothing to bind it to"
+
+# 2) A FLOW THAT DOES NOT DESCRIBE HOW REQUESTS BEGIN. The load-bearing negative: an entry is not a
+# move along an arrow, so the absence of the arrival status cannot be read as a refusal.
+FE1=$(mkflow entry-absent '{"selectionCondition":{},
+ "steps":[{"status":"priced","isEntry":true,"x":80,"y":100},{"status":"confirmed","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"confirmed","labelEn":"Confirm"}]}')
+ok active "$(psql "select status from workflow_flows where id='$FE1'")" "a flow with no new_rfq step is live"
+ENT2=$(mkrfq ENTRY-ABSENT)
+ok 1 "$([ -n "$ENT2" ] && echo 1 || echo 0)" \
+  "and it CANNOT stop an RFQ being raised — a half-drawn flow must not close the business"
+ok 0 "$(psql "select count(*) from workflow_record_state where entity_id='$ENT2'")" \
+  "the record is left unbound rather than pinned to a step it is not standing on"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$ENT2'")" \
+  "but the arrival is recorded either way"
+
+# 3) A FLOW THAT DOES. The version pin now happens at birth instead of at the second status.
+entryclean
+FE2=$(mkflow entry-bound '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100,"ownerRoles":["company_admin"],"slaHours":4},
+          {"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"}]}')
+ENT3=$(mkrfq ENTRY-BOUND)
+ok "$FE2" "$(psql "select flow_id from workflow_record_state where entity_type='rfq' and entity_id='$ENT3'")" \
+  "a record entering under an active flow is bound to THAT version from its first status"
+ok company_admin "$(psql "select assignee_role from workflow_record_state where entity_type='rfq' and entity_id='$ENT3'")" \
+  "and lands on the desk the entry step says owns it"
+ok true "$(psql "select (due_at is not null)::text from workflow_record_state where entity_type='rfq' and entity_id='$ENT3'")" \
+  "with the step's SLA clock already running, rather than starting on its second status"
+
+# 4) CREATED IS A REAL TRIGGER. An arrow the flow marks automatic fires when the record ARRIVES.
+entryclean
+FE3=$(mkflow entry-auto '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"tendering","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"tendering","labelEn":"Tender","autoAdvance":true}]}')
+ENT4=$(mkrfq ENTRY-AUTO)
+ok tendering "$(rfqstatus "$ENT4")" \
+  "an automatic arrow out of the entry step fires on arrival, not the next time somebody clicks"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$ENT4' and auto_advanced")" \
+  "and is recorded as the engine's move, with no actor"
+
+# 5) AN ORDER IS BORN AT 'confirmed', which is the second place a first status used to appear from
+# nowhere. Run with no flow so nothing else is being asserted at the same time.
+entryclean
+order_from(){ # $1 = plate -> echoes the new order id
+  local rid tok it qi
+  rid=$(mkrfq "$1")
+  [ -z "$rid" ] && { echo ""; return; }
+  echo "$rid" > /tmp/qvm_entry_rfq
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  it=$(psql "select id from rfq_items where rfq_id='$rid' limit 1")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$it")"
+  qi=$(psql "select id from rfq_vendor_items where rfq_item_id='$it' limit 1")
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$rid/items/$it/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$qi")"
+  curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/confirm" | $PY -c "import sys,json;print(json.load(sys.stdin).get('orderId',''))"
+}
+ORD1=$(order_from ENTRY-ORDER)
+ok "|confirmed" "$(psql "select coalesce(f.code,'')||'|'||t.code from status_logs l
+                         left join item_statuses f on f.id=l.from_status_id
+                         join item_statuses t on t.id=l.to_status_id
+                         where l.entity_type='order' and l.entity_id='$ORD1'")" \
+  "an ORDER's arrival at confirmed is an event too, not a column written in an INSERT"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='order_item'
+               and entity_id in (select id from order_items where order_id='$ORD1')")" \
+  "and so is each of its lines'"
+
+# 6) CHILD EVENT — A QUOTE LANDING. When, AND ONLY WHEN, the gate is satisfied.
+# Nothing in the product used to re-examine a request when a vendor answered, so a rule that was
+# already earned waited for somebody to open the screen and press the button.
+entryclean
+VID2=$(psql "select tv.vendor_id from tenant_vendors tv join vendors v on v.id = tv.vendor_id
+             join tenants t on t.id = tv.tenant_id and t.slug='riyadh'
+             where tv.status='active' and v.is_active and v.activation_status='active'
+               and tv.vendor_id <> '$VID' limit 1")
+FE4=$(mkflow quote-child '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","autoAdvance":true,
+                 "gates":[{"gate":"min_quotes_per_item","params":{"n":2},"enforcement":"block"}]}]}')
+CH=$(mkrfq ENTRY-CHILD)
+CHIT=$(psql "select id from rfq_items where rfq_id='$CH' limit 1")
+ok new_rfq "$(rfqstatus "$CH")" "a request short of quotes does not move when it is raised"
+quote_from(){ # $1 = vendor id — sends the request to one vendor and has it answer
+  local tok
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$CH/send" -d "$(printf '{"vendorIds":["%s"]}' "$1")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$CHIT")"
+}
+quote_from "$VID"
+ok new_rfq "$(rfqstatus "$CH")" "nor when the FIRST quote lands — the gate is not satisfied yet"
+quote_from "$VID2"
+ok priced "$(rfqstatus "$CH")" \
+  "and the SECOND one carries it forward by itself, with nobody in the product at all"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$CH' and auto_advanced")" \
+  "recorded as the engine's move — the vendor who satisfied the rule did not make it"
+
+# 7) CHILD EVENT — A DELIVERY BEING RECORDED, against the gate a header actually carries.
+#
+# READ THE FIXTURE CAREFULLY. Both the order and its lines are born at 'confirmed', so BOTH see the
+# automatic arrow out of it — and a gate over lines is meaningless ON a line, so runGates skips it
+# and the lines take that arrow immediately while the header is held back by it. That is the engine
+# being consistent rather than a quirk of this flow, so the fixture gives the lines the road back
+# ('settled' -> 'delivered') and asserts on the HEADER, which is the record the gate governs.
+entryclean
+FE5=$(mkflow deliver-child '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","x":340,"y":100},
+          {"status":"confirmed","x":600,"y":100},
+          {"status":"settled","x":860,"y":100},
+          {"status":"delivered","isTerminal":true,"x":1120,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"},
+                {"from":"new_rfq","to":"confirmed","labelEn":"Confirm request"},
+                {"from":"priced","to":"confirmed","labelEn":"Confirm line"},
+                {"from":"confirmed","to":"settled","labelEn":"Settle","autoAdvance":true,
+                 "gates":[{"gate":"all_items_at_status","params":{"status":"delivered"},"enforcement":"block"}]},
+                {"from":"settled","to":"delivered","labelEn":"Deliver line"}]}')
+ORD2=$(order_from ENTRY-DELIVER)
+ok confirmed "$(psql "select s.code from orders o join item_statuses s on s.id=o.status_id where o.id='$ORD2'")" \
+  "an order whose lines are not out yet stays where it is, gate unsatisfied"
+OIT=$(psql "select id from order_items where order_id='$ORD2' limit 1")
+OQTY=$(psql "select approved_qty from order_items where id='$OIT'")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/orders/$ORD2/deliveries" \
+  -d "$(printf '{"items":[{"orderItemId":"%s","qty":%s}]}' "$OIT" "$OQTY")"
+ok settled "$(psql "select s.code from orders o join item_statuses s on s.id=o.status_id where o.id='$ORD2'")" \
+  "and recording the delivery carries it forward the moment the gate is met — no button, no cron"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='order' and entity_id='$ORD2' and auto_advanced")" \
+  "as the engine's move, off the back of a fact that changed under it"
+
+# 8) THE THIRD LEVER — an action's own write cannot reopen the rules. See the header of
+# scripts/reevaluate-reentrancy.ts for why this is asserted by construction rather than over HTTP.
+ok "looked refused" "$("$(cd "$(dirname "$0")/.." && pwd)/node_modules/.bin/tsx" \
+    "$(cd "$(dirname "$0")" && pwd)/reevaluate-reentrancy.ts" 2>/dev/null)" \
+  "a re-evaluation runs for a real-world event and is REFUSED inside an action run (no runaway)"
+
+# 9) DELETED — recorded, and wired to nothing.
+entryclean
+FE6=$(mkflow removal '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"tendering","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"tendering","labelEn":"Tender","autoAdvance":true,
+                 "actions":[{"action":"set_field","params":{"field":"model","value":"Recorded"}}]}]}')
+DELR=$(mkrfq ENTRY-DELETE)
+DELIT=$(psql "select id from rfq_items where rfq_id='$DELR' limit 1")
+DELN=$(psql "select order_number from rfqs where id='$DELR'")
+ok 1 "$(psql "select count(*) from workflow_action_runs where entity_id='$DELR'")" \
+  "the flow really is armed — an action fired on this record while it existed"
+RUNS=$(psql "select count(*) from workflow_action_runs")
+LOGS=$(psql "select count(*) from status_logs")
+psql "delete from rfq_items where rfq_id='$DELR'; delete from rfqs where id='$DELR'" > /dev/null
+ok 0 "$(psql "select count(*) from rfqs where id='$DELR'")" "the record really is gone"
+ok "rfq|$DELN" "$(psql "select entity_type||'|'||reference from workflow_record_removals where entity_id='$DELR'")" \
+  "and a reader can still see WHAT left, by the number a person knew it as"
+ok tendering "$(psql "select s.code from workflow_record_removals r join item_statuses s on s.id=r.last_status_id
+                      where r.entity_id='$DELR'")" "and where it stood when it went"
+ok 1 "$(psql "select count(*) from workflow_record_removals where entity_type='rfq_item' and entity_id='$DELIT'")" \
+  "its lines are recorded as leaving too, not just the header"
+ok "$RUNS" "$(psql "select count(*) from workflow_action_runs")" \
+  "AUDIT ONLY: the delete fired no action, on a flow that demonstrably fires them"
+ok "$LOGS" "$(psql "select count(*) from status_logs")" \
+  "and no status event — there is no record left for a rule to act on"
+
+entryclean
+
+# ── the `notify` action (QNEW-90 item 3) ─────────────────────────────────────────────────────────
+# The engine could already permit, refuse and act; what it could not do was TELL SOMEBODY. It was
+# withheld deliberately while every channel recorded intentions and dispatched nothing, so the whole
+# point of these checks is that the message now really arrives — and arrives at the right person,
+# which is the part a "sends a notification" feature gets wrong silently.
+#
+# Everything here is a way this could look finished and be a lie: the message going to the desk the
+# work has just LEFT, naming the status it has just left, being sent to the person who caused it, or
+# being counted as sent while the ceiling had blocked it.
+API_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+nfclean(){
+  wfclean
+  psql "delete from workflow_auto_fired; delete from workflow_action_runs; delete from status_logs;
+        delete from in_app_notifications; delete from notification_log where channel='in_app';
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'NOTIFY-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'NOTIFY-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'NOTIFY-%');
+        delete from workflow_record_state where entity_id in (select id from rfq_items where rfq_id in (select id from rfqs where plate_number like 'NOTIFY-%'));
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'NOTIFY-%');
+        delete from workflow_record_state where entity_id in (select id from rfqs where plate_number like 'NOTIFY-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from rfqs where plate_number like 'NOTIFY-%'" > /dev/null
+}
+told(){ psql "select coalesce(string_agg(distinct u.email, ',' order by u.email), 'NOBODY')
+              from in_app_notifications n join users u on u.id = n.recipient_user_id
+              where n.kind = 'workflow'"; }
+nfclean
+
+ok "notify|assignee_and_step_owners" "$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" | $PY -c "
+import sys, json
+a = [x for x in json.load(sys.stdin)['actions'] if x['key'] == 'notify']
+print((a[0]['key'] + '|' + str([p for p in a[0]['params'] if p['key'] == 'to'][0]['default'])) if a else 'ABSENT')")" \
+  "the catalog offers 'notify' now that one channel really delivers, addressed relatively by default"
+
+# 1) THE DESK IT ARRIVES AT, NOT THE ONE IT LEAVES. The origin step is owned by service_advisor and
+# is who is holding the record; the destination is owned by branch_manager. Custody is `keep`, so the
+# holder does NOT change — which means an implementation reading the record's own step, or its
+# assignee, would tell the wrong person and look entirely correct doing it.
+nfclean
+mkflow notify-owners '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100,"ownerRoles":["service_advisor"]},
+          {"status":"priced","isTerminal":true,"x":340,"y":100,"ownerRoles":["branch_manager"]}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","handoff":"keep",
+   "actions":[{"action":"notify","params":{"to":"step_owners","alsoTell":"nobody",
+     "title":"{reference} needs pricing","message":"It is now {status}. {cost}"}}]}]}' > /dev/null
+pick_winner NOTIFY-OWNERS > /dev/null
+ok "multi@qparts.local" "$(told)" \
+  "'the people responsible for this step' is the step it ARRIVES at, not the one it is leaving"
+ok "staff@qparts.local" "$(psql "select u.email from workflow_record_state rs join users u on u.id=rs.assignee_user_id
+                                 join rfq_items i on i.id = rs.entity_id join rfqs r on r.id = i.rfq_id
+                                 where r.plate_number='NOTIFY-OWNERS'")" \
+  "and the record is demonstrably still held by somebody else, so the two are not the same answer"
+ok ok "$(psql "select outcome from workflow_action_runs where action='notify' limit 1")" \
+  "the run log records the delivery as an action that worked"
+
+# The message. A digest of one, in the only word that matters: a notification naming the status the
+# record has just LEFT is wrong precisely when somebody is relying on it.
+ok "It is now Priced. {cost}" "$(psql "select body from in_app_notifications where kind='workflow' limit 1")" \
+  "it says where the record has ARRIVED — and leaves an unknown placeholder as literal text"
+ok "/rfqs" "$(psql "select link from in_app_notifications where kind='workflow' limit 1")" \
+  "and points at the screen the record is on, rather than being a nag with no destination"
+ok 1 "$(psql "select count(*) from in_app_notifications n where kind='workflow' and n.title like '%needs pricing'")" \
+  "the headline is the workspace's own words, with the record's number filled in"
+ok "in_app|sent" "$(psql "select channel||'|'||status from notification_log where template='workflow' limit 1")" \
+  "and it goes through the one delivery boundary, so the communications trail knows it happened"
+
+# 2) NOBODY IS TOLD WHAT THEY JUST DID. An inbox that reports your own clicks back to you is an inbox
+# people stop opening — the same rule the approvals inbox already applies, so the product has ONE
+# answer to "why was I not told" rather than two.
+nfclean
+mkflow notify-self '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","handoff":"actor",
+   "actions":[{"action":"notify","params":{"to":"assignee","title":"yours","message":"yours"}}]}]}' > /dev/null
+pick_winner NOTIFY-SELF > /dev/null
+ok skipped "$(psql "select outcome from workflow_action_runs where action='notify' limit 1")" \
+  "a message whose only recipient is the person who made the move is not sent"
+ok "NOBODY" "$(told)" "and nothing lands in anybody's inbox"
+ok 1 "$(psql "select count(*) from workflow_action_runs where action='notify' and detail like '%the one who made the move%'")" \
+  "with the run log saying why, so it does not read as a broken rule"
+
+# 3) CREATED BY IS A REAL RELATIVE RECIPIENT. The review comment asks for recipients resolved from the
+# record itself; this is the one that cannot be faked by reading custody, because the person who
+# raised the request may be nowhere near the desk it is sitting on. The RFQ is raised by the admin
+# and the move is made by SOMEBODY ELSE, or the self-suppression above would hide the whole leg.
+nfclean
+psql "insert into users (email, full_name, password_hash, is_active)
+      values ('notifyactor@qparts.local','Notify Actor','$HASH',true)
+      on conflict (email) do update set is_active=true" > /dev/null
+psql "insert into platform_members (user_id, role, is_active)
+      select id,'purchasing',true from users where email='notifyactor@qparts.local'
+      on conflict do nothing" > /dev/null
+NFTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"notifyactor@qparts.local","password":"admin1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+mkflow notify-creator '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","handoff":"keep",
+   "actions":[{"action":"notify","params":{"to":"step_owners","alsoTell":"created_by",
+     "title":"about {reference}","message":"raised by you"}}]}]}' > /dev/null
+ACTOR=$NFTOK pick_winner NOTIFY-CREATOR > /dev/null
+ok "admin@qparts.local" "$(told)" \
+  "'also tell whoever raised it' reaches the record's creator, who is not the actor and holds nothing"
+ok 1 "$(psql "select count(*) from workflow_action_runs where action='notify' and detail like '%raised it%'")" \
+  "and the run log names WHY that person was told, not just how many were"
+
+# 4) A BLOCKED NOTIFICATION IS NOT A SENT ONE. The ceiling is human-scaled for notify (500, email's
+# number in the benchmark) because each success asks somebody for a moment of their day. If the cap
+# were declared and not honoured, the runaway it exists to contain would be a flood of real messages.
+nfclean
+psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, transition_key,
+        action, params, outcome, detail)
+      select t.id, 'live', 'rfq_item', gen_random_uuid(), 'new_rfq>priced', 'notify', '{}'::jsonb,
+             'ok', 'filler: the day is full' from tenants t, generate_series(1, 500) where t.slug='riyadh'" > /dev/null
+mkflow notify-capped '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","isTerminal":true,"x":340,"y":100,"ownerRoles":["branch_manager"]}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","handoff":"keep",
+   "actions":[{"action":"notify","params":{"to":"step_owners","title":"over the line","message":"over the line"}}]}]}' > /dev/null
+NFCAP=$(pick_winner NOTIFY-CAPPED)
+ok 0 "$(blocked "$NFCAP")" "a workspace at its notification ceiling can still make the move"
+ok capped "$(psql "select outcome from workflow_action_runs where action='notify' and detail like '%daily limit%'")" \
+  "the message is refused for volume and RECORDED as refused"
+ok "NOBODY" "$(told)" "and nothing was half-delivered on the way to being blocked"
+nfclean
+psql "delete from platform_members where user_id in (select id from users where email='notifyactor@qparts.local');
+      delete from users where email='notifyactor@qparts.local'" > /dev/null
+
+# ── the daily failure digest (QNEW-90 item 6) ────────────────────────────────────────────────────
+# runActions() may never throw, so an action that breaks is SILENT everywhere except the run log —
+# the flow looks configured and quietly is not. The digest is what tells somebody without their
+# having to go and look, and the word doing the work is DIGEST: one message for the day, not one per
+# failure, because a rule wired onto an arrow every order crosses would otherwise bury the rule that
+# broke once.
+#
+# THE PROPERTY THAT IS EASY TO LOSE is not "does it send". It is "does it send TWICE". A window that
+# is computed from the clock rather than from the last window re-reports everything in the overlap on
+# every run, which is exactly the flood the digest replaced, wearing a daily label.
+RIYADH=$(psql "select id from tenants where slug='riyadh'")
+JEDDAH=$(psql "select id from tenants where slug='jeddah'")
+rundigest(){ (cd "$API_DIR" && ./node_modules/.bin/tsx scripts/run-digest.ts 2>/dev/null | /usr/bin/grep '^SUMMARY'); }
+dgclean(){
+  psql "delete from workflow_failure_digests; delete from workflow_action_runs;
+        delete from in_app_notifications; delete from notification_log where channel='in_app'" > /dev/null
+}
+# Failures placed one day back so they fall inside the window that closed at the workspace's last
+# local midnight — which is what "yesterday" means to this job, and what a run today can report.
+seedfail(){ # $1 = tenant id, $2 = environment, $3 = action, $4 = how many
+  psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, transition_key,
+          action, params, outcome, detail, ran_at)
+        select '$1'::uuid, '$2', 'rfq', gen_random_uuid(), 'a>b', '$3', '{}'::jsonb, 'failed',
+               'the action could not complete', now() - interval '1 day'
+        from generate_series(1, $4)" > /dev/null
+}
+digests(){ psql "select count(*) from in_app_notifications where kind='digest'"; }
+
+# There was no scheduler in this repo at all — no @Cron, no interval, no @nestjs/schedule. A "daily"
+# job with nothing to fire it is a method nobody calls, so the timer is asserted as a fact about the
+# source rather than assumed from the feature working when a script runs it.
+ok 1 "$(/usr/bin/grep -c "setInterval" "$API_DIR/src/modules/workflow/digest.service.ts")" \
+  "there is a real timer behind the daily job, not a method waiting to be called by hand"
+ok 1 "$(/usr/bin/grep -rl "WorkflowDigestService" "$API_DIR/src" | /usr/bin/grep -c "module\.ts$")" \
+  "and exactly ONE module owns it — a second registration is a second timer sending the same digest"
+
+# 1) A QUIET DAY. Nothing is delivered, and yet the window still closes: skipping quiet days would
+# reopen them tomorrow and report a failure on a day it did not happen.
+dgclean
+rundigest > /dev/null
+ok 0 "$(digests)" "a day with no failures tells nobody — a digest of nothing is an inbox people stop reading"
+ok "$(psql "select count(*) * 2 from tenants where is_active")" "$(psql "select count(*) from workflow_failure_digests")" \
+  "but every workspace still records that it looked — one window per workspace per environment"
+
+# 2) FAILURES REACH THE WORKSPACE'S OWN MANAGERS, AS ONE MESSAGE.
+dgclean
+seedfail "$RIYADH" live set_field 2
+seedfail "$RIYADH" live lock_record 1
+rundigest > /dev/null
+ok 1 "$(digests)" "three failures produce ONE message, not three"
+ok "manager@qparts.local" "$(psql "select u.email from in_app_notifications n join users u on u.id=n.recipient_user_id
+                                   where n.kind='digest'")" \
+  "addressed to the workspace's own manager, resolved from membership rather than a configured list"
+ok "3 workflow actions failed yesterday" "$(psql "select title from in_app_notifications where kind='digest'")" \
+  "the headline is the day's total, which is the number somebody decides on"
+ok 1 "$(psql "select count(*) from in_app_notifications where kind='digest' and body like 'Fill in a field — 2, Put it on hold — 1.%'")" \
+  "and the body groups them by what broke, biggest first — a bare count is an alarm, not a diagnosis"
+ok /status-logs "$(psql "select link from in_app_notifications where kind='digest'")" \
+  "pointing at the screen that holds the detail, because an alarm with no map is a nag"
+
+# 3) THE ONE THAT MATTERS: NO FAILURE IS REPORTED TWICE. Run it again, immediately.
+rundigest > /dev/null
+ok 1 "$(digests)" "running the job again reports nothing — a failure is reported once, however often it runs"
+ok 1 "$(psql "select count(*) from workflow_failure_digests where tenant_id='$RIYADH' and environment='live'")" \
+  "and the ledger still holds exactly one window for the day"
+
+# 4) THE WINDOWS TILE THE TIMELINE. A digest sent yesterday must leave today's starting where it
+# ended — not 24 hours before now, which would re-report the overlap, and not at today's midnight,
+# which would drop whatever happened in between.
+dgclean
+seedfail "$RIYADH" live notify 1
+psql "insert into workflow_failure_digests (tenant_id, environment, window_start, window_end, failures, recipients)
+      select '$RIYADH'::uuid, 'live',
+             (select date_trunc('day', now() at time zone 'Asia/Riyadh') at time zone 'Asia/Riyadh') - interval '2 days',
+             (select date_trunc('day', now() at time zone 'Asia/Riyadh') at time zone 'Asia/Riyadh') - interval '1 day',
+             0, 0" > /dev/null
+rundigest > /dev/null
+ok true "$(psql "select (min(window_end) = max(window_start))::text from workflow_failure_digests
+                 where tenant_id='$RIYADH' and environment='live'")" \
+  "the next window starts exactly where the last one ended — no gap to lose a failure in, no overlap"
+ok 1 "$(digests)" "and the failure inside that window is reported, having never been reported before"
+
+# The window stretching after an outage is the behaviour that stops failures being dropped. A message
+# that then said "yesterday" would spend that correctness on a sentence sending the reader to the
+# wrong day of the run log.
+dgclean
+seedfail "$RIYADH" live set_field 1
+psql "insert into workflow_failure_digests (tenant_id, environment, window_start, window_end, failures, recipients)
+      select '$RIYADH'::uuid, 'live',
+             (select date_trunc('day', now() at time zone 'Asia/Riyadh') at time zone 'Asia/Riyadh') - interval '4 days',
+             (select date_trunc('day', now() at time zone 'Asia/Riyadh') at time zone 'Asia/Riyadh') - interval '3 days',
+             0, 0" > /dev/null
+rundigest > /dev/null
+ok "1 workflow action failed in the 3 days since the last digest" \
+  "$(psql "select title from in_app_notifications where kind='digest'")" \
+  "a digest after an outage says the window it really covers, not 'yesterday'"
+
+# 5) MULTI-TENANCY AND ADR-0012. A digest that folded workspaces together would tell one workspace's
+# manager about another's flows; one that folded environments together would report a rehearsal as a
+# production incident. Both are asserted at once, with four different failure counts in play.
+dgclean
+seedfail "$RIYADH" live set_field 2
+seedfail "$RIYADH" sandbox set_field 5
+seedfail "$JEDDAH" live lock_record 1
+rundigest > /dev/null
+ok "2" "$(psql "select failures from workflow_failure_digests where tenant_id='$RIYADH' and environment='live'")" \
+  "a workspace's Live digest counts its Live failures and nothing else"
+ok "5" "$(psql "select failures from workflow_failure_digests where tenant_id='$RIYADH' and environment='sandbox'")" \
+  "its Sandbox rehearsal is reported separately, which is what makes rehearsing worth doing"
+ok "1" "$(psql "select failures from workflow_failure_digests where tenant_id='$JEDDAH' and environment='live'")" \
+  "and another workspace's failures are its own"
+ok 1 "$(psql "select count(*) from in_app_notifications n join users u on u.id=n.recipient_user_id
+              where n.kind='digest' and u.email='manager@qparts.local' and n.environment='live'")" \
+  "the Live digest lands once in the Live inbox of the one manager who should get it"
+ok 0 "$(psql "select recipients from workflow_failure_digests where tenant_id='$JEDDAH' and environment='live'")" \
+  "a workspace with no manager records that it had nowhere to send it, rather than failing silently"
+
+# 6) A DIGEST OF FAILURES, NOT OF THINGS NOT DONE. 'capped' is the engine refusing on purpose and
+# 'skipped' is an action declining itself; folding either in would make the headline number mean
+# something much less alarming than it says, on the one message that exists to alarm.
+dgclean
+seedfail "$RIYADH" live set_field 1
+psql "insert into workflow_action_runs (tenant_id, environment, entity_type, entity_id, transition_key,
+        action, params, outcome, detail, ran_at)
+      values ('$RIYADH'::uuid,'live','rfq',gen_random_uuid(),'a>b','notify','{}'::jsonb,'capped','over',now() - interval '1 day'),
+             ('$RIYADH'::uuid,'live','rfq',gen_random_uuid(),'a>b','notify','{}'::jsonb,'skipped','n/a',now() - interval '1 day'),
+             ('$RIYADH'::uuid,'live','rfq',gen_random_uuid(),'a>b','notify','{}'::jsonb,'ok','done',now() - interval '1 day')" > /dev/null
+rundigest > /dev/null
+ok "1 workflow action failed yesterday" "$(psql "select title from in_app_notifications where kind='digest'")" \
+  "only what actually broke is counted — capped, skipped and successful runs are not failures"
+dgclean
+
+# ── insurance stops writing statuses behind the gateway's back ───────────────────────────────────
+# InsuranceService was the last service in the system still doing `update rfqs set status_id = …` by
+# hand. Everything below is a consequence that had no visible symptom: an insurance move appeared in
+# no history, in no queue, and — the one that matters for a rules engine — under no rule. A workspace
+# could draw a flow that governed every arrow except the two an insurer is involved in, and nothing
+# anywhere would have said so.
+insclean(){
+  wfclean
+  psql "delete from workflow_auto_fired; delete from workflow_action_runs; delete from status_logs;
+        delete from workflow_record_state where entity_id in (select id from rfqs where plate_number like 'INS-%');
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'INS-%');
+        delete from rfqs where plate_number like 'INS-%'" > /dev/null
+}
+insclean
+INSCO=$(psql "select id from insurance_companies where tenant_id='$RIYADH' and name='Guard Insurer' limit 1")
+[ -z "$INSCO" ] && INSCO=$(curl -s "${AR[@]}" -X POST "$B/api/insurance/companies" \
+  -d '{"name":"Guard Insurer","suggestedDiscountPct":0}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+insured(){ # $1 = plate -> echoes the new rfq id, already set to an insurance payer
+  local rid
+  rid=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"%s","items":[{"partNumber":"INS-P","quantity":1}]}' "$BR" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$rid/payer" \
+    -d "$(printf '{"payerType":"insurance","insuranceCompanyId":"%s"}' "$INSCO")"
+  echo "$rid"
+}
+
+# 1) WITH NO FLOW the behaviour is unchanged, which is the rollout promise: routing a service through
+# the gateway must not make it refuse anything it used to allow.
+INS1=$(insured INS-LOGGED)
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$INS1/insurance/send-for-approval")")" \
+  "with no workflow drawn, an insurance move still happens exactly as before"
+ok "new_rfq|sent_insurance_approval" "$(psql "select coalesce(f.code,'')||'|'||t.code from status_logs l
+                                              left join item_statuses f on f.id=l.from_status_id
+                                              join item_statuses t on t.id=l.to_status_id
+                                              where l.entity_type='rfq' and l.entity_id='$INS1'
+                                              order by l.created_at desc limit 1")" \
+  "and it is now IN THE HISTORY — the move that used to leave no trace at all"
+ok 1 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$INS1'
+               and to_status_id=(select id from item_statuses where code='sent_insurance_approval')
+               and changed_by is not null")" \
+  "credited to the person who made it, from the session rather than from the request body"
+
+# Its own state machine is unchanged, and still the thing that says these two moves have an order.
+ok 1 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$INS1/insurance/send-for-approval")")" \
+  "the hand-written state machine still refuses a second send"
+ok 0 "$(blocked "$(curl -s "${NM[@]}" -X POST "$B/api/rfqs/$INS1/insurance/approve")")" \
+  "and approving from the state it does allow still works"
+ok 2 "$(psql "select count(*) from status_logs where entity_type='rfq' and entity_id='$INS1'
+               and to_status_id in (select id from item_statuses where code in ('sent_insurance_approval','insurance_approved'))")" \
+  "so both insurance moves are events now, not silent column writes"
+
+# 2) THE POINT: A WORKFLOW RULE NOW APPLIES TO THEM. A flow that does not draw the insurance arrow
+# must refuse it, exactly as it refuses every other move off the drawn path. Before this change the
+# rule was unenforceable on this one service, and nothing said so.
+insclean
+INS2=$(insured INS-GOVERNED)
+mkflow ins-governed '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"}]}' > /dev/null
+ok 1 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$INS2/insurance/send-for-approval")")" \
+  "an insurance move that the workspace's flow does not draw is REFUSED, like any other"
+ok new_rfq "$(rfqstatus "$INS2")" "and the record does not move — the refusal is not cosmetic"
+
+# 3) DRAWN, AND THEREFORE GOVERNED IN FULL: custody, the run log and an action all follow it.
+insclean
+INS3=$(insured INS-DRAWN)
+mkflow ins-drawn '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"sent_insurance_approval","isTerminal":true,"x":340,"y":100,"ownerRoles":["company_admin"],"slaHours":6}],
+ "transitions":[{"from":"new_rfq","to":"sent_insurance_approval","labelEn":"Send to insurer","handoff":"pool",
+   "actions":[{"action":"set_field","params":{"field":"model","value":"seen by the engine"}}]}]}' > /dev/null
+ok 0 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$INS3/insurance/send-for-approval")")" \
+  "an insurance move the flow DOES draw is allowed"
+ok "manager@qparts.local" "$(psql "select u.email from workflow_record_state rs join users u on u.id=rs.assignee_user_id
+                                   where rs.entity_type='rfq' and rs.entity_id='$INS3'")" \
+  "custody follows it, so an insurer request lands on a desk instead of nowhere"
+ok true "$(psql "select (due_at is not null)::text from workflow_record_state where entity_type='rfq' and entity_id='$INS3'")" \
+  "the step's SLA clock runs on it like any other work"
+ok "seen by the engine" "$(psql "select model from rfqs where id='$INS3'")" \
+  "and an action configured on that arrow actually fires — the move is a workflow event now"
+ok 1 "$(psql "select count(*) from workflow_action_runs where entity_id='$INS3'")" \
+  "recorded in the run log, where every other consequence of a move already was"
+insclean
+
+# ── MY WORK REACHES THE PEOPLE IT IS FOR ─────────────────────────────────────────────────────────
+# WorkflowController is @PlatformOnly() at class level because almost all of it is flow AUTHORING.
+# Two of its routes are not: My Work and claiming. Custody assigns work to tenant_memberships roles,
+# and the custody checks above already prove a pooled record lands on a workspace manager — who,
+# until now, could neither see it nor take it. The screen existed for people who could not open it.
+STFTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"staff@qparts.local","password":"staff1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+ST=(-H "Authorization: Bearer $STFTOK" -H "X-Tenant: riyadh" -H "Content-Type: application/json")
+code(){ curl -s -o /dev/null -w '%{http_code}' "$@"; }
+
+ok 200 "$(code "${NM[@]}" "$B/api/admin/workflows/my-work")" \
+  "the workspace manager custody hands records to can finally open My Work"
+ok 200 "$(code "${ST[@]}" "$B/api/admin/workflows/my-work")" \
+  "and so can a service advisor — every role the engine may assign work to"
+
+# The door is still a door. Cancelling @PlatformOnly() for a route without naming who may come
+# through would have opened the workspace's internal queue to a vendor's session.
+psql "insert into users (email, full_name, password_hash, is_active)
+      values ('workvendor@qparts.local','Work Vendor','$HASH',true)
+      on conflict (email) do update set is_active=true" > /dev/null
+psql "insert into tenant_memberships (tenant_id, user_id, role, is_active)
+      select '$RIYADH'::uuid, id, 'vendor_user', true from users where email='workvendor@qparts.local'
+      on conflict do nothing" > /dev/null
+VWTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"workvendor@qparts.local","password":"admin1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+ok 403 "$(code -H "Authorization: Bearer $VWTOK" -H "X-Tenant: riyadh" "$B/api/admin/workflows/my-work")" \
+  "a role the engine never assigns work to is still refused — the route names who may come through"
+
+# AUTHORING IS UNTOUCHED. The exception is per route, so a manager who can now read their own queue
+# still cannot list, draw or publish a rule.
+ok 403 "$(code "${NM[@]}" "$B/api/admin/workflows")" "a workspace manager still cannot list the flows"
+ok 403 "$(code "${NM[@]}" "$B/api/admin/workflows/catalog")" "nor read the vocabulary they are built from"
+ok 403 "$(code "${NM[@]}" -X PUT "$B/api/admin/workflows/00000000-0000-0000-0000-000000000000/graph" -d '{"steps":[],"transitions":[]}')" \
+  "nor draw one — the authoring surface stays platform-only, which is the whole reason for the door"
+
+# AND THEY CAN ACT ON IT. A queue you can see and cannot take from is a list, not a queue. The pooled
+# record here is created the same way the custody section creates one: a step owned by a role, and a
+# `pool` handoff on the arrow into it.
+insclean
+psql "delete from workflow_record_state" > /dev/null
+mkflow work-pool '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","isTerminal":true,"x":340,"y":100,"ownerRoles":["branch_manager"]}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","handoff":"pool"}]}' > /dev/null
+psql "update tenant_memberships set is_active=false
+      where tenant_id='$RIYADH' and user_id=(select id from users where email='multi@qparts.local')" > /dev/null
+pick_winner WORK-POOL > /dev/null
+psql "update tenant_memberships set is_active=true
+      where tenant_id='$RIYADH' and user_id=(select id from users where email='multi@qparts.local')" > /dev/null
+MBTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"multi@qparts.local","password":"multi1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+MB=(-H "Authorization: Bearer $MBTOK" -H "X-Tenant: riyadh" -H "Content-Type: application/json")
+WKIT=$(psql "select i.id from rfq_items i join rfqs r on r.id=i.rfq_id where r.plate_number='WORK-POOL' limit 1")
+ok 1 "$(curl -s "${MB[@]}" "$B/api/admin/workflows/my-work" | $PY -c "
+import sys, json; d = json.load(sys.stdin); print(len(d['pool']))")" \
+  "an unclaimed record owned by their role shows up in the branch manager's pool"
+ok 201 "$(code "${MB[@]}" -X POST "$B/api/admin/workflows/records/rfq_item/$WKIT/claim" -d "{}")" \
+  "and they can take it — the claim endpoint opens with the screen that offers the button"
+ok "multi@qparts.local" "$(psql "select u.email from workflow_record_state rs join users u on u.id=rs.assignee_user_id
+                                 where rs.entity_id='$WKIT'")" \
+  "custody really moves to them, rather than the button reporting success and doing nothing"
+ok 1 "$(curl -s "${MB[@]}" "$B/api/admin/workflows/my-work" | $PY -c "
+import sys, json; d = json.load(sys.stdin); print(len(d['mine']))")" \
+  "and it moves from the pool into what is theirs, which is the whole loop the screen exists for"
+
+# The nav has to offer it, or the fix is an endpoint nobody can reach from the product.
+ok 1 "$(/usr/bin/sed -n '/export const workspaceNav/,/^export const /p' "$API_DIR/../web/src/nav.tsx" \
+        | /usr/bin/grep -c 'path: "/my-work"')" \
+  "the WORKSPACE persona's nav carries the link, not only the platform one it already had"
+
+insclean
+psql "update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'WORK-%');
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'WORK-%'));
+      delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'WORK-%');
+      delete from workflow_record_state where entity_id in (select id from rfq_items where rfq_id in (select id from rfqs where plate_number like 'WORK-%'));
+      delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'WORK-%');
+      delete from workflow_record_state where entity_id in (select id from rfqs where plate_number like 'WORK-%');
+      delete from notification_log where template='vendor_rfq_invite';
+      delete from rfqs where plate_number like 'WORK-%';
+      delete from tenant_memberships where user_id in (select id from users where email='workvendor@qparts.local');
+      delete from users where email='workvendor@qparts.local';
+      delete from in_app_notifications; delete from notification_log where channel='in_app';
+      delete from workflow_action_runs; delete from status_logs" > /dev/null

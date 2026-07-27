@@ -256,8 +256,11 @@ export default function AppShell() {
                     <span className="block text-[13px] font-semibold leading-tight text-ink">
                       Communications
                     </span>
+                    {/* The badge counts IN-APP notifications, which is what this button now opens.
+                        Leaving the old "WhatsApp & Gmail" subtitle here would have pointed a real
+                        number at two channels that are still not connected. */}
                     <span className="block truncate text-[11px] leading-tight text-muted">
-                      WhatsApp &amp; Gmail
+                      Notifications &amp; channels
                     </span>
                   </span>
                 )}

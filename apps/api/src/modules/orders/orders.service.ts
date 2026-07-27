@@ -62,12 +62,10 @@ export class OrdersService {
         );
       }
 
-      const confirmedStatusId = (
-        (await tx.execute(
-          sql`select id from item_statuses where code = 'confirmed' limit 1`,
-        )) as Array<{ id: string }>
-      )[0].id;
-
+      // The order and its lines are inserted with NO status: an order is BORN at 'confirmed', which
+      // makes that an entry event, and entry is written by the status gateway below (QNEW-90 item 7).
+      // Until now this was the second place a record's first status appeared from nowhere — no
+      // status_logs row for it, and an order bound to a flow version only from its second status on.
       const [order] = await tx
         .insert(schema.orders)
         .values({
@@ -75,22 +73,33 @@ export class OrdersService {
           environment: rfq.environment, // order inherits the RFQ's environment
           rfqId,
           orderNumber: rfq.order_number, // persists from the RFQ
-          statusId: confirmedStatusId,
         })
         .returning({ id: schema.orders.id });
 
-      await tx.insert(schema.orderItems).values(
-        winners.map((w) => ({
-          tenantId: ctx.tenantId!,
-          environment: rfq.environment, // a line always lives in the same environment as its order
-          orderId: order.id,
-          rfqItemId: w.id,
-          finalPartNumber: w.part_number,
-          approvedQty: w.quantity,
-          winningVendorQuoteItemId: w.winning_vendor_quote_item_id,
-          statusId: confirmedStatusId,
-        })),
-      );
+      const orderItems = await tx
+        .insert(schema.orderItems)
+        .values(
+          winners.map((w) => ({
+            tenantId: ctx.tenantId!,
+            environment: rfq.environment, // a line always lives in the same environment as its order
+            orderId: order.id,
+            rfqItemId: w.id,
+            finalPartNumber: w.part_number,
+            approvedQty: w.quantity,
+            winningVendorQuoteItemId: w.winning_vendor_quote_item_id,
+          })),
+        )
+        .returning({ id: schema.orderItems.id });
+
+      // Lines before the header, for the reason spelled out in RfqService.create(): an arrow out of
+      // 'confirmed' may be gated on every line having reached a status, and the header's entry runs
+      // that check.
+      await this.status.enterMany(tx, ctx, {
+        entity: "order_item",
+        ids: orderItems.map((oi) => oi.id),
+        toCode: "confirmed",
+      });
+      await this.status.enter(tx, ctx, { entity: "order", id: order.id, toCode: "confirmed" });
 
       // every status move goes through the single entry point, so each one lands in status_logs
       // with its from/to and the acting user (QNEW-75)

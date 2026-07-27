@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
-import { DbService, schema, type RlsContext } from "../../db/db.service.js";
+import { DbService, schema, type RlsContext, type Tx } from "../../db/db.service.js";
 import { envOf } from "../../common/env-guards.js";
 import { StatusService, type StatusEntity } from "../../common/status.service.js";
+import { NotificationsService } from "../notifications/notifications.service.js";
 
 export const createPolicySchema = z.object({
   name: z.string().min(1),
@@ -31,7 +32,62 @@ export class ApprovalsService {
   constructor(
     private readonly dbService: DbService,
     private readonly status: StatusService,
+    private readonly notifications: NotificationsService,
   ) {}
+
+  /**
+   * TELL THE PERSON THE DECISION IS SITTING ON.
+   *
+   * This is the gap the Approvals page's own header describes: a chain creates records that are
+   * waiting BY DESIGN, and until now nothing told the approver, so the feature depended on somebody
+   * remembering to open the screen. In-app delivery is real (migration 0061), so this is a message
+   * that actually arrives rather than another notification_log row nobody reads.
+   *
+   * Written inside the CALLER's transaction on purpose. If the request is rolled back — a gate that
+   * failed, a conflicting pending request — the notification goes with it, so nobody is ever told to
+   * go and approve something that does not exist.
+   *
+   * SILENT WHEN THE RECIPIENT IS THE ACTOR. Telling somebody what they just did themselves is how an
+   * inbox teaches people to ignore it, and the segregation-of-duties rule below means a requester who
+   * is also the approver cannot act on it anyway.
+   */
+  private async notify(
+    tx: Tx,
+    ctx: RlsContext,
+    to: string | null | undefined,
+    n: { title: string; body: string; kind: string },
+  ): Promise<void> {
+    if (!to || to === ctx.userId) return;
+    await this.notifications.sendInApp(tx, {
+      tenantId: ctx.tenantId!,
+      environment: envOf(ctx),
+      recipientUserId: to,
+      title: n.title,
+      body: n.body,
+      link: "/approvals", // the screen that can act on it; a bare notice with no destination is a nag
+      kind: n.kind,
+    });
+  }
+
+  /** Who the request is sitting with at a given level, or null when the level is unconfigured. */
+  private async approverAtLevel(tx: Tx, policyId: string, level: number): Promise<string | null> {
+    const row = (
+      (await tx.execute(sql`
+        select approver_user_id from approval_levels
+        where policy_id = ${policyId}::uuid and level_order = ${level} limit 1`)) as Array<{
+        approver_user_id: string | null;
+      }>
+    )[0];
+    return row?.approver_user_id ?? null;
+  }
+
+  /** "new_rfq>priced" is storage, not language — the inbox has to read like a sentence. */
+  private static moveLabel(entityType: string, transitionKey?: string | null): string {
+    const what = entityType.replace(/_/g, " ");
+    if (!transitionKey) return `a ${what}`;
+    const [from, to] = transitionKey.split(">");
+    return `a ${what} moving from ${(from ?? "").replace(/_/g, " ")} to ${(to ?? "").replace(/_/g, " ")}`;
+  }
 
   async createPolicy(ctx: RlsContext, dto: z.infer<typeof createPolicySchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
@@ -145,6 +201,12 @@ export class ApprovalsService {
                 ${dto.entityId}::uuid, ${ctx.userId}::uuid, 1, 'pending', ${dto.transitionKey},
                 (select full_name from users where id = ${ctx.userId}::uuid))
         returning id`)) as Array<{ id: string }>;
+
+      await this.notify(tx, ctx, await this.approverAtLevel(tx, policy.id, 1), {
+        title: "An approval is waiting on you",
+        body: `Sign-off was asked for on ${ApprovalsService.moveLabel(dto.entityType, dto.transitionKey)}.`,
+        kind: "approval",
+      });
       return { requestId: r.id, status: "pending", currentLevel: 1, joined: false };
     });
   }
@@ -181,6 +243,12 @@ export class ApprovalsService {
           throw new ConflictException("this entity already has a pending approval request");
         throw e;
       }
+
+      await this.notify(tx, ctx, await this.approverAtLevel(tx, policy.id, 1), {
+        title: "An approval is waiting on you",
+        body: `Sign-off was asked for on ${ApprovalsService.moveLabel(dto.entityType)}.`,
+        kind: "approval",
+      });
       return { requestId: r.id, status: "pending", currentLevel: 1 };
     });
   }
@@ -239,6 +307,15 @@ export class ApprovalsService {
         await tx.execute(
           sql`update approval_requests set overall_status = 'rejected' where id = ${requestId}::uuid`,
         );
+        // The person who asked is the one whose work just stopped. Without this the request simply
+        // disappears from their list and they are left to work out why on their own.
+        await this.notify(tx, ctx, req.requested_by, {
+          title: "Your request was turned down",
+          body:
+            `${ApprovalsService.moveLabel(req.entity_type, req.transition_key)} was not approved.` +
+            (dto.comment ? ` Reason: ${dto.comment}` : ""),
+          kind: "approval",
+        });
         return { requestId, status: "rejected" };
       }
 
@@ -268,6 +345,15 @@ export class ApprovalsService {
             });
           }
         }
+        // Told AFTER the move, so the notification can only exist if the move did. Ordering it the
+        // other way round would announce a completed approval that a failed gate then rolled back.
+        await this.notify(tx, ctx, req.requested_by, {
+          title: "Your request was approved",
+          body: `${ApprovalsService.moveLabel(req.entity_type, req.transition_key)} has been signed off${
+            req.transition_key ? " and carried forward" : ""
+          }.`,
+          kind: "approval",
+        });
         return { requestId, status: "approved", moved: !!req.transition_key };
       }
       // guard the advance on the level we actually acted on
@@ -275,6 +361,14 @@ export class ApprovalsService {
         sql`update approval_requests set current_level = current_level + 1
             where id = ${requestId}::uuid and current_level = ${req.current_level}`,
       );
+      // A multi-level chain hands the decision to the NEXT person. They are the one who has to do
+      // something now, so they are the one who gets told — otherwise every level after the first
+      // waits on somebody noticing, which is the whole failure this delivery path exists to end.
+      await this.notify(tx, ctx, await this.approverAtLevel(tx, req.policy_id, req.current_level + 1), {
+        title: "An approval is waiting on you",
+        body: `${ApprovalsService.moveLabel(req.entity_type, req.transition_key)} has reached your step of the chain.`,
+        kind: "approval",
+      });
       return { requestId, status: "pending", currentLevel: req.current_level + 1 };
     });
   }

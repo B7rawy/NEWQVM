@@ -4,6 +4,7 @@ import type { Tx } from "../db/db.service.js";
 import { envOf, type Environment } from "./env-guards.js";
 import { runGates, type GateConfig, type GateFailure } from "../modules/workflow/gates.js";
 import { runActions, type ActionConfig } from "../modules/workflow/actions.js";
+import { NotificationsService } from "../modules/notifications/notifications.service.js";
 import {
   evaluate, describe, gatherFacts, isEmptyCondition, type Condition,
 } from "../modules/workflow/conditions.js";
@@ -64,6 +65,8 @@ export interface StatusContext {
    * engine has a specific closed cycle available to it, because the final approval performs the move
    * (0052). A hard depth cap is cruder than cycle detection and strictly better behaved: it stops in
    * bounded time whatever shape the flow is.
+   *
+   * It is ALSO what makes a system actor's own write unable to restart the rules — see reevaluate().
    */
   autoDepth?: number;
 }
@@ -101,6 +104,13 @@ export class GateNotSatisfiedException extends ConflictException {
 
 @Injectable()
 export class StatusService {
+  /**
+   * The ONLY dependency, and it is here so that the `notify` action can exist without reaching past
+   * the single side-effect boundary. Nothing on the guard/gate/log path touches it — a status move
+   * that configures no notify action never calls it at all.
+   */
+  constructor(private readonly notifications: NotificationsService) {}
+
   /**
    * The roles this actor genuinely holds in this workspace.
    *
@@ -161,6 +171,65 @@ export class StatusService {
     ctx: StatusContext,
     input: { entity: StatusEntity; ids: string[]; toCode: string },
   ): Promise<Array<{ changed: boolean; fromStatusId: string | null; toStatusId: string }>> {
+    return this.write(tx, ctx, input, false);
+  }
+
+  /**
+   * A record ENTERS the flow — QNEW-90 item 7, the `created` trigger, adopted minimally.
+   *
+   * Until this existed, creating an RFQ or confirming an order wrote status_id straight onto the new
+   * row. The consequence was not cosmetic: a record's FIRST status was the one status it ever held
+   * that produced no status_logs row (so time-in-first-status could not be measured and the history
+   * of every record began mid-life), and nothing bound it to the flow version it was born under, so
+   * "a record executes the flow that was live when it entered" was true of every status except the
+   * one it entered at.
+   *
+   * ENTRY IS NOT REFUSABLE, AND THAT IS THE WHOLE DESIGN CONSTRAINT. A workspace with a half-drawn
+   * flow must still be able to raise an RFQ. So this deliberately runs NONE of the machinery that
+   * can say no — no arrow lookup, no roles, no gates, no approval — because there is no arrow: the
+   * record is arriving from outside the flow, not moving along it. What it does instead is bind the
+   * record to the flow version live right now, which is the fact that was missing. Everything the
+   * flow has to say about the record starts applying on its first real MOVE, exactly as before.
+   *
+   * Callers insert the row with status_id NULL and then call this, inside the same transaction. A
+   * NULL status is never observable outside it, and doing it in this order is what lets the entry be
+   * a genuine from-nothing→somewhere event rather than a self-transition the gateway would discard.
+   *
+   * THAT IS THE ONLY THING IT IS FOR. Because it asks the workflow nothing, calling it on a record
+   * that already has a status would move that record past every rule the flow has — use
+   * transitionMany, which is what the rest of the system does.
+   */
+  async enterMany(
+    tx: Tx,
+    ctx: StatusContext,
+    input: { entity: StatusEntity; ids: string[]; toCode: string },
+  ): Promise<Array<{ changed: boolean; fromStatusId: string | null; toStatusId: string }>> {
+    return this.write(tx, ctx, input, true);
+  }
+
+  /** One record entering the flow. See enterMany. */
+  async enter(
+    tx: Tx,
+    ctx: StatusContext,
+    input: { entity: StatusEntity; id: string; toCode: string },
+  ): Promise<{ changed: boolean; fromStatusId: string | null; toStatusId: string }> {
+    const [res] = await this.enterMany(tx, ctx, { ...input, ids: [input.id] });
+    return res;
+  }
+
+  /**
+   * The shared body of transitionMany and enterMany. `entry` decides which question is being asked
+   * of the workflow — "may this record take this arrow" or "which flow is this record joining" —
+   * and nothing else differs, so the write, the log and the auto-advance cannot drift apart between
+   * the two. A second function that also writes status_id is the one thing this file exists to
+   * prevent.
+   */
+  private async write(
+    tx: Tx,
+    ctx: StatusContext,
+    input: { entity: StatusEntity; ids: string[]; toCode: string },
+    entry: boolean,
+  ): Promise<Array<{ changed: boolean; fromStatusId: string | null; toStatusId: string }>> {
     const spec = ENTITIES[input.entity];
     if (!spec) throw new BadRequestException(`status changes are not supported for '${input.entity}'`);
     if (input.ids.length === 0) return [];
@@ -208,9 +277,17 @@ export class StatusService {
 
     // ── the guard: is this move one the workspace's workflow actually permits? ──
     /** Gates that were waived on this move, so the log can say what was let through and why. */
-    const overridden = await this.assertTransitionAllowed(
-      tx, ctx, spec, input.entity, moving, toStatusId, input.toCode,
-    );
+    const overridden: GateFailure[] = [];
+    if (entry) {
+      // Nothing is waived on an entry because nothing was asked: see enterMany.
+      await this.bindOnEntry(tx, ctx, spec, input.entity, moving, toStatusId);
+    } else {
+      overridden.push(
+        ...(await this.assertTransitionAllowed(
+          tx, ctx, spec, input.entity, moving, toStatusId, input.toCode,
+        )),
+      );
+    }
 
     if (moving.length > 0) {
       const movingIds = sql.join(
@@ -312,6 +389,87 @@ export class StatusService {
         )
       limit 1`))[0] as { kind: string; reason: string } | undefined;
     return row ?? null;
+  }
+
+  /**
+   * Bind a record that is ENTERING to the flow version live right now. The whole of the entry event
+   * that is not simply "write the status and log it".
+   *
+   * IT CANNOT REFUSE. There is no `throw` anywhere in here and there must never be one: raising an
+   * RFQ is the highest-traffic path in the product, and a workspace whose flow is half drawn — or
+   * whose flow deliberately says nothing about how requests begin — has to be able to trade. Every
+   * shape of missing configuration therefore falls out the same way, by doing less rather than by
+   * saying no:
+   *
+   *   no active default flow  → no binding. Identical to the behaviour before the engine existed.
+   *   flow has no step for the arrival status → no binding. The record is genuinely not on this
+   *     flow, so claiming it is would put a step_entered_at and an SLA clock on a step it is not
+   *     standing on, and would hand somebody custody of a record the flow never described.
+   *
+   * In both cases the record's later moves fall back to today's default flow exactly as they did
+   * before, so an unbound entry costs nothing except the version pin.
+   *
+   * `is_entry` IS DELIBERATELY NOT CONSULTED. A flow has exactly one step marked as its start
+   * (workflow_steps_entry_uq), but four different entity kinds enter this engine at four different
+   * statuses — an rfq at new_rfq, an order at confirmed. Requiring the arrival status to be THE
+   * entry step would mean an order could never be bound at birth, which is precisely the record
+   * whose first status is written by another service and never logged.
+   */
+  private async bindOnEntry(
+    tx: Tx,
+    ctx: StatusContext,
+    spec: { table: string; domain: "item" | "vendor" },
+    entity: StatusEntity,
+    entering: Array<{ id: string; status_id: string | null }>,
+    toStatusId: string,
+  ): Promise<void> {
+    if (entering.length === 0 || !ctx.tenantId) return;
+
+    const active = (await tx.execute(sql`
+      select id from workflow_flows
+      where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+        and status_domain = ${spec.domain} and status = 'active' and is_default
+      limit 1`))[0] as { id: string } | undefined;
+    if (!active) return;
+
+    const toStep = (await tx.execute(sql`
+      select id, owner_roles, sla_hours from workflow_steps
+      where flow_id = ${active.id}::uuid
+        and coalesce(item_status_id, vendor_status_id) = ${toStatusId}::uuid
+      limit 1`))[0] as { id: string; owner_roles: string[] | null; sla_hours: number | null } | undefined;
+    if (!toStep) return;
+
+    // Custody on arrival follows the same rule a `pool` handoff follows on any other move: the
+    // destination step's owners hold it, and a step with exactly ONE possible owner auto-assigns,
+    // because leaving a record unclaimed when there is only one candidate is busywork.
+    const owners = (toStep.owner_roles ?? []) as string[];
+    let assignee: string | null = null;
+    let assigneeRole: string | null = null;
+    if (owners.length) {
+      assigneeRole = owners[0];
+      const one = (await tx.execute(sql`
+        select user_id from tenant_memberships
+        where tenant_id = ${ctx.tenantId}::uuid and is_active
+          and role::text in (${sql.join(owners.map((r) => sql`${r}`), sql`, `)})
+        limit 2`)) as Array<{ user_id: string }>;
+      if (one.length === 1) assignee = one[0].user_id;
+    }
+    const due = toStep.sla_hours
+      ? sql`now() + ${`${toStep.sla_hours} hours`}::interval`
+      : sql`null::timestamptz`;
+
+    for (const m of entering) {
+      // ON CONFLICT DO NOTHING, unlike the move path's DO UPDATE. A record can only be born once;
+      // if a row is already here then this is not an entry at all, and quietly rewriting the flow
+      // binding of a record already mid-flight is exactly the strand-an-order-mid-version failure
+      // the binding exists to prevent.
+      await tx.execute(sql`
+        insert into workflow_record_state (tenant_id, environment, entity_type, entity_id, status_domain,
+                                           flow_id, assignee_user_id, assignee_role, step_entered_at, due_at)
+        values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${entity}, ${m.id}::uuid, ${spec.domain},
+                ${active.id}::uuid, ${assignee}::uuid, ${assigneeRole}, now(), ${due})
+        on conflict (tenant_id, environment, entity_type, entity_id) do nothing`);
+    }
   }
 
   private async assertTransitionAllowed(
@@ -509,28 +667,6 @@ export class StatusService {
         }
       }
 
-      // ── what this move DOES ──────────────────────────────────────────────────────────────
-      // Placed after every rule that could still refuse the move: an action that fired for a move
-      // which was then rejected would be a consequence without a cause. Nothing in here throws — a
-      // broken action must not fail a person's correct click. It lands in the run log instead,
-      // which is the whole reason that log exists.
-      const actionCfgs = (edge.actions ?? []) as ActionConfig[];
-      if (actionCfgs.length) {
-        await runActions(
-          tx,
-          {
-            tenantId: ctx.tenantId,
-            userId: ctx.userId,
-            environment: envOf(ctx),
-            automatic: (ctx.autoDepth ?? 0) > 0,
-          },
-          entity,
-          m.id,
-          `${fromCodeStr}>${toCode}`,
-          actionCfgs,
-        );
-      }
-
       // ── custody: who is holding this record now that it has moved ────────────────────────
       // The flow says what SHOULD happen to responsibility on this arrow; this records what did.
       //   pool  — release it to the destination step's owners (the default: a move usually means
@@ -580,6 +716,50 @@ export class StatusService {
               step_entered_at  = excluded.step_entered_at,
               due_at           = excluded.due_at,
               updated_at       = now()`);
+
+      // ── what this move DOES ──────────────────────────────────────────────────────────────
+      // Placed after every rule that could still refuse the move: an action that fired for a move
+      // which was then rejected would be a consequence without a cause. Nothing in here throws — a
+      // broken action must not fail a person's correct click. It lands in the run log instead,
+      // which is the whole reason that log exists.
+      //
+      // AND AFTER CUSTODY, which is a later ordering than this block originally had. The reason is
+      // `notify`: it is the first action that reads the move rather than only writing to it, and
+      // the thing it reads is who is holding the record NOW. Run before the custody write, it saw
+      // the previous desk — or, on a record's first move, no custody row at all — so a message
+      // announcing "this is yours" went to whoever it had just stopped being. Nothing here can
+      // refuse a move, so moving the actions below it costs the original ordering nothing: every
+      // rule that could still say no is still above.
+      const actionCfgs = (edge.actions ?? []) as ActionConfig[];
+      if (actionCfgs.length) {
+        await runActions(
+          tx,
+          {
+            tenantId: ctx.tenantId,
+            userId: ctx.userId,
+            environment: envOf(ctx),
+            automatic: (ctx.autoDepth ?? 0) > 0,
+            /**
+             * THE DEPTH TRAVELS INTO THE ACTION RUN, ALWAYS ONE DEEPER — QNEW-90 item 5, third lever.
+             *
+             * An action is a consequence of a move, so anything it reaches for is engine work, even
+             * when the move itself was a person's click (depth 0 → the action runs at 1). That is
+             * what makes `set_field` unable to restart the rules: reevaluate() refuses above depth 0,
+             * so an action's own write can never be presented back to the engine as a fresh business
+             * event. Without it the loop is short and real — set_field writes a field, the field is
+             * a fact a condition reads, the re-evaluation fires the move whose action writes the
+             * field — and it would come back round with the depth budget reset to zero every lap,
+             * so MAX_AUTO_DEPTH would never see it.
+             */
+            autoDepth: (ctx.autoDepth ?? 0) + 1,
+          },
+          entity,
+          m.id,
+          `${fromCodeStr}>${toCode}`,
+          actionCfgs,
+          { notifications: this.notifications },
+        );
+      }
     }
 
     return waived;
@@ -685,6 +865,42 @@ export class StatusService {
         break; // one automatic step per pass; the recursion handles the next one
       }
     }
+  }
+
+  /**
+   * SOMETHING CHANGED AROUND THIS RECORD — look again (QNEW-90 item 7, the child events).
+   *
+   * The guard only ever ran when a human tried to move something, which meant the facts the gates
+   * read could become satisfied and nothing would notice. A vendor submits the third quote and
+   * min_quotes_per_item is now met; a delivery is recorded and every line is finally `delivered`.
+   * Before this, the record sat there until somebody happened to open it and press the button.
+   *
+   * It is a DOOR, not an engine. All it does is hand the record to the same autoAdvance the status
+   * gateway already uses after every move, so there is exactly one piece of code in this system that
+   * decides a record may carry itself forward. A second one would be the beginning of two answers to
+   * "why did this order move".
+   *
+   * ── THE REFUSAL: SYSTEM-ACTOR WRITES NEVER RE-TRIGGER RULES (QNEW-90 item 5, third lever) ──────
+   * A caller already inside an automatic chain — most concretely, a `set_field` action, which runs
+   * at depth+1 by construction (see the ctx handed to runActions) — gets nothing. That refusal is
+   * what closes the one loop the depth cap cannot see: this method does not increment the depth, it
+   * starts a pass at whatever depth it is given, so a re-evaluation reachable from inside an action
+   * run would hand the engine a fresh budget on every lap and MAX_AUTO_DEPTH would never bite.
+   * "Only a real-world event reopens the rules" is the invariant; an action writing a field is the
+   * engine talking to itself.
+   *
+   * Failures inside are swallowed by autoAdvance itself: the quote WAS submitted and the delivery
+   * WAS recorded, and a follow-on move that cannot happen is not a reason to fail either.
+   */
+  async reevaluate(
+    tx: Tx,
+    ctx: StatusContext,
+    entity: StatusEntity,
+    ids: string[],
+  ): Promise<void> {
+    if ((ctx.autoDepth ?? 0) > 0) return;
+    if (ids.length === 0) return;
+    await this.autoAdvance(tx, ctx, entity, ids);
   }
 
   /** The status a record was at before its most recent move — what "reject and restore" needs
