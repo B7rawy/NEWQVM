@@ -7,7 +7,7 @@ import {
 import { api } from "../../lib/api";
 import { useTargetWorkspace } from "../../lib/target-workspace";
 import PagesView from "./PagesView";
-import { type ActionCfg, type ActionDef } from "./ActionEditor";
+import { type ActionCfg, type ActionDef, type LibraryEntry } from "./ActionEditor";
 
 /**
  * Full-screen workflow builder. Deliberately OUTSIDE AppShell: a canvas wants the whole viewport.
@@ -133,6 +133,7 @@ export default function WorkflowCanvas() {
   /** The code-defined rule catalog. Admins pick from it; they never write a condition. */
   const [gateDefs, setGateDefs] = useState<GateDef[]>([]);
   const [actionDefs, setActionDefs] = useState<ActionDef[]>([]);
+  const [library, setLibrary] = useState<LibraryEntry[]>([]);
   const [sel, setSel] = useState<Sel | null>(null);
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -218,7 +219,7 @@ export default function WorkflowCanvas() {
       api.get<{
         itemStatuses: CatalogStatus[]; vendorStatuses: CatalogStatus[]; roles: string[];
         pages: RoutablePage[]; holders: Record<string, number>; gates: GateDef[];
-        actions: ActionDef[];
+        actions: ActionDef[]; actionLibrary: LibraryEntry[];
       }>("/admin/workflows/catalog", { tenant: target }),
     ]);
     setFlow(f);
@@ -228,6 +229,7 @@ export default function WorkflowCanvas() {
     setHolders(c.holders ?? {});
     setGateDefs(c.gates ?? []);
     setActionDefs(c.actions ?? []);
+    setLibrary(c.actionLibrary ?? []);
     setGraph({
       steps: f.steps.map((s) => ({
         status: s.status as string,
@@ -574,6 +576,31 @@ export default function WorkflowCanvas() {
   // undo entry, so ⌘Z steps back over a whole typed label rather than one character at a time.
   const patchStep = (code: string, p: Partial<Step>, coalesce?: string) =>
     commit({ ...graph, steps: steps.map((s) => (s.status === code ? { ...s, ...p } : s)) }, coalesce && `${code}:${coalesce}`);
+  /**
+   * Name the configuration in front of you so other moves can reuse it.
+   *
+   * Deliberately does NOT rewrite the action it was saved from with a receipt. A receipt means "this
+   * copy came from that entry", and this copy did not — the entry came from it. Stamping one would
+   * make the drift indicator claim a provenance that never happened, and the first time somebody
+   * edited the entry the flow would report a change it never took.
+   */
+  const saveToLibrary = async (a: ActionCfg) => {
+    const nameEn = window.prompt("Name this action (English)")?.trim();
+    if (!nameEn) return;
+    const nameAr = window.prompt("Name it in Arabic")?.trim();
+    if (!nameAr) return;
+    try {
+      await api.post("/admin/workflows/action-library",
+        { nameEn, nameAr, action: a.action, params: a.params }, { tenant: target });
+      const c = await api.get<{ actionLibrary: LibraryEntry[] }>(
+        "/admin/workflows/catalog", { tenant: target });
+      setLibrary(c.actionLibrary ?? []);
+      setMsg({ kind: "ok", text: `Saved as “${nameEn}”` });
+    } catch (e) {
+      setMsg({ kind: "err", text: (e as Error).message });
+    }
+  };
+
   const patchEdge = (key: string, p: Partial<Edge>, coalesce?: string) =>
     commit({ ...graph, edges: edges.map((e) => (`${e.from}>${e.to}` === key ? { ...e, ...p } : e)) }, coalesce && `${key}:${coalesce}`);
 
@@ -717,6 +744,8 @@ export default function WorkflowCanvas() {
                 commit({ ...graph, edges: edges.map((e) => (e.from === from && e.to === to ? { ...e, ...p } : e)) })}
               actionDefs={actionDefs}
               domainEntities={DOMAIN_ENTITIES[flow?.status_domain ?? "item"]}
+              actionLibrary={library}
+              onSaveToLibrary={saveToLibrary}
               onAskAssistant={() => setRail("assistant")}
             />
           ) : (

@@ -5,7 +5,8 @@ import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
-  assistSchema, createFlowSchema, placementSchema, saveGraphSchema, WorkflowService,
+  actionEntrySchema, assistSchema, createFlowSchema, placementSchema, saveGraphSchema,
+  WorkflowService,
 } from "./workflow.service.js";
 
 /**
@@ -58,6 +59,40 @@ export class WorkflowController {
   @Get("my-work")
   myWork(@Req() req: Request) {
     return this.svc.myWork(this.ctx(req));
+  }
+
+  /**
+   * THE ACTION LIBRARY (QNEW-90 item 3) — named, reusable action configurations for this workspace.
+   *
+   * Declared BEFORE @Get(":id") and @Put(":id/graph") for the reason page-view is: a literal segment
+   * loses to a parameter that was registered first, and "action-library" would be read as a flow id.
+   *
+   * It sits on THIS controller, under the same @PlatformOnly() door as the flows, on purpose. An
+   * entry is not something a workspace works on; it is a piece of a rule, copied verbatim into
+   * transitions that only a super admin may author. Opening it to a workspace manager would hand
+   * over the contents of a rule while the rule itself stayed shut. The run log went the other way
+   * (0059) because a failed action is something the workspace's own manager has to act on — nobody
+   * has to act on a library entry except the person building the flow.
+   */
+  @Get("action-library")
+  library(@Req() req: Request) {
+    return this.svc.library(this.ctx(req));
+  }
+
+  @Post("action-library")
+  createEntry(@Req() req: Request, @Body() body: unknown) {
+    return this.svc.createLibraryEntry(this.ctx(req), actionEntrySchema.parse(body));
+  }
+
+  /** Editing an entry changes NOTHING about flows that already use it — they run their own copy. */
+  @Put("action-library/:entryId")
+  updateEntry(@Req() req: Request, @Param("entryId") entryId: string, @Body() body: unknown) {
+    return this.svc.updateLibraryEntry(this.ctx(req), entryId, actionEntrySchema.parse(body));
+  }
+
+  @Delete("action-library/:entryId")
+  removeEntry(@Req() req: Request, @Param("entryId") entryId: string) {
+    return this.svc.removeLibraryEntry(this.ctx(req), entryId);
   }
 
   @Get(":id")

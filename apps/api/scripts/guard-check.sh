@@ -1068,3 +1068,82 @@ psql "delete from workflow_action_runs; delete from status_logs;
       delete from rfq_vendors where rfq_id='$RLR'; delete from rfq_items where rfq_id='$RLR';
       delete from notification_log where template='vendor_rfq_invite'; delete from rfqs where id='$RLR'" > /dev/null
 wfclean
+
+# ── the action library: named and reusable, without unfreezing anything (0060) ───────────────────
+# The reviewer asked for actions to be "reusable named entities in a shared library, associated to
+# rules — not embedded copies". The same ticket calls our draft→active freeze the thing we do better
+# than the tool it benchmarks against. Both are satisfiable only one way: the library is where a
+# configuration is AUTHORED, a transition holds a COPY, and the receipt records where the copy came
+# from. The engine never follows the receipt — which is what these assertions are really checking.
+wfclean
+psql "delete from workflow_actions; delete from workflow_action_runs; delete from status_logs" > /dev/null
+
+LIBE=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/action-library" \
+  -d '{"nameEn":"Express shipping","nameAr":"شحن سريع","action":"set_field","params":{"field":"shipping_type","value":"express"}}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$LIBE" ] && echo 1 || echo 0)" "a configuration can be saved under a name"
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/action-library" \
+  -d '{"nameEn":"Bogus","nameAr":"مجهول","action":"not_a_real_action","params":{}}' \
+  | $PY -c "import sys,json;print(1 if 'not an action this server knows' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "and an action key this server does not know is refused before it can be copied onto ten arrows"
+
+LIBF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-lib","nameAr":"مكتبة","nameEn":"Library","isDefault":true}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$LIBF/graph" -d "{\"selectionCondition\":{},
+ \"steps\":[{\"status\":\"new_rfq\",\"isEntry\":true,\"x\":80,\"y\":100},
+           {\"status\":\"priced\",\"x\":340,\"y\":100},
+           {\"status\":\"confirmed\",\"isTerminal\":true,\"x\":600,\"y\":100}],
+ \"transitions\":[{\"from\":\"new_rfq\",\"to\":\"priced\",\"labelEn\":\"Price\"},
+   {\"from\":\"priced\",\"to\":\"confirmed\",\"labelEn\":\"Confirm line\"},
+   {\"from\":\"new_rfq\",\"to\":\"confirmed\",\"labelEn\":\"Confirm header\",
+    \"actions\":[{\"action\":\"set_field\",\"params\":{\"field\":\"shipping_type\",\"value\":\"express\"},
+                 \"ref\":{\"id\":\"$LIBE\",\"name\":\"Express shipping\"}}]}]}"
+# zod's z.object strips keys it does not declare, so the receipt is the exact kind of field that
+# vanishes on the way in and takes the whole feature with it
+ok 1 "$(psql "select count(*) from workflow_transitions t join workflow_flows f on f.id=t.flow_id
+              where f.flow_key='smoke-lib'
+                and t.actions @> jsonb_build_array(jsonb_build_object('ref', jsonb_build_object('id', '$LIBE')))")" \
+  "the receipt survives the save instead of being stripped by the schema"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" | $PY -c "
+import sys, json
+lib = json.load(sys.stdin).get('actionLibrary') or []
+print(next((e.get('used_by_flows') for e in lib if e.get('id') == '$LIBE'), 'missing'))")" \
+  "and the entry knows how many flows are built from it"
+
+# THE ONE THAT MATTERS. Activate, then edit the saved action, then move a real record.
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$LIBF/activate"
+ok active "$(psql "select status from workflow_flows where flow_key='smoke-lib'")" "the flow is live"
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/action-library/$LIBE" \
+  -d '{"nameEn":"Express shipping","nameAr":"شحن سريع","action":"set_field","params":{"field":"shipping_type","value":"CHANGED"}}'
+ok CHANGED "$(psql "select params->>'value' from workflow_actions where id='$LIBE'")" \
+  "the saved action really was edited (or the next check proves nothing)"
+
+LIBR=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "$(printf '{"workshopBranchId":"%s","plateNumber":"LIB-1","items":[{"partNumber":"P1","quantity":1}]}' "$BR")" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+LIBTOK=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$LIBR/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+LIBIT=$(psql "select id from rfq_items where rfq_id='$LIBR' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$LIBTOK/quote" -H 'Content-Type: application/json' \
+  -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$LIBIT")"
+LIBQI=$(psql "select id from rfq_vendor_items where rfq_item_id='$LIBIT' limit 1")
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$LIBR/items/$LIBIT/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$LIBQI")"
+curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/rfqs/$LIBR/confirm" -d '{}'
+ok express "$(psql "select coalesce(shipping_type,'') from rfqs where id='$LIBR'")" \
+  "an ACTIVE flow runs the copy it froze, not what the saved action says today"
+
+# Deleting the entry is a library operation, not a flow operation.
+curl -s -o /dev/null "${AR[@]}" -X DELETE "$B/api/admin/workflows/action-library/$LIBE"
+ok 1 "$(psql "select count(*) from workflow_transitions t join workflow_flows f on f.id=t.flow_id
+              where f.flow_key='smoke-lib' and jsonb_array_length(t.actions) > 0")" \
+  "and deleting the saved action leaves the flows built from it working"
+
+psql "delete from workflow_actions; delete from workflow_action_runs; delete from status_logs;
+      update rfq_items set winning_vendor_quote_item_id=null where rfq_id='$LIBR';
+      delete from order_items where order_id in (select id from orders where rfq_id='$LIBR');
+      delete from orders where rfq_id='$LIBR';
+      delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id='$LIBR');
+      delete from rfq_vendors where rfq_id='$LIBR'; delete from rfq_items where rfq_id='$LIBR';
+      delete from notification_log where template='vendor_rfq_invite'; delete from rfqs where id='$LIBR'" > /dev/null
+wfclean

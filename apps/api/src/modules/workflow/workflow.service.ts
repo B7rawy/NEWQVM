@@ -88,11 +88,30 @@ const transitionSchema = z.object({
   priority: z.number().int().min(0).max(999).optional().default(0),
   /** What this move does to custody — see 0049. */
   handoff: z.enum(["pool", "keep", "actor"]).optional().default("pool"),
-  /** What happens after this move succeeds — see actions.ts and 0056. */
+  /**
+   * What happens after this move succeeds — see actions.ts and 0056.
+   *
+   * `ref` is the RECEIPT left behind when the configuration was taken from the action library
+   * (0060): {id, name} of the entry it was copied from. It MUST be declared here or the whole
+   * feature is dead on arrival — z.object strips keys it does not know, so an undeclared receipt is
+   * deleted silently on the way in and every flow saves a copy that has forgotten where it came
+   * from. Nothing follows it at run time; the copy beside it is what runs, which is what keeps an
+   * active flow's behaviour frozen while the library stays editable.
+   */
   actions: z
-    .array(z.object({ action: z.string().max(64), params: z.record(z.unknown()).optional().default({}) }))
+    .array(
+      z.object({
+        action: z.string().max(64),
+        params: z.record(z.unknown()).optional().default({}),
+        ref: z.object({ id: z.string().uuid(), name: z.string().min(1).max(120) }).nullish(),
+      }),
+    )
     .optional()
-    .default([]),
+    .default([])
+    // A null receipt is dropped rather than stored: the DB CHECK reads `exists(@.ref)`, and a JSON
+    // null exists while `@.ref.id` does not, so {"ref": null} would be refused by the database as a
+    // half receipt. The canvas sending an explicitly-cleared field is an ordinary thing to happen.
+    .transform((as) => as.map((a) => (a.ref ? a : { action: a.action, params: a.params }))),
   /** Fire this move by itself once its rules hold. Off by default — never inferred. */
   autoAdvance: z.boolean().optional().default(false),
   /** Fire automatically at most once per record, so a revisited status does not re-fire it. */
@@ -137,6 +156,20 @@ export const placementSchema = z.object({
     .transform((arr) =>
       arr.map((p) => (typeof p === "string" ? { page: p, mode: "action" as const, afterHours: null } : p)),
     ),
+});
+
+/**
+ * A LIBRARY ENTRY — a named, reusable configuration of one catalog action (QNEW-90 item 3).
+ *
+ * It holds no entity scoping of its own: which record types an action applies to belongs to the
+ * catalog entry (ActionDef.entities), so an entry inherits the scope of whatever `action` it names
+ * and the two can never drift apart.
+ */
+export const actionEntrySchema = z.object({
+  nameEn: z.string().trim().min(2).max(120),
+  nameAr: z.string().trim().min(2).max(120),
+  action: z.string().min(1).max(64),
+  params: z.record(z.unknown()).optional().default({}),
 });
 
 export const createFlowSchema = z.object({
@@ -226,7 +259,166 @@ export class WorkflowService {
           key: g.key, labelEn: g.labelEn, labelAr: g.labelAr, helpEn: g.helpEn,
           params: g.params, entities: g.entities, defaultEnforcement: g.defaultEnforcement,
         })),
+        // The saved configurations sit BESIDE the code catalog rather than replacing it: one is what
+        // the engine can do, the other is what this workspace has decided it usually wants done.
+        actionLibrary: await this.libraryRows(tx, ctx),
         holders: Object.fromEntries(holders.map((h) => [h.code, h.n])),
+      };
+    });
+  }
+
+  // ── the action library (QNEW-90 item 3) ───────────────────────────────────
+  //
+  // WHY THESE LIVE ON THE PLATFORM-ONLY AUTHORING SURFACE. WorkflowController is @PlatformOnly() at
+  // the door and every write below additionally demands super_admin, exactly like the flows — and
+  // that is right, because a library entry is not a record a workspace works on, it is a piece of a
+  // rule. It is copied verbatim into transitions whose semantics only a super admin may set, so
+  // letting a workspace manager author entries would hand them the contents of a rule while the rule
+  // itself stayed closed to them. The contrast is the run log, which is deliberately open to the
+  // workspace's own manager (0059): they are the person who must ACT when an action fails. Nobody
+  // acts on a library entry except whoever is building the flow.
+
+  /**
+   * Every entry in this workspace + environment, with how many flows carry a receipt for it.
+   *
+   * THE USAGE COUNT IS A jsonb CONTAINMENT TEST, and it counts DISTINCT flows rather than rows: an
+   * entry used on four arrows of one flow is one flow to the person asking "what will I be looking
+   * at if I change this". `t.actions @> [{"ref":{"id": …}}]` is true when SOME element of the array
+   * contains that object — element-wise containment, which is why the surrounding action and params
+   * of the copy do not have to match anything.
+   *
+   * The tenant and environment of workflow_transitions are filtered EXPLICITLY. RLS would not do it
+   * here: the tenant policy ends in `OR app_is_internal()`, and every caller of this code is
+   * platform staff by construction, so without these two predicates the count would silently span
+   * every workspace on the box.
+   */
+  private async libraryRows(tx: Tx, ctx: RlsContext) {
+    return (await tx.execute(sql`
+      select e.id, e.name_en, e.name_ar, e.action, e.params, e.created_at, e.updated_at,
+             (select count(distinct t.flow_id)::int
+                from workflow_transitions t
+               where t.tenant_id = e.tenant_id and t.environment = e.environment
+                 and t.actions @> jsonb_build_array(
+                       jsonb_build_object('ref', jsonb_build_object('id', e.id::text)))) as used_by_flows
+      from workflow_actions e
+      where e.tenant_id = ${ctx.tenantId}::uuid and e.environment = ${envOf(ctx)}
+      order by lower(e.name_en)`)) as Array<Record<string, unknown>>;
+  }
+
+  async library(ctx: RlsContext) {
+    const tenantId = this.requireTenant(ctx);
+    const rows = await this.dbService.withContext(ctx, (tx) =>
+      this.libraryRows(tx, { ...ctx, tenantId }),
+    );
+    return { count: rows.length, entries: rows };
+  }
+
+  /**
+   * An unknown action key is refused HERE, at save time, for the same reason saveGraph refuses one:
+   * a stored key the server cannot resolve is a rule that looks configured and logs "this server
+   * does not know the action" every time a record crosses it. Refusing it in the library as well as
+   * on the transition means a bad entry cannot be authored and then copied onto ten arrows before
+   * anybody finds out.
+   */
+  private assertKnownAction(action: string) {
+    if (!actionByKey(action))
+      throw new BadRequestException(
+        `'${action}' is not an action this server knows — use GET /admin/workflows/catalog`,
+      );
+  }
+
+  async createLibraryEntry(
+    ctx: RlsContext & { platformRole?: string | null },
+    dto: z.infer<typeof actionEntrySchema>,
+  ) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    this.assertKnownAction(dto.action);
+    return this.dbService.withContext(ctx, async (tx) => {
+      try {
+        const [row] = (await tx.execute(sql`
+          insert into workflow_actions (tenant_id, environment, name_en, name_ar, action, params)
+          values (${tenantId}::uuid, ${envOf(ctx)}, ${dto.nameEn}, ${dto.nameAr}, ${dto.action},
+                  ${JSON.stringify(dto.params)}::jsonb)
+          returning id, name_en, name_ar, action, params`)) as Array<Record<string, unknown>>;
+        return { ...row, used_by_flows: 0 };
+      } catch (e) {
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException(
+            `there is already a saved action called '${dto.nameEn}' — pick another name, or edit that one`,
+          );
+        throw e;
+      }
+    });
+  }
+
+  /**
+   * Edit an entry. THIS DOES NOT CHANGE ANY FLOW THAT ALREADY USES IT — a transition holds a copy,
+   * and the copy is what runs (0060). The response says so in the same words the screen must, so a
+   * caller that is not our own UI is told too rather than left to infer it.
+   */
+  async updateLibraryEntry(
+    ctx: RlsContext & { platformRole?: string | null },
+    entryId: string,
+    dto: z.infer<typeof actionEntrySchema>,
+  ) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    this.assertKnownAction(dto.action);
+    return this.dbService.withContext(ctx, async (tx) => {
+      let rows: Array<Record<string, unknown>>;
+      try {
+        rows = (await tx.execute(sql`
+          update workflow_actions
+             set name_en = ${dto.nameEn}, name_ar = ${dto.nameAr}, action = ${dto.action},
+                 params = ${JSON.stringify(dto.params)}::jsonb, updated_at = now()
+           where id = ${entryId}::uuid and tenant_id = ${tenantId}::uuid
+             and environment = ${envOf(ctx)}
+          returning id, name_en, name_ar, action, params`)) as Array<Record<string, unknown>>;
+      } catch (e) {
+        if ((e as { code?: string })?.code === "23505")
+          throw new ConflictException(
+            `there is already a saved action called '${dto.nameEn}' — pick another name`,
+          );
+        throw e;
+      }
+      if (!rows.length) throw new NotFoundException("saved action not found in this workspace");
+      const [used] = (await tx.execute(sql`
+        select count(distinct flow_id)::int as n from workflow_transitions
+        where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+          and actions @> jsonb_build_array(
+                jsonb_build_object('ref', jsonb_build_object('id', ${entryId}::text)))`)) as Array<{ n: number }>;
+      return {
+        ...rows[0],
+        used_by_flows: used?.n ?? 0,
+        note:
+          "Flows that already use this keep the copy they were built with — nothing they run has " +
+          "changed. Open a draft to pull this version in.",
+      };
+    });
+  }
+
+  /**
+   * Remove an entry from the library.
+   *
+   * DELIBERATELY NOT REFUSED WHEN IT IS IN USE, and that is what the name in the receipt buys. A
+   * flow's copy keeps working untouched, and the builder goes on showing the name the entry had,
+   * so nothing on screen becomes a bare uuid. Refusing instead would mean every retired flow ever
+   * activated held the library open forever.
+   */
+  async removeLibraryEntry(ctx: RlsContext & { platformRole?: string | null }, entryId: string) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    return this.dbService.withContext(ctx, async (tx) => {
+      const r = await tx.execute(sql`
+        delete from workflow_actions
+        where id = ${entryId}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+        returning id`);
+      if (r.length === 0) throw new NotFoundException("saved action not found in this workspace");
+      return {
+        id: entryId,
+        deleted: true,
+        note: "Flows built from it are untouched — they run their own copy, under the name it had.",
       };
     });
   }
@@ -710,6 +902,9 @@ export class WorkflowService {
           returning id`)) as Array<{ id: string }>;
         map.set(s.id as string, ns.id);
       }
+      // `actions` is copied as a whole jsonb value, so a library receipt on an element rides along
+      // into the new draft. It has to: the draft is where "this copy has drifted from the saved
+      // action, update it" is offered, and an entry the clone forgot could never be offered again.
       const trs = (await tx.execute(sql`
         select from_step_id, to_step_id, label_en, label_ar, requires_approval, allowed_roles,
                condition, priority, handoff, gates, auto_advance, auto_once, actions
@@ -895,6 +1090,11 @@ export class WorkflowService {
             required: ["status", "isEntry", "isTerminal", "x", "y"],
           },
         },
+        // THE FIFTH PLACE OF THE FIVE-PLACE RULE, answered by omission. Neither `actions` nor the
+        // library receipt on one is offered to the model: a receipt names a row by uuid, the model
+        // is shown no uuids, and the only thing it could do is invent one. That would put an entry
+        // name on the canvas that no library screen can find and that the usage count would never
+        // report. Anything a future model emits anyway is stripped below rather than trusted.
         transitions: {
           type: "array",
           items: {
@@ -929,6 +1129,13 @@ export class WorkflowService {
     const parsed = saveGraphSchema.safeParse({ steps: raw.steps, transitions: raw.transitions ?? [] });
     if (!parsed.success)
       throw new BadRequestException(`the assistant returned a graph we cannot use: ${parsed.error.issues[0]?.message}`);
+
+    // A receipt the model produced points at nothing, so it is removed before the proposal is drawn.
+    // Being forgiving of the model and strict about the RESULT is the same split used for parallel
+    // arrows below: the human reviews what lands on the canvas either way, and what lands must not
+    // claim to have come out of a library it never read.
+    for (const t of parsed.data.transitions)
+      t.actions = t.actions.map((a) => ({ action: a.action, params: a.params }));
 
     const known = new Set(catalog.map((c) => c.code));
     const invented = [...new Set(parsed.data.steps.map((s) => s.status))].filter((c) => !known.has(c));

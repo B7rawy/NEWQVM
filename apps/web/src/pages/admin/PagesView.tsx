@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, Plus, ShieldCheck, Sparkles, Trash2, Users, Wand2, X } from "lucide-react";
 import GateEditor, { type GateCfg, type GateDef } from "./GateEditor";
-import ActionEditor, { type ActionCfg, type ActionDef } from "./ActionEditor";
+import ActionEditor, { type ActionCfg, type ActionDef, type LibraryEntry } from "./ActionEditor";
 
 /**
  * PAGES — the primary way to build a workflow.
@@ -54,7 +54,7 @@ const role = (r: string) => r.replace(/_/g, " ");
 export default function PagesView({
   steps, edges, pages, catalog, roles, holders, frozen, selected,
   onSelect, onPlace, onAddStatus, onPatchStep, onAddAction, onRemoveAction, onSetGates, gateDefs,
-  onSetAfter, actionDefs, domainEntities,
+  onSetAfter, actionDefs, domainEntities, actionLibrary, onSaveToLibrary,
   onAskAssistant,
 }: {
   steps: PVStep[];
@@ -76,6 +76,8 @@ export default function PagesView({
   onSetAfter: (from: string, to: string, p: { actions: ActionCfg[]; autoAdvance: boolean; autoOnce: boolean }) => void;
   actionDefs: ActionDef[];
   domainEntities: string[];
+  actionLibrary: LibraryEntry[];
+  onSaveToLibrary: (a: ActionCfg) => void;
   gateDefs: GateDef[];
   onAskAssistant: () => void;
 }) {
@@ -452,6 +454,9 @@ export default function PagesView({
                                     domainEntities={domainEntities}
                                     autoAdvance={e.autoAdvance}
                                     autoOnce={e.autoOnce}
+                                    library={actionLibrary}
+                                    onSaveToLibrary={onSaveToLibrary}
+                                    frozen={frozen}
                                     disabled={frozen}
                                     onChange={(next) => onSetAfter(e.from, e.to, next)}
                                   />
