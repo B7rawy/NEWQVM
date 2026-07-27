@@ -420,6 +420,13 @@ list cannot write something wrong, slow, or reaching into another tenant's data.
 | `lock_record` | Freezes the record. |
 | `unlock_record` | Releases a freeze the engine placed. |
 
+Each has a **daily ceiling** per workspace (0058). The numbers measure who pays for the action:
+`set_field` 10,000, `unlock_record` 2,000, `lock_record` 500 — every success of that last one puts an
+item in front of a person, and 10,000 unexplained holds in a day would be the engine mounting a
+denial of service against the workspace's own staff. A refused attempt is logged as `capped`, a
+fourth outcome rather than `skipped` with a note, because "did not apply here" and "applied, and was
+refused for volume" are different facts. The record still moves.
+
 `notify` and `webhook` are deliberately ABSENT. `NotificationsService.send()` records an attempt and
 dispatches nothing, so a "send an email" action would be a catalog that records intentions and
 delivers none of them — the same defect as a padlock that enforces nothing. A webhook has the mirror
@@ -465,6 +472,30 @@ does not render as an empty arrow.
 attempt and dispatches nothing, so a digest would promise an email that never arrives — worse than
 telling somebody to look at the screen, and the same defect as `notify` being absent from the action
 catalog above. Until delivery is real, this screen is the notification.
+
+### The action library: named and reusable, without unfreezing anything (0060)
+
+The QNEW-90 review asked for actions to be *"reusable named entities in a shared library, associated
+to rules — not embedded copies"*. The same ticket calls our draft→active freeze the thing we do
+better than the tool it benchmarks against. Taken literally, the two cannot both hold: a shared row
+somebody edits changes what an active flow does to orders already moving through it.
+
+**The library authors. The flow remembers.**
+
+- `workflow_actions` is where a configuration is given a name — English and Arabic, per workspace,
+  per environment.
+- Adding one to a transition **copies** it into `workflow_transitions.actions` and stamps a receipt:
+  `{ action, params, ref: { id, name } }`.
+- The copy is what runs. **The engine never follows the receipt** — `status.service.ts` and
+  `actions.ts` are byte-unchanged by this feature, which is the property the whole design rests on.
+- The receipt exists for two questions a name is supposed to answer: *where did this come from* and
+  *which flows use it* (a jsonb query gives the usage count).
+- Editing an entry changes nothing that already uses it, and the builder says exactly that. On a
+  **draft**, a copy that has drifted offers a one-click "use the new version". On an **active** flow
+  that button is absent rather than disabled — an offer you cannot accept is worse than no offer.
+
+Two things this shape also buys: deleting an entry cannot break a live flow, and a workspace can
+rename its vocabulary without touching anything that is running.
 
 ### A hold is not a cancellation (0057)
 
