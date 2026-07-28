@@ -4,11 +4,14 @@ import { z } from "zod";
 import { DbService, type RlsContext, type Tx } from "../../db/db.service.js";
 import { envOf } from "../../common/env-guards.js";
 import { AiService } from "../../common/ai.service.js";
+import { StatusService, type StatusEntity } from "../../common/status.service.js";
 import { ROUTABLE_PAGES, isPageKey, pageByKey } from "./pages.js";
 import { GATES, gateByKey } from "./gates.js";
 import { ACTIONS, actionByKey } from "./actions.js";
 import { validateWebhookUrl } from "./webhook-url.js";
-import { CONDITION_FIELDS, conditionFieldByKey } from "./conditions.js";
+import {
+  CONDITION_FIELDS, conditionFieldByKey, describeSelection, type Condition,
+} from "./conditions.js";
 
 /**
  * Workflow authoring API (QNEW-64). Super-admin only for now — owner's decision: build the module
@@ -113,6 +116,22 @@ const transitionSchema = z.object({
     // null exists while `@.ref.id` does not, so {"ref": null} would be refused by the database as a
     // half receipt. The canvas sending an explicitly-cleared field is an ordinary thing to happen.
     .transform((as) => as.map((a) => (a.ref ? a : { action: a.action, params: a.params }))),
+  /**
+   * THE CROSSING (0066) — taking this arrow also hands the record to another flow.
+   *
+   * DECLARED HERE OR THE FEATURE DOES NOT EXIST: `z.object` strips keys it does not know, so an
+   * undeclared `toFlowKey` is deleted silently on the way in and every canvas save quietly wipes
+   * every border in the flow. Same trap the action-library receipt above documents.
+   *
+   * A KEY, so the target may republish without this flow needing a new version. Nullish rather than
+   * defaulted: an ordinary arrow has no target flow, and `null` is how the canvas clears one.
+   */
+  toFlowKey: z
+    .string()
+    .regex(/^[a-z0-9]+([-_][a-z0-9]+)*$/, "a flow key is lowercase words joined by - or _")
+    .max(64)
+    .nullish()
+    .transform((v) => v ?? null),
   /** Fire this move by itself once its rules hold. Off by default — never inferred. */
   autoAdvance: z.boolean().optional().default(false),
   /** Fire automatically at most once per record, so a revisited status does not re-fire it. */
@@ -183,6 +202,14 @@ export const createFlowSchema = z.object({
   nameAr: z.string().min(2).max(120),
   statusDomain: z.enum(["item", "vendor"]).default("item"),
   isDefault: z.boolean().optional().default(false),
+  /**
+   * 'handoff' declares a SUB-FLOW: records only ever arrive here by crossing an arrow that names it,
+   * never by being born into it (0066). It has to be settable at creation rather than inferred,
+   * because "no selection condition" is exactly what an unfinished flow also looks like, and guessing
+   * between the two is the difference between a flow that accepts nothing and one that accepts
+   * everything.
+   */
+  entryMode: z.enum(["selected", "handoff"]).optional().default("selected"),
 });
 
 export const assistSchema = z.object({
@@ -199,8 +226,23 @@ export const assistSchema = z.object({
 export const saveGraphSchema = z.object({
   nameEn: z.string().min(2).max(120).optional(),
   nameAr: z.string().min(2).max(120).optional(),
-  /** null = never auto-selected; {} = matches every record; {...} = a real condition. */
-  selectionCondition: z.record(z.unknown()).nullable().optional(),
+  /**
+   * null = never auto-selected; {} = matches every record; {...} = a real condition.
+   *
+   * IT IS THE SAME SCHEMA THE ARROWS USE, and that is a change from `z.record(z.unknown())` (0065).
+   * It had to be: this field is now EVALUATED at entry, and the loose record accepted shapes with a
+   * runtime meaning nobody intended — `{"any": true}` is not a condition, but `any` is not an array
+   * so isEmptyCondition() reads it as empty and the flow silently matches EVERY record. A flow that
+   * looks conditional and captures everything is the exact failure the three-state column was
+   * designed to prevent. z.object also strips undeclared keys, so a misspelt `alll` cannot ride
+   * along as decoration either.
+   */
+  selectionCondition: conditionSchema.nullable().optional(),
+  /**
+   * Which flow wins when two conditions both match. Highest first, then oldest — the rule the
+   * arrows already use. Optional because almost no workspace needs it: it only decides a tie.
+   */
+  selectionPriority: z.number().int().min(-1000).max(1000).optional(),
   canvas: z.record(z.unknown()).optional(),
   steps: z.array(stepSchema).min(1).max(200),
   transitions: z.array(transitionSchema).max(1000).default([]),
@@ -213,6 +255,12 @@ export class WorkflowService {
   constructor(
     private readonly dbService: DbService,
     private readonly ai: AiService,
+    /**
+     * The break-glass return takes a real arrow through the real guard rather than writing a status
+     * itself — see returnRecord(). Injected from the @Global StatusModule, so nothing has to be
+     * wired into WorkflowModule for it.
+     */
+    private readonly status: StatusService,
   ) {}
 
   private requireSuperAdmin(ctx: RlsContext & { platformRole?: string | null }) {
@@ -507,9 +555,20 @@ export class WorkflowService {
                coalesce(r.order_number, o.order_number, ir.order_number, oo.order_number) as reference,
                coalesce(si.label_en, so.label_en, sii.label_en, soi.label_en) as status,
                coalesce(ii.part_number, oi.final_part_number) as part,
-               f.name_en as flow
+               f.name_en as flow,
+               -- WHERE THIS RECORD CAME FROM, when it is away in a sub-flow (0066).
+               --
+               -- The join above already names the flow correctly on its own, because a crossing
+               -- rebinds rs.flow_id: an order handed to insurance reads "Insurance" here the moment
+               -- it crosses. What it could not say is that the order is a VISITOR. Without this
+               -- column a purchasing manager watching their queue sees the order leave with no
+               -- explanation, and an insurance clerk sees an order arrive with no idea whose it is
+               -- or where it goes back to. Left join, not inner: origin_flow_id is null for the
+               -- overwhelming majority of records, which have never left home.
+               of.name_en as origin_flow
         from workflow_record_state rs
         join workflow_flows f on f.id = rs.flow_id
+        left join workflow_flows of on of.id = rs.origin_flow_id
         left join rfqs       r  on rs.entity_type = 'rfq'        and r.id  = rs.entity_id
         left join orders     o  on rs.entity_type = 'order'      and o.id  = rs.entity_id
         left join rfq_items  ii on rs.entity_type = 'rfq_item'   and ii.id = rs.entity_id
@@ -571,6 +630,105 @@ export class WorkflowService {
   }
 
   /**
+   * BREAK GLASS: bring a record home from the sub-flow it is away in — 0066.
+   *
+   * WHY IT EXISTS. A crossing is refused, not half-done, so a record can never be stuck BETWEEN two
+   * flows. What it can be is stuck INSIDE one: the way home is an arrow, and an arrow can only be
+   * taken by somebody holding the role it allows. If the sub-flow's owners are all on leave, or the
+   * one return arrow allows a role nobody in this workspace has any more, the record sits there and
+   * no amount of correct engine behaviour moves it.
+   *
+   * WHY IT IS NOT A BACK DOOR, and this is the whole of its design: it does not write anything
+   * itself. It finds the return arrow the author drew and takes it through StatusService like any
+   * other move — same guard, same gates, same custody rule, ONE status_logs row, with a real
+   * changed_by so the history says a named person did this. It therefore cannot produce a state an
+   * ordinary return could not produce; what it changes is WHO may take that arrow, which is exactly
+   * the thing that was stuck, and nothing else.
+   *
+   * It refuses when no arrow home is drawn from where the record stands. That refusal is not a
+   * shortcoming — the alternative is a super admin dropping records onto statuses no author ever
+   * connected, which is precisely the "a record somewhere nobody drew" failure this whole feature is
+   * built to avoid. The fix for a missing way home is to draw one.
+   */
+  async returnRecord(
+    ctx: RlsContext & { platformRole?: string | null },
+    entity: string,
+    id: string,
+    toCode?: string,
+  ) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    return this.dbService.withContext(ctx, async (tx) => {
+      const state = (await tx.execute(sql`
+        select rs.flow_id, rs.origin_flow_id, rs.status_domain,
+               home.flow_key as home_key, home.name_en as home_name,
+               away.name_en as away_name
+        from workflow_record_state rs
+        left join workflow_flows home on home.id = rs.origin_flow_id
+        left join workflow_flows away on away.id = rs.flow_id
+        where rs.tenant_id = ${tenantId}::uuid and rs.environment = ${envOf(ctx)}
+          and rs.entity_type = ${entity}::entity_type and rs.entity_id = ${id}::uuid
+        limit 1`))[0] as
+        | {
+            flow_id: string | null; origin_flow_id: string | null; status_domain: "item" | "vendor";
+            home_key: string | null; home_name: string | null; away_name: string | null;
+          }
+        | undefined;
+      if (!state) throw new NotFoundException("this record is not being tracked by a workflow");
+      if (!state.origin_flow_id || !state.home_key)
+        throw new ConflictException(
+          "this record is not away in another workflow, so there is nothing to bring it back from",
+        );
+
+      // Where it stands NOW decides which arrows are available — the same question the guard asks.
+      const statusId = await this.status.currentStatusId(tx, entity as StatusEntity, id);
+      if (!statusId) throw new ConflictException("this record has no status yet");
+
+      const exits = (await tx.execute(sql`
+        select coalesce(i.code, v.code) as code
+        from workflow_transitions t
+        join workflow_steps fs on fs.id = t.from_step_id
+        join workflow_steps ts on ts.id = t.to_step_id
+        left join item_statuses i on i.id = ts.item_status_id
+        left join vendor_statuses v on v.id = ts.vendor_status_id
+        where t.flow_id = ${state.flow_id}::uuid
+          and coalesce(fs.item_status_id, fs.vendor_status_id) = ${statusId}::uuid
+          and t.to_flow_key = ${state.home_key}
+        order by t.priority desc, t.created_at asc`)) as Array<{ code: string }>;
+
+      if (!exits.length)
+        throw new ConflictException(
+          `nothing hands this record back to '${state.home_name}' from where it currently stands in ` +
+            `'${state.away_name}'. Draw a return arrow from this status, publish that workflow, and ` +
+            `it can come home the ordinary way.`,
+        );
+
+      // MORE THAN ONE ENDING is the point of this design, so more than one way home is normal and
+      // the choice is a business one — "did the claim settle or was it refused" is not something an
+      // emergency lever gets to decide on the operator's behalf.
+      const chosen = toCode ?? (exits.length === 1 ? exits[0].code : null);
+      if (!chosen)
+        throw new BadRequestException(
+          `this record has more than one way back to '${state.home_name}' — say which one: ` +
+            exits.map((e) => `'${e.code}'`).join(", "),
+        );
+      if (!exits.some((e) => e.code === chosen))
+        throw new BadRequestException(
+          `'${chosen}' is not a way back to '${state.home_name}' from where this record stands — ` +
+            `the ones drawn are: ${exits.map((e) => `'${e.code}'`).join(", ")}`,
+        );
+
+      // The ordinary path, deliberately. ctx.userId is a real person, so the log row is attributable.
+      await this.status.transition(
+        tx,
+        { tenantId, userId: ctx.userId, environment: ctx.environment },
+        { entity: entity as StatusEntity, id, toCode: chosen },
+      );
+      return { entity, id, returnedTo: state.home_name, at: chosen };
+    });
+  }
+
+  /**
    * THE PAGE VIEW — the same workflow, read as screens instead of as a graph.
    *
    * Nothing here is stored. A page's composition is derived every time: the statuses placed on it,
@@ -580,10 +738,10 @@ export class WorkflowService {
    * runtime all read the STEPS. A page record holding its own copy would be a second truth that
    * nothing enforces, in the screen that is about to become the main view of the engine.
    */
-  async pageView(ctx: RlsContext) {
+  async pageView(ctx: RlsContext, flowId?: string) {
     return this.dbService.withContext(ctx, async (tx) => {
       const flows = (await tx.execute(sql`
-        select f.id, f.name_en, f.name_ar, f.version, f.status, f.is_default,
+        select f.id, f.name_en, f.name_ar, f.version, f.status, f.is_default, f.entry_mode,
                (select count(*)::int from workflow_steps s where s.flow_id = f.id) as steps
         from workflow_flows f
         where f.tenant_id = ${ctx.tenantId}::uuid and f.environment = ${envOf(ctx)}
@@ -591,11 +749,28 @@ export class WorkflowService {
         order by case f.status when 'active' then 0 when 'draft' then 1 else 2 end,
                  f.is_default desc, f.version desc`)) as Array<{
         id: string; name_en: string; name_ar: string; version: number; status: string;
-        is_default: boolean; steps: number;
+        is_default: boolean; entry_mode: string; steps: number;
       }>;
-      // A flow with no steps has nothing to lay out, so prefer one that does — otherwise the screen
-      // looks broken when a perfectly good flow exists next to an empty stub.
-      const flow = flows.find((f) => f.steps > 0) ?? flows[0];
+      /**
+       * WHICH FLOW IS THIS SCREEN ABOUT? An explicit ?flow=, else the workspace's own default.
+       *
+       * `flows.find(f => f.steps > 0) ?? flows[0]` was fine when a workspace had one flow and is not
+       * fine now. The order above puts active-and-default first, so it happened to pick the right
+       * one — but nothing said so, and a workspace whose default was mid-republish would have had
+       * the Screens view silently describe a SUB-FLOW as if it were the whole engine: half the
+       * statuses, and exits pointing at screens the other half never reaches. A screen that omits
+       * half the engine is the same class of untruth as a run-log row that reads backwards.
+       *
+       * The `steps > 0` preference is kept as the last tie-break, for the reason it was added: an
+       * empty stub next to a real flow makes the screen look broken.
+       */
+      const requested = flows.find((f) => f.id === flowId);
+      const flow =
+        requested ??
+        flows.find((f) => f.status === "active" && f.is_default && f.steps > 0) ??
+        flows.find((f) => f.status === "active" && f.is_default) ??
+        flows.find((f) => f.steps > 0) ??
+        flows[0];
 
       if (!flow) return { flow: null, flows: [], pages: [], unplaced: [], holders: {} };
 
@@ -727,21 +902,45 @@ export class WorkflowService {
     });
   }
 
-  /** All flows in the active workspace + environment, newest first. */
+  /**
+   * All flows in the active workspace + environment.
+   *
+   * ORDERED THE WAY THE ENGINE ORDERS THEM within a domain — `selection_priority desc,
+   * created_at asc` — rather than by key, because since 0065 a workspace can run several flows at
+   * once and the first question about a list of them is "which one gets this order". Reading them in
+   * the engine's own order is the answer; reading them alphabetically hides it. Filtering this list
+   * down to the active flows of one domain therefore yields exactly the sequence bindOnEntry tries,
+   * which is what the Workflows screen renders. Everything else — drafts, retired versions — falls
+   * out oldest-first among them; `version desc` is only a tie-break for rows created in one
+   * transaction.
+   *
+   * `selection_summary` is computed here rather than in the browser so there is ONE rendering of a
+   * routing rule in the product. Its three states are not something a screen should be trusted to
+   * get right: `null` and `{}` look almost identical and mean opposite things (see describeSelection).
+   */
   async list(ctx: RlsContext) {
     const tenantId = this.requireTenant(ctx);
-    const rows = await this.dbService.withContext(ctx, (tx) =>
+    const rows = (await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select f.id, f.flow_key, f.version, f.name_en, f.name_ar, f.status, f.is_default,
-               f.status_domain, f.selection_condition, f.created_at, f.updated_at,
+               f.status_domain, f.selection_condition, f.selection_priority, f.created_at, f.updated_at,
                (select count(*)::int from workflow_steps s where s.flow_id = f.id) as steps,
                (select count(*)::int from workflow_transitions t where t.flow_id = f.id) as transitions,
                (select count(*)::int from workflow_record_state r where r.flow_id = f.id) as records
         from workflow_flows f
         where f.tenant_id = ${tenantId}::uuid and f.environment = ${envOf(ctx)}
-        order by f.flow_key, f.version desc`),
-    );
-    return { count: rows.length, flows: rows };
+        order by f.status_domain, f.selection_priority desc, f.created_at asc, f.version desc`),
+    )) as Array<Record<string, unknown>>;
+    return {
+      count: rows.length,
+      flows: rows.map((f) => ({
+        ...f,
+        selection_summary: describeSelection(
+          f.is_default as boolean,
+          f.selection_condition as Condition | null,
+        ),
+      })),
+    };
   }
 
   /** One flow with its full graph — the canvas payload, and what the AI is shown as "current". */
@@ -750,7 +949,7 @@ export class WorkflowService {
     return this.dbService.withContext(ctx, async (tx) => {
       const flow = (await tx.execute(sql`
         select id, flow_key, version, name_en, name_ar, status, is_default, status_domain,
-               selection_condition, canvas, created_at, updated_at
+               selection_condition, selection_priority, canvas, created_at, updated_at
         from workflow_flows
         where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
         limit 1`))[0] as Record<string, unknown> | undefined;
@@ -771,7 +970,7 @@ export class WorkflowService {
         select t.id,
                coalesce(fi.code, fv.code) as "from", coalesce(ti.code, tv.code) as "to",
                t.label_en, t.label_ar, t.requires_approval, t.allowed_roles, t.condition, t.priority,
-               t.handoff, t.gates, t.auto_advance, t.auto_once, t.actions
+               t.handoff, t.gates, t.auto_advance, t.auto_once, t.actions, t.to_flow_key
         from workflow_transitions t
         join workflow_steps fs on fs.id = t.from_step_id
         join workflow_steps ts on ts.id = t.to_step_id
@@ -796,11 +995,11 @@ export class WorkflowService {
         where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)} and flow_key = ${dto.flowKey}`))[0] as { v: number };
       const [row] = (await tx.execute(sql`
         insert into workflow_flows (tenant_id, environment, flow_key, version, name_en, name_ar,
-                                    status_domain, is_default)
+                                    status_domain, is_default, entry_mode)
         values (${tenantId}::uuid, ${envOf(ctx)}, ${dto.flowKey}, ${next.v}, ${dto.nameEn}, ${dto.nameAr},
-                ${dto.statusDomain}, ${dto.isDefault})
+                ${dto.statusDomain}, ${dto.isDefault}, ${dto.entryMode})
         returning id, version`)) as Array<{ id: string; version: number }>;
-      return { id: row.id, flowKey: dto.flowKey, version: row.version, status: "draft" };
+      return { id: row.id, flowKey: dto.flowKey, version: row.version, status: "draft", entryMode: dto.entryMode };
     });
   }
 
@@ -813,9 +1012,10 @@ export class WorkflowService {
     const tenantId = this.requireTenant(ctx);
     return this.dbService.withContext(ctx, async (tx) => {
       const flow = (await tx.execute(sql`
-        select id, status, status_domain from workflow_flows
+        select id, flow_key, status, status_domain from workflow_flows
         where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
-        limit 1`))[0] as { id: string; status: string; status_domain: "item" | "vendor" } | undefined;
+        limit 1`))[0] as
+        { id: string; flow_key: string; status: string; status_domain: "item" | "vendor" } | undefined;
       if (!flow) throw new NotFoundException("flow not found in this workspace");
       if (flow.status !== "draft")
         throw new ConflictException(
@@ -823,7 +1023,7 @@ export class WorkflowService {
         );
 
       const codeToId = await this.resolveStatusCodes(tx, flow.status_domain, dto);
-      this.validateGraph(dto);
+      this.validateGraph(dto, flow.flow_key);
 
       // full replace: the document IS the desired state
       await tx.execute(sql`delete from workflow_transitions where flow_id = ${id}::uuid`);
@@ -849,13 +1049,13 @@ export class WorkflowService {
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
                                             condition, priority, handoff, gates, auto_advance, auto_once,
-                                            actions)
+                                            actions, to_flow_key)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${id}::uuid, ${stepIds.get(t.from)!}::uuid,
                   ${stepIds.get(t.to)!}::uuid, ${t.labelEn ?? null}, ${t.labelAr ?? null},
                   ${t.requiresApproval}, ${JSON.stringify(t.allowedRoles)}::jsonb,
                   ${JSON.stringify(t.condition)}::jsonb, ${t.priority}, ${t.handoff},
                   ${JSON.stringify(t.gates)}::jsonb, ${t.autoAdvance}, ${t.autoOnce},
-                  ${JSON.stringify(t.actions)}::jsonb)`);
+                  ${JSON.stringify(t.actions)}::jsonb, ${t.toFlowKey})`);
       }
 
       await tx.execute(sql`
@@ -863,6 +1063,10 @@ export class WorkflowService {
           name_en = coalesce(${dto.nameEn ?? null}, name_en),
           name_ar = coalesce(${dto.nameAr ?? null}, name_ar),
           selection_condition = ${dto.selectionCondition === undefined ? sql`selection_condition` : dto.selectionCondition === null ? sql`null` : sql`${JSON.stringify(dto.selectionCondition)}::jsonb`},
+          -- omitted keeps what is stored, exactly like selection_condition above: the canvas does
+          -- not send this field and must not reset the routing order of a flow every time somebody
+          -- drags a step.
+          selection_priority = ${dto.selectionPriority === undefined ? sql`selection_priority` : sql`${dto.selectionPriority}`},
           canvas = coalesce(${dto.canvas ? JSON.stringify(dto.canvas) : null}::jsonb, canvas)
         where id = ${id}::uuid`);
 
@@ -876,24 +1080,86 @@ export class WorkflowService {
     const tenantId = this.requireTenant(ctx);
     return this.dbService.withContext(ctx, async (tx) => {
       const flow = (await tx.execute(sql`
-        select id, flow_key, status, is_default, selection_condition from workflow_flows
+        select id, flow_key, status, status_domain, is_default, selection_condition, entry_mode
+        from workflow_flows
         where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
         limit 1`))[0] as
-        | { id: string; flow_key: string; status: string; is_default: boolean; selection_condition: unknown }
+        | {
+            id: string; flow_key: string; status: string; status_domain: "item" | "vendor";
+            is_default: boolean; selection_condition: unknown; entry_mode: string;
+          }
         | undefined;
       if (!flow) throw new NotFoundException("flow not found in this workspace");
       if (flow.status !== "draft") throw new ConflictException(`flow is already ${flow.status}`);
 
-      await this.assertActivatable(tx, id, flow);
+      const warnings = await this.assertActivatable(tx, id, flow);
+
+      // ── TWO ACTIVE FLOWS: FINE. TWO DEFAULTS: NOT ──────────────────────────────────────────────
+      //
+      // Since 0065 a workspace legitimately runs several flows in one domain — an insurance flow
+      // beside a cash flow — and nothing here or in the schema stops that: the only uniqueness the
+      // database enforces is one active version per flow_key, and one active DEFAULT per domain.
+      //
+      // That second index is what this check is for. It already refused two defaults, but as a
+      // constraint violation from inside a transaction: a 500 reading `duplicate key value violates
+      // unique constraint "workflow_flows_default_uq"`, to a person whose actual mistake was leaving
+      // "make this the fallback" ticked on their second flow. The refusal is the same, said in
+      // words, and it names the flow already holding the slot so the reader knows what to do next.
+      //
+      // Not raised when the collision is with the SAME flow_key: that is the ordinary version
+      // handover, and the statement below retires the predecessor a line later.
+      if (flow.is_default) {
+        const holder = (await tx.execute(sql`
+          select name_en, version from workflow_flows
+          where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+            and status_domain = ${flow.status_domain} and status = 'active' and is_default
+            and flow_key <> ${flow.flow_key}
+          limit 1`))[0] as { name_en: string; version: number } | undefined;
+        if (holder)
+          throw new ConflictException(
+            `'${holder.name_en}' (v${holder.version}) is already the fallback flow for this kind of ` +
+              `record, and there can only be one — a record that matches no condition has to have ` +
+              `exactly one answer. Give this flow a selection condition instead, or retire that one.`,
+          );
+      }
 
       // retire the predecessor FIRST — the partial unique index permits only one active version and
       // is not deferrable, so the other order fails.
+      //
+      // Read the predecessor BEFORE retiring it: RETURNING reports the row as it now is, and the
+      // whole point of the read is the value that is about to be overwritten.
+      const predecessor = (await tx.execute(sql`
+        select is_default from workflow_flows
+        where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+          and flow_key = ${flow.flow_key} and status = 'active'`)) as Array<{ is_default: boolean }>;
+
+      // `is_default = false` on the way out, so the flag means one thing: THE flow currently serving
+      // as this domain's fallback. The partial index only counts active rows, so a retired row could
+      // keep it without breaking anything — and then two rows claim the same job, one of them a
+      // version nothing has executed since last month, and every screen listing flows has to decide
+      // which claim to believe.
       await tx.execute(sql`
-        update workflow_flows set status = 'retired'
+        update workflow_flows set status = 'retired', is_default = false
         where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
           and flow_key = ${flow.flow_key} and status = 'active'`);
-      await tx.execute(sql`update workflow_flows set status = 'active' where id = ${id}::uuid`);
-      return { id, status: "active" };
+
+      // ── THE FALLBACK SURVIVES ITS OWN VERSIONING ──────────────────────────────────────────────
+      //
+      // newVersion() forces `is_default = false` on the clone, because two ACTIVE defaults is a
+      // unique-index violation and the clone is created while its predecessor is still live. The
+      // flag therefore has to be handed over here, at the moment the predecessor stops being active
+      // — and it was not: publishing v2 of the workspace's own flow left v2 live and the workspace
+      // with NO default at all, so every record raised afterwards matched no flow, bound to nothing,
+      // and moved unchecked. Enforcement switched itself off, silently, on the supported edit path.
+      //
+      // The order below is what makes this safe: the predecessor is already retired by the statement
+      // above, so `workflow_flows_default_uq` (which counts only active rows) sees exactly one
+      // default at every point.
+      const inheritsDefault = predecessor.some((r) => r.is_default);
+      await tx.execute(sql`
+        update workflow_flows set status = 'active', is_default = ${flow.is_default || inheritsDefault}
+        where id = ${id}::uuid`);
+      return { id, status: "active", warnings };
     });
   }
 
@@ -901,6 +1167,34 @@ export class WorkflowService {
     this.requireSuperAdmin(ctx);
     const tenantId = this.requireTenant(ctx);
     return this.dbService.withContext(ctx, async (tx) => {
+      /**
+       * RETIRING A FLOW SOMETHING CROSSES INTO IS HOW A BORDER BECOMES A DEAD END — 0066.
+       *
+       * This method was a bare UPDATE with no checks at all, which was defensible while a flow stood
+       * alone: retiring it stopped new records binding to it and the records already inside kept
+       * executing the version they entered. It is not defensible once another ACTIVE flow names this
+       * one as a destination. That arrow resolves by key to whatever is active, so retiring the only
+       * active version turns a drawn, validated border into a refusal every record hits.
+       *
+       * A VERSION BUMP IS NOT AFFECTED and that is the point of checking here rather than in the
+       * trigger: activate() retires the predecessor inside its own transaction, having already
+       * activated the successor moments later under the same key, so the key never stops resolving.
+       * The standalone Retire button is the only path that can leave nothing behind.
+       */
+      const crossers = (await tx.execute(sql`
+        select distinct f.name_en, f.version from workflow_transitions t
+        join workflow_flows f on f.id = t.flow_id and f.status = 'active'
+        join workflow_flows me on me.id = ${id}::uuid
+        where t.to_flow_key = me.flow_key and f.id <> me.id
+          and f.tenant_id = me.tenant_id and f.environment = me.environment
+          and f.status_domain = me.status_domain`)) as Array<{ name_en: string; version: number }>;
+      if (crossers.length)
+        throw new ConflictException(
+          `${crossers.map((c) => `'${c.name_en}' (v${c.version})`).join(", ")} hands records to this ` +
+            `workflow, so retiring it would leave that move with nowhere to go. Retire or republish ` +
+            `${crossers.length > 1 ? "those workflows" : "that workflow"} first.`,
+        );
+
       const r = await tx.execute(sql`
         update workflow_flows set status = 'retired'
         where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
@@ -928,12 +1222,27 @@ export class WorkflowService {
 
       // is_default stays FALSE on the clone: two active defaults is the failure the partial index
       // exists to prevent, and activate() hands the flag over deliberately instead.
+      //
+      // selection_priority IS copied, beside the condition it orders. The two are one decision —
+      // "this flow takes insurance work, ahead of the pickup flow" — and a clone that kept the
+      // condition but reset the order would republish a flow that routes differently from the
+      // version it was cloned from, which is the last thing somebody publishing v2 of a live flow is
+      // expecting.
+      //
+      // entry_mode IS COPIED, and it is not optional. A sub-flow has no selection condition because
+      // nothing selects it; a clone that reset to 'selected' would fail activation with "routing is
+      // not set" — and the only ways out of that are to invent a condition for a flow nothing
+      // selects, or to make it the default. Publishing v2 of a working sub-flow must not present
+      // that choice.
       const [copy] = (await tx.execute(sql`
         insert into workflow_flows (tenant_id, environment, flow_key, version, name_en, name_ar,
-                                    status_domain, is_default, selection_condition, canvas)
+                                    status_domain, is_default, selection_condition, selection_priority,
+                                    entry_mode, canvas)
         values (${tenantId}::uuid, ${envOf(ctx)}, ${src.flow_key as string}, ${next.v},
                 ${src.name_en as string}, ${src.name_ar as string}, ${src.status_domain as string},
                 false, ${src.selection_condition === null ? sql`null` : sql`${JSON.stringify(src.selection_condition)}::jsonb`},
+                ${(src.selection_priority as number) ?? 0},
+                ${(src.entry_mode as string) ?? "selected"},
                 ${JSON.stringify(src.canvas)}::jsonb)
         returning id`)) as Array<{ id: string }>;
 
@@ -959,16 +1268,21 @@ export class WorkflowService {
       // `actions` is copied as a whole jsonb value, so a library receipt on an element rides along
       // into the new draft. It has to: the draft is where "this copy has drifted from the saved
       // action, update it" is offered, and an entry the clone forgot could never be offered again.
+      //
+      // `to_flow_key` is copied for a reason worth naming: a version that forgot it would silently
+      // UN-CONFIGURE every border in the flow on the next publish. The graph would still look right
+      // on the canvas — the arrow is still there — and records would simply stop being handed to the
+      // sub-flow, with nothing anywhere reporting a change.
       const trs = (await tx.execute(sql`
         select from_step_id, to_step_id, label_en, label_ar, requires_approval, allowed_roles,
-               condition, priority, handoff, gates, auto_advance, auto_once, actions
+               condition, priority, handoff, gates, auto_advance, auto_once, actions, to_flow_key
         from workflow_transitions where flow_id = ${id}::uuid`)) as Array<Record<string, unknown>>;
       for (const t of trs) {
         await tx.execute(sql`
           insert into workflow_transitions (tenant_id, environment, flow_id, from_step_id, to_step_id,
                                             label_en, label_ar, requires_approval, allowed_roles,
                                             condition, priority, handoff, gates, auto_advance, auto_once,
-                                            actions)
+                                            actions, to_flow_key)
           values (${tenantId}::uuid, ${envOf(ctx)}, ${copy.id}::uuid,
                   ${map.get(t.from_step_id as string)!}::uuid, ${map.get(t.to_step_id as string)!}::uuid,
                   ${(t.label_en as string) ?? null}, ${(t.label_ar as string) ?? null},
@@ -976,7 +1290,7 @@ export class WorkflowService {
                   ${JSON.stringify(t.condition)}::jsonb, ${t.priority as number},
                   ${(t.handoff as string) ?? 'pool'}, ${JSON.stringify(t.gates ?? [])}::jsonb,
                   ${(t.auto_advance as boolean) ?? false}, ${(t.auto_once as boolean) ?? true},
-                  ${JSON.stringify(t.actions ?? [])}::jsonb)`);
+                  ${JSON.stringify(t.actions ?? [])}::jsonb, ${(t.to_flow_key as string) ?? null})`);
       }
       return { id: copy.id, flowKey: src.flow_key, version: next.v, status: "draft", copiedFrom: id };
     });
@@ -1012,11 +1326,12 @@ export class WorkflowService {
     this.requireSuperAdmin(ctx);
     const tenantId = this.requireTenant(ctx);
 
-    const { flow, catalog, roles, holders } = await this.dbService.withContext(ctx, async (tx) => {
+    const { flow, catalog, roles, holders, crossable } = await this.dbService.withContext(ctx, async (tx) => {
       const f = (await tx.execute(sql`
-        select id, name_en, status, status_domain from workflow_flows
+        select id, flow_key, name_en, status, status_domain from workflow_flows
         where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
-        limit 1`))[0] as { id: string; name_en: string; status: string; status_domain: "item" | "vendor" } | undefined;
+        limit 1`))[0] as
+        { id: string; flow_key: string; name_en: string; status: string; status_domain: "item" | "vendor" } | undefined;
       if (!f) throw new NotFoundException("flow not found in this workspace");
       if (f.status !== "draft")
         throw new ConflictException(`this flow is ${f.status} — create a new version to change it`);
@@ -1031,11 +1346,27 @@ export class WorkflowService {
         where tenant_id = ${tenantId}::uuid and is_active group by role`)) as Array<
         { code: string; n: number }
       >;
+      /**
+       * The flows this one may hand a record to — 0066, and the reason `toFlowKey` IS offered to
+       * the model where the action-library receipt deliberately is not.
+       *
+       * A receipt names a library row by uuid and the model is shown no uuids, so the only thing it
+       * could do is invent one. A flow key is different in kind: these are the real, active,
+       * same-domain keys of this workspace, listed below by name, so the model is CHOOSING from a
+       * closed set rather than making something up. Its own flow is excluded — a border into itself
+       * is refused by validateGraph anyway, and offering it would invite the model to draw one.
+       */
+      const cross = (await tx.execute(sql`
+        select flow_key, name_en from workflow_flows
+        where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+          and status_domain = ${f.status_domain} and status = 'active' and flow_key <> ${f.flow_key}
+        order by flow_key`)) as Array<{ flow_key: string; name_en: string }>;
       return {
         flow: f,
         catalog: cat,
         roles: r.map((x) => x.code),
         holders: Object.fromEntries(h.map((x) => [x.code, x.n])) as Record<string, number>,
+        crossable: cross,
       };
     });
 
@@ -1090,6 +1421,19 @@ export class WorkflowService {
       "    step's owners (right for a real handover between teams, and the default), 'keep' leaves it",
       "    with the same person (right when one person does several steps in a row), 'actor' gives it",
       "    to whoever made the move (right when picking something up IS taking it on).",
+      "",
+      "",
+      ...(crossable.length
+        ? [
+            "12. `toFlowKey` on a transition HANDS THE RECORD TO ANOTHER WORKFLOW as it makes the move.",
+            "    Use it ONLY when the admin describes work leaving this process for a different one",
+            "    (\"send it to the insurance flow\", \"then the returns process takes over\"). The",
+            "    destination status must be a step in BOTH this flow and the named one — draw it here",
+            "    too. Leave it out for every ordinary move; almost every arrow is ordinary.",
+            "    Pick ONLY from these keys — never invent one:",
+            ...crossable.map((c) => `      ${c.flow_key} — ${c.name_en}`),
+          ]
+        : []),
       "",
       "Write `labelEn` on each transition as the ACTION that causes it (Quote, Confirm, Deliver).",
       "Set requiresApproval true only where the user actually asked for an approval or a gate.",
@@ -1164,6 +1508,20 @@ export class WorkflowService {
                 description: "custody after this move: pool (release to the next desk), keep, actor",
               },
               priority: { type: "integer" },
+              // Offered, unlike the action-library receipt above, because the model is choosing from
+              // the closed list of real flow keys printed in the system prompt rather than inventing
+              // an identifier. An `enum` pins it further: with no other flow in the workspace the
+              // property is omitted entirely, so the model cannot propose a crossing to nowhere.
+              ...(crossable.length
+                ? {
+                    toFlowKey: {
+                      type: "string",
+                      enum: crossable.map((c) => c.flow_key),
+                      description:
+                        "hand the record to this OTHER workflow as part of this move; omit for an ordinary move",
+                    },
+                  }
+                : {}),
             },
             required: ["from", "to"],
           },
@@ -1209,7 +1567,7 @@ export class WorkflowService {
       seen.set(k, n + 1);
     }
 
-    this.validateGraph(parsed.data);
+    this.validateGraph(parsed.data, flow.flow_key);
     // nothing is persisted: the canvas renders this and the human decides
     return {
       reply: raw.reply,
@@ -1243,7 +1601,7 @@ export class WorkflowService {
 
   /** Structural rules that make a graph coherent. Checked on every save so the canvas and the AI get
    *  the same answer, rather than discovering it at activation. */
-  private validateGraph(dto: SaveGraphDto) {
+  private validateGraph(dto: SaveGraphDto, flowKey?: string) {
     const errs: string[] = [];
     const seen = new Set<string>();
     for (const s of dto.steps) {
@@ -1257,6 +1615,17 @@ export class WorkflowService {
       if (!seen.has(t.from)) errs.push(`transition from '${t.from}', which is not a step in this flow`);
       if (!seen.has(t.to)) errs.push(`transition to '${t.to}', which is not a step in this flow`);
       if (t.from === t.to) errs.push(`transition '${t.from}' → itself does nothing`);
+      // A BORDER INTO YOURSELF IS NOT A BORDER — 0066. The check above already forces `to` to be a
+      // step in THIS flow, which is exactly what makes a crossing work: the destination status is a
+      // shared node, present in both graphs. Aiming that at this same flow describes an ordinary
+      // move while claiming to be a handoff, and at run time it would resolve back to the flow the
+      // record is already on, write origin_flow_id pointing at itself, and make the record look
+      // permanently away in a sub-flow it never left.
+      if (flowKey && t.toFlowKey === flowKey)
+        errs.push(
+          `'${t.from}' → '${t.to}' hands the record to '${flowKey}', which is this flow — ` +
+            `clear the destination workflow to make it an ordinary move`,
+        );
     }
     const dup = new Set<string>();
     for (const t of dto.transitions) {
@@ -1265,6 +1634,24 @@ export class WorkflowService {
       dup.add(k);
     }
     if (errs.length) throw new BadRequestException(errs.join("; "));
+
+    // The flow's OWN condition is checked against the same catalog as the arrows', because since
+    // 0065 it is evaluated the same way. An unknown field fails closed at run time (conditions.ts
+    // test()), so the flow would simply never be chosen — silently, weeks later, with every record
+    // going to the default and nothing anywhere saying why. Refusing the save is the moment somebody
+    // can still fix the typo.
+    if (dto.selectionCondition) {
+      const badSelection = [
+        ...(dto.selectionCondition.all ?? []),
+        ...(dto.selectionCondition.any ?? []),
+      ]
+        .map((c) => c.field)
+        .filter((k) => !conditionFieldByKey(k));
+      if (badSelection.length)
+        throw new BadRequestException(
+          `this flow is selected on unknown field(s): ${[...new Set(badSelection)].join(", ")}`,
+        );
+    }
 
     for (const t of dto.transitions) {
       const badFields = [...(t.condition.all ?? []), ...(t.condition.any ?? [])]
@@ -1324,7 +1711,7 @@ export class WorkflowService {
   async assertActivatable(
     tx: Tx,
     id: string,
-    flow: { is_default: boolean; selection_condition: unknown },
+    flow: { is_default: boolean; selection_condition: unknown; entry_mode?: string | null },
   ) {
     const steps = (await tx.execute(sql`
       select s.id, coalesce(i.code, v.code) as code, s.is_entry, s.is_terminal, s.owner_roles
@@ -1333,9 +1720,10 @@ export class WorkflowService {
       left join vendor_statuses v on v.id = s.vendor_status_id
       where s.flow_id = ${id}::uuid`)) as Array<{ id: string; code: string; is_entry: boolean; is_terminal: boolean }>;
     const edges = (await tx.execute(sql`
-      select from_step_id, to_step_id from workflow_transitions where flow_id = ${id}::uuid`)) as Array<{
+      select from_step_id, to_step_id, to_flow_key from workflow_transitions where flow_id = ${id}::uuid`)) as Array<{
       from_step_id: string;
       to_step_id: string;
+      to_flow_key: string | null;
     }>;
 
     const errs: string[] = [];
@@ -1343,8 +1731,15 @@ export class WorkflowService {
     const entry = steps.find((s) => s.is_entry);
     if (!entry) errs.push("no entry step — new records would have nowhere to start");
     if (!steps.some((s) => s.is_terminal)) errs.push("no terminal step — records could never finish");
-    if (!flow.is_default && flow.selection_condition === null)
-      errs.push("routing is not set: give it a selection condition, or make it the default flow");
+    // `entry_mode = 'handoff'` is a THIRD valid answer to "how do records get here" — 0066. A
+    // sub-flow is reached by being handed a record, never by being selected for one, so demanding a
+    // selection condition from it would force an admin to store `{}` — which this codebase defines
+    // as "matches every record" — about a flow that must match none.
+    if (!flow.is_default && flow.selection_condition === null && flow.entry_mode !== "handoff")
+      errs.push(
+        "routing is not set: give it a selection condition, make it the default flow, or mark it a " +
+          "handoff flow that records only reach by crossing into it",
+      );
 
     // a non-terminal step with no way out wedges every record that reaches it
     const out = new Set(edges.map((e) => e.from_step_id));
@@ -1365,7 +1760,40 @@ export class WorkflowService {
         if (!seen.has(s.id)) errs.push(`step '${s.code}' cannot be reached from the entry step`);
       }
     }
+
+    /**
+     * CAN EVERY STEP STILL GET TO AN ENDING? — a latent defect that has nothing to do with crossings
+     * and predates them, fixed here because this feature is what makes it dangerous.
+     *
+     * The three checks above look like they already guarantee it and they do not. Take
+     * entry→X, X→Y, Y→X, entry→T(terminal): a terminal exists, every non-terminal has an outgoing
+     * edge, and the forward BFS reaches every step — all three pass, and a record that lands on X
+     * orbits X and Y forever. Nothing in the system would report it; the order simply never
+     * finishes, and the two people watching it each see an arrow they can legitimately take.
+     *
+     * The correct test is the mirror of the forward one: BFS BACKWARDS from every terminal step and
+     * refuse any step the walk does not reach. It is the property a sub-flow most needs — "a record
+     * that enters can always get back out" is exactly "every step can reach an ending" — but it is
+     * worth having on every flow in the system, which is why it is not conditional on crossings.
+     */
+    if (steps.some((s) => s.is_terminal)) {
+      const rev = new Map<string, string[]>();
+      for (const e of edges) rev.set(e.to_step_id, [...(rev.get(e.to_step_id) ?? []), e.from_step_id]);
+      const canFinish = new Set(steps.filter((s) => s.is_terminal).map((s) => s.id));
+      const queue = [...canFinish];
+      while (queue.length) {
+        for (const p of rev.get(queue.shift()!) ?? []) if (!canFinish.has(p)) (canFinish.add(p), queue.push(p));
+      }
+      for (const s of steps) {
+        if (!canFinish.has(s.id))
+          errs.push(
+            `step '${s.code}' can never reach a terminal step — a record that gets there would never come back`,
+          );
+      }
+    }
     if (errs.length) throw new BadRequestException(errs.join("; "));
+
+    await this.assertCrossingsResolve(tx, id, edges);
 
     // An owner role with no holders is not a configuration opinion — it is a step no human can move
     // a record out of. Activation is the last cheap moment to say so; after it, real orders stall.
@@ -1386,5 +1814,131 @@ export class WorkflowService {
             `there. Assign someone, or clear the owner on that step.`,
         );
     }
+
+    return WorkflowService.crossingWarnings(flow.entry_mode ?? "selected", steps, edges);
+  }
+
+  /**
+   * SAID, NOT ENFORCED — and the distinction is the point.
+   *
+   * A handoff flow whose terminal steps have no crossing back is INDISTINGUISHABLE from one whose
+   * way home was never drawn. Both are a sub-flow that ends some records where they are. The first
+   * is legitimate and common — a claim that settles inside the returns process is finished, and
+   * dragging it back to the parent just to sit on a terminal there would be ceremony. The second is
+   * a mistake. Nothing in the graph tells them apart, because intent is not a property of a graph.
+   *
+   * So refusing would block correct flows, and staying silent would let a real omission through. It
+   * is reported, and the admin — who knows which one they meant — decides. Returned rather than
+   * logged: a warning written to a server log is a warning nobody reads.
+   */
+  private static crossingWarnings(
+    entryMode: string,
+    steps: Array<{ id: string; code: string; is_terminal: boolean }>,
+    edges: Array<{ from_step_id: string; to_flow_key: string | null }>,
+  ): string[] {
+    if (entryMode !== "handoff") return [];
+    const crossesOut = new Set(edges.filter((e) => e.to_flow_key).map((e) => e.from_step_id));
+    const dead = steps.filter((s) => s.is_terminal && !crossesOut.has(s.id)).map((s) => s.code);
+    if (!dead.length) return [];
+    return [
+      `records that reach ${dead.map((c) => `'${c}'`).join(", ")} stay in this workflow for good — ` +
+        `nothing there hands them back. That is correct if this is where they are meant to finish; ` +
+        `if they should return, draw an arrow from there into the workflow they came from.`,
+    ];
+  }
+
+  /**
+   * BOTH ENDS OF EVERY BORDER, checked at the only moment they are still cheap to fix — 0066.
+   *
+   * A crossing is the one thing in this engine that spans two graphs, so it is the one thing neither
+   * graph can validate alone. Both directions are checked because a border breaks from either side:
+   * publish the sub-flow without the status it lands on, or republish the PARENT having dropped the
+   * status the sub-flow hands back to, and the result is the same — a record reaches the border and
+   * the run-time resolver refuses it.
+   *
+   * The run-time refusal is safe by construction (the record does not move and every other arrow
+   * still works), but "safe" is not "acceptable": the person who discovers it is a purchasing clerk
+   * with a live order, and the person who could have prevented it was an admin pressing Activate.
+   */
+  private async assertCrossingsResolve(
+    tx: Tx,
+    id: string,
+    edges: Array<{ to_step_id: string; to_flow_key: string | null }>,
+  ) {
+    const self = (await tx.execute(sql`
+      select flow_key, tenant_id, environment, status_domain from workflow_flows where id = ${id}::uuid`))[0] as
+      { flow_key: string; tenant_id: string; environment: string; status_domain: string } | undefined;
+    if (!self) return;
+
+    const errs: string[] = [];
+
+    // ── FORWARD: everywhere this flow sends a record, can it actually land? ──────────────────────
+    const outbound = edges.filter((e) => e.to_flow_key);
+    for (const e of [...new Map(outbound.map((e) => [`${e.to_flow_key}:${e.to_step_id}`, e])).values()]) {
+      const landing = (await tx.execute(sql`
+        select coalesce(i.code, v.code) as code,
+               (select f2.id from workflow_flows f2
+                 where f2.tenant_id = ${self.tenant_id}::uuid and f2.environment = ${self.environment}::environment_type
+                   and f2.status_domain = ${self.status_domain}::status_domain
+                   and f2.flow_key = ${e.to_flow_key} and f2.status = 'active') as target_id
+        from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.id = ${e.to_step_id}::uuid`))[0] as { code: string; target_id: string | null } | undefined;
+      if (!landing) continue;
+
+      if (!landing.target_id) {
+        errs.push(
+          `'${landing.code}' hands the record to the '${e.to_flow_key}' workflow, which has no ` +
+            `active version in this workspace — publish it first`,
+        );
+        continue;
+      }
+      const has = (await tx.execute(sql`
+        select 1 from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.flow_id = ${landing.target_id}::uuid and coalesce(i.code, v.code) = ${landing.code}
+        limit 1`))[0];
+      if (!has)
+        errs.push(
+          `'${landing.code}' hands the record to the '${e.to_flow_key}' workflow, but that workflow ` +
+            `has no '${landing.code}' step — a record handed there would have nowhere to stand`,
+        );
+    }
+
+    // ── REVERSE: does anything already cross INTO this flow at a status this version dropped? ────
+    //
+    // THIS IS THE CHECK THAT STOPS A-v2 STRANDING RECORDS SITTING INSIDE B. Publishing a new version
+    // of the parent is a completely ordinary act performed by somebody who may never have looked at
+    // the sub-flow, and deleting a status from it is exactly how the way home disappears.
+    const inbound = (await tx.execute(sql`
+      select distinct f.name_en as source_name, coalesce(i.code, v.code) as code
+      from workflow_transitions t
+      join workflow_flows f on f.id = t.flow_id and f.status = 'active'
+      join workflow_steps s on s.id = t.to_step_id
+      left join item_statuses i on i.id = s.item_status_id
+      left join vendor_statuses v on v.id = s.vendor_status_id
+      where t.to_flow_key = ${self.flow_key}
+        and f.tenant_id = ${self.tenant_id}::uuid and f.environment = ${self.environment}::environment_type
+        and f.status_domain = ${self.status_domain}::status_domain
+        and f.id <> ${id}::uuid`)) as Array<{ source_name: string; code: string }>;
+
+    const mine = new Set(
+      ((await tx.execute(sql`
+        select coalesce(i.code, v.code) as code from workflow_steps s
+        left join item_statuses i on i.id = s.item_status_id
+        left join vendor_statuses v on v.id = s.vendor_status_id
+        where s.flow_id = ${id}::uuid`)) as Array<{ code: string }>).map((s) => s.code),
+    );
+    for (const i of inbound) {
+      if (!mine.has(i.code))
+        errs.push(
+          `the '${i.source_name}' workflow hands records back to this one at '${i.code}', and this ` +
+            `version has no '${i.code}' step — records inside it would have nowhere to return to`,
+        );
+    }
+
+    if (errs.length) throw new BadRequestException(errs.join("; "));
   }
 }

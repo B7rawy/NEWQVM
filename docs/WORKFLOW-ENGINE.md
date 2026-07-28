@@ -30,7 +30,7 @@ Schema: `apps/api/drizzle/schema/workflow.ts`. DDL: `apps/api/drizzle/migrations
 
 | Table | One row is | Key columns |
 |---|---|---|
-| `workflow_flows` | one **version** of a named flow | `flow_key`, `version`, `status` (draft/active/retired), `is_default`, `status_domain`, `selection_condition`, `canvas` |
+| `workflow_flows` | one **version** of a named flow | `flow_key`, `version`, `status` (draft/active/retired), `is_default`, `status_domain`, `selection_condition`, `selection_priority`, `canvas` |
 | `workflow_steps` | one **status placed in one flow**, with its canvas position | `item_status_id` \| `vendor_status_id`, `is_entry`, `is_terminal`, `sla_hours`, `pages`, `owner_roles`, `canvas_x/y` |
 | `workflow_transitions` | one **permitted move** — the arrow | `from_step_id`, `to_step_id`, `condition`, `allowed_roles`, `requires_approval`, `priority`, `handoff` |
 | `workflow_record_state` | which flow version **one live record** is executing, and who holds it | `entity_type`+`entity_id`, `flow_id`, `assignee_user_id`, `assignee_role`, `step_entered_at`, `due_at` |
@@ -98,7 +98,16 @@ In other words: on every other table, RLS is the tenancy boundary. On this path 
 CHECK ( status <> 'active' OR is_default OR selection_condition IS NOT NULL )
 ```
 
-**Caveat, verified:** `selection_condition` is stored, validated at activation, and returned to the UI — but **never evaluated at runtime**. See §10.
+Since `0065` it is **evaluated**, once, when a record enters — see §12, *`selection_condition` is never evaluated — BUILT*. Two consequences worth stating here rather than discovering:
+
+- an **active, non-default** flow whose condition is `{}` now takes *every* record, ahead of the default. Before 0065 such a flow was inert.
+- the shape is validated at the zod boundary against the same schema the arrows use. `{"any": true}` used to save; it is not a condition, and `isEmptyCondition()` would have read it as empty and matched everything.
+
+### `selection_priority` breaks the tie
+
+`integer`, default `0`, added by `0065`. When two flows' conditions both hold for the same record, they are tried `selection_priority desc, created_at asc, id asc` and the first match wins — the rule `workflow_transitions` already uses for two arrows joining the same pair of steps, applied one level up rather than invented again. `id` only ever settles a tie the other two could not: two flows published in one transaction share a `created_at` to the microsecond, and Postgres promises nothing about the order of tied rows.
+
+It is **frozen** on a non-draft flow, beside `selection_condition`, because the two together are the routing decision (`workflow_flow_freeze()`).
 
 ---
 
@@ -142,7 +151,9 @@ Because deleting and reinserting children is the natural save, the freeze trigge
 
 The lifecycle is `draft → active → retired`, one-way. `activate()` (`workflow.service.ts:368-392`) retires the predecessor **first**, because the partial unique index permitting one active version is not deferrable and the other order fails.
 
-`newVersion()` (`:409-471`) is the supported way to change an active flow: clone the whole graph into a fresh draft with step ids remapped. `is_default` is deliberately forced to `false` on the clone (`:423-424`) — two active defaults is exactly what the partial index exists to prevent, and `activate()` hands the flag over instead.
+`newVersion()` (`:409-471`) is the supported way to change an active flow: clone the whole graph into a fresh draft with step ids remapped. `is_default` is deliberately forced to `false` on the clone (`:423-424`) — two active defaults is exactly what the partial index exists to prevent. `selection_condition` **and** `selection_priority` are copied, because together they are one decision and a clone that kept the condition but reset the order would route differently from the version it came from.
+
+`activate()` hands the default flag over: it reads the predecessor's `is_default` before retiring it, clears it on the way out, and sets it on the successor. **This was missing until 0065** — publishing v2 of a workspace's own flow left v2 live and the workspace with *no* default at all, so every record raised afterwards matched nothing, bound to nothing and moved unchecked. Enforcement switched itself off on the one path the product offers for editing a live flow. Retirement clearing the flag is what makes `is_default` mean exactly one thing: the flow serving as this domain's fallback *now*.
 
 ### Records bind to a version and stay there
 
@@ -166,7 +177,7 @@ Two `plpgsql` functions, both `SET search_path = ''`.
 **`workflow_flow_freeze()`** — `BEFORE UPDATE OR DELETE ON workflow_flows` (`0047:244-277`):
 - only a draft may be deleted;
 - status moves forward only (`draft → active|retired`, `active → retired`);
-- once past draft, `flow_key`, `version`, `environment`, `status_domain`, `selection_condition` are immutable.
+- once past draft, `flow_key`, `version`, `environment`, `status_domain`, `selection_condition`, `selection_priority` are immutable. (`is_default` is *not* in the tuple: activation and retirement move it, and the partial index is what keeps it single.)
 
 **`workflow_child_freeze()`** — `BEFORE INSERT OR UPDATE OR DELETE ON workflow_steps` and `workflow_transitions` (`0047:204-242`, redefined by `0048:45-83` and `0049:60-100`):
 - if the parent flow is not a draft, **INSERT and DELETE are rejected outright**;
@@ -284,7 +295,7 @@ The implementation of that is one line: `if (!flowId) continue;` (`:195`). `guar
 
 ### The algorithm, per moving record
 
-1. **Find the flow** (`:181-194`): the record's bound `flow_id`, else today's `is_default` active flow for this tenant + environment + status domain. Neither → allow.
+1. **Find the flow** (`:181-194`): the record's bound `flow_id` — chosen once at entry by `selection_condition`, see §12 — else today's `is_default` active flow for this tenant + environment + status domain. Neither → allow. Selection is deliberately **not** re-run here: editing a request's payer mid-flight must not swap the rulebook under the people working it.
 2. **Load the steps** (`:197-201`). If the record's *current* status is not a step in this flow, it is not really executing it, so the move cannot be judged → allow (`:209`). If it *is* on the flow but the destination is not a step → 400 naming both codes (`:210-220`). `:205-208` explains the asymmetry: "otherwise 'the workflow says new_rfq → confirmed' is advice, not a rule."
 3. **Find the edge** (`:222-236`). No `workflow_transitions` row for that `(from, to)` pair → 400, with a message telling the admin to draw the transition.
 4. **Two role gates** (`:238-261`). `fromStep.owner_roles` and `edge.allowed_roles`; empty is silence; both must pass.
@@ -380,6 +391,7 @@ The model is also explicitly instructed to **set `drawGraph=false`** for greetin
 | no entry step | new records would have nowhere to start. (*Two* entry steps are stopped earlier — `validateGraph:729-731` requires exactly one, and `workflow_steps_entry_uq` makes it impossible to store two) |
 | no terminal step | records could never finish |
 | not default **and** `selection_condition IS NULL` | "routing is not set" |
+| `is_default` **and** another active flow already holds the fallback slot for this domain (different `flow_key`) | Two flows cannot both be "the answer when nothing matches". Refused as a 409 naming the flow holding the slot — it used to be a 500 quoting `workflow_flows_default_uq`. A second active flow in the same domain is otherwise **legitimate** since 0065 |
 | a non-terminal step with no outgoing transition | records would stall there |
 | a step unreachable from the entry step (BFS, `:790-801`) | dead weight the canvas will happily draw |
 | a non-terminal step whose `owner_roles` include a role **nobody in the workspace holds** (`:804-822`) | "Activation is the last cheap moment to say so; after it, real orders stall." |
@@ -715,14 +727,129 @@ passes wins (`status.service.ts:382-399`). The catalog of fields a condition may
 facts. `describe()` renders a refusal a person can act on: *"this move is only allowed when Who pays
 is insurance"*.
 
-### `selection_condition` is never evaluated — there is effectively one flow per workspace
+### ~~`selection_condition` is never evaluated~~ — BUILT (0065)
 
-The guard resolves the applicable flow with `… and status = 'active' and is_default limit 1` (`status.service.ts:181-185`). A non-default flow with a selection condition can be created, saved and activated, and will never be selected for any record. Multi-flow routing is schema-and-validation only.
+A workspace runs as many flows per domain as it draws. When a record ENTERS, `bindOnEntry`
+(`status.service.ts`) asks `selectableFlows()` for the active flows of that status domain ordered
+`selection_priority desc, created_at asc, id asc`, and takes the first whose `selection_condition`
+holds against the same facts `conditions.ts` already gathers for the arrows — a line inheriting its
+header's, as everywhere else.
+
+Four rules, each of which is load-bearing:
+
+- **the default is the FALLBACK, not a candidate.** It is held out of the ranked pass entirely and
+  used only when nothing matched. It has to be: the provisioned default carries `{}` and is the
+  oldest flow in almost every workspace, so ranking it with the rest would let it capture every
+  record ahead of the flow drawn last week.
+- **the choice is made once.** It is written to `workflow_record_state.flow_id` and the guard reads
+  *that* on every subsequent move. `payer_type` is an editable field; re-deciding on each move would
+  mean correcting one halfway through swapped the rulebook under the people working the record.
+- **`{}` matches everything, `NULL` matches nothing.** A flow with no routing decided is never
+  chosen; saying "everything" is a deliberate act.
+- **no flow at all is still permissive.** Unchanged, and asserted first in `guard-check.sh`.
+
+The refusal path is unchanged too: a record whose selected flow has no step for the status it is
+arriving at is left **unbound** rather than pinned to a step it is not standing on.
+
+`guard-check.sh` drives all of it — matching, falling back, the same answer on repeated runs, the
+priority dial, and a fact edited after entry failing to move the record.
+
+### ~~A step cannot hand a record to another flow~~ — BUILT (0066)
+
+0065 decided which flow a record STARTS in. This decides where it goes MID-LIFE: an order reaches
+"send to the insurer", crosses into the insurance flow, is worked there by insurance's own people
+under insurance's own rules, and comes back at whichever status the outcome calls for.
+
+**The crossing is an ARROW**, not a step property and not a call stack:
+`workflow_transitions.to_flow_key`. Taking the arrow resolves that key to its ACTIVE version, looks
+up that flow's step for the destination status, and binds the record there — in the same single
+write that every other move performs. One `status_logs` row, one custody write, no recursion.
+
+Three consequences fall straight out of the choice:
+
+- **it is visible.** The border is on the canvas at both ends (dashed, accent-coloured, with the
+  destination flow named on it), validatable from both ends, and frozen by `workflow_child_freeze()`
+  while records are executing it.
+- **an outcome can steer the parent.** A sub-flow draws one return arrow per ending, each landing on
+  a different status in the flow it came from. A single stored return address could only ever land
+  them all in the same place.
+- **it cannot ping-pong invisibly.** `workflow_transitions_no_self_loop` makes a zero-status-change
+  crossing unrepresentable, so every crossing moves the record. A status-changing loop across the
+  border is bounded by exactly what bounds a same-flow 2-cycle today; automatic chains are bounded
+  by `MAX_AUTO_DEPTH`, which an automatic crossing goes through unchanged.
+
+**`workflow_flows.entry_mode`** (`selected` | `handoff`) is how a sub-flow is honest about routing.
+A sub-flow must be active and non-default, and `workflow_flows_selection_complete` then demands a
+selection condition from exactly that shape of flow — the cheap way to satisfy it being `{}`, which
+this engine defines as "matches EVERY record". `handoff` is a third valid answer to "how do records
+get here", accepted by `assertActivatable`.
+
+**`workflow_record_state.origin_flow_id` is a HINT, never a pointer.** Written on the way out,
+cleared on the way back. On return the resolver prefers it when that flow is non-draft AND still has
+a step for the landing status, and otherwise falls back to the active version of the named key. So a
+record comes home to the version it left in every ordinary case — and a null, stale or unusable
+value costs it nothing, because nothing depends on the column existing. That is the whole difference
+from a return address that must resolve: the one that must resolve is the one that strands a record
+on the day it cannot.
+
+**Both ends are checked at activation**, which is the last cheap moment:
+
+- FORWARD — every `to_flow_key` leaving this flow names a key with an active version in this
+  workspace/environment/domain, and that version has the destination status as a step.
+- REVERSE — no active flow crosses INTO this flow_key at a status this version does not contain.
+  This is what stops republishing a parent that has dropped the status a sub-flow hands back to.
+- REACHABILITY, both ways — the existing forward BFS from the entry step, plus a new BFS *backwards*
+  from every terminal. The three older checks looked like they already guaranteed "every step can
+  reach an ending" and did not: `entry→X, X→Y, Y→X, entry→T` passes all three and orbits forever.
+  That defect predates crossings and is fixed for every flow, not only for the ones that cross.
+- `retire()`, which was a bare `UPDATE` with no checks, now refuses to retire a flow an ACTIVE flow
+  crosses into. A version bump is unaffected: `activate()` retires the predecessor in the same
+  transaction, so the key never stops resolving.
+
+Activation **warns but does not block** on a handoff flow whose terminal has no crossing back. A
+sub-flow that legitimately ends some records for ever is indistinguishable from one whose way home
+was never drawn, and intent is not a property of a graph.
+
+**Two run-time refusals, both before anything is written** — the destination key has no active
+version, and the destination flow has no step for the landing status. Each leaves the record exactly
+where it was, on a flow that still governs it, with every other arrow still available.
+
+**The `transition_key` collision, which is the sharpest thing this migration fixes.**
+`transition_key` is `from>to` with no flow in it, and it keyed `workflow_auto_fired_uq`,
+`approval_requests_open_uq` and `approval_requests_granted_idx`. The moment ONE record executes TWO
+flows, a signature granted for `priced>confirmed` under the standard flow is spendable by an
+identically-named arrow under insurance, and an `auto_once` that fired under the first suppresses the
+second. The fix is a nullable `flow_id` COLUMN on both tables, folded into those indexes with
+`NULLS NOT DISTINCT` — **not** a change to the key string, which `actions.ts` splits into the
+outbound webhook payload and which two screens render. Reads are `flow_id = <judging flow> or
+flow_id is null`, the null branch being the only correct reading of every pre-0066 row.
+
+**Where the record was, in the history**: `status_logs.flow_id`, stamped with the flow the move was
+JUDGED under (on a crossing, the flow it landed in). Read by the run log rather than re-derived from
+today's binding, because by then the record may be home again. `myWork()` names the holding flow and,
+while the record is a visitor, the flow it came from.
+
+**Break glass**: `POST /admin/workflows/records/:entity/:id/return`, super_admin only, valid only
+when `origin_flow_id` is set. It finds the return arrow the author drew from where the record stands
+and takes it through `StatusService` like any other move, so it cannot produce a state an ordinary
+return could not. It refuses when no way home is drawn — the alternative is dropping records onto
+statuses nobody connected.
+
+**One surprise, asserted in `guard-check.sh` rather than left to be discovered:** `queuePredicate`
+(`routing.ts`) builds `routedAnywhere`/`routedHere` across every ACTIVE flow with no per-record
+filter, keyed by status CODE. So a sub-flow's page placements apply to records that never crossed.
+The safety rule (routed nowhere → shows everywhere) keeps it harmless — the worst case is appearing
+on more pages, never fewer — but whoever authors the first sub-flow has to be told.
 
 ### ~~A flow created through the UI cannot be activated~~ — FIXED
 
-`Workflows.tsx` now sends `isDefault: true`. Every flow created before that fix was permanently
-stuck in draft with no way to satisfy `assertActivatable` from any screen.
+`Workflows.tsx` sends `isDefault` according to whether the workspace already has a fallback in that
+domain — `true` when it does not, `false` when it does. Every flow created before the first fix was
+permanently stuck in draft with no way to satisfy `assertActivatable` from any screen; sending `true`
+unconditionally (the first fix) became the opposite trap once provisioning gave every workspace a
+default, because `is_default` is set at creation and no endpoint changes it, so the second flow was
+born claiming a slot that was taken. A second flow now needs a selection condition instead, which is
+what the form says.
 
 ### ~~"My work" is unreachable for the people custody assigns work to~~ — FIXED
 

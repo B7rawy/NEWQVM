@@ -62,6 +62,15 @@ interface Edge {
   /** Opaque here on purpose — the canvas has no condition editor yet, but it must not eat one. */
   condition: Record<string, unknown>;
   autoAdvance: boolean; autoOnce: boolean;
+  /**
+   * THE CROSSING (0066): taking this arrow also hands the record to the workflow with this key.
+   * null on every ordinary arrow, which is nearly all of them.
+   *
+   * Read the interface header again before touching this: the save below replaces the flow's
+   * transitions wholesale, so a border that is loaded but not sent — or sent but not loaded — is
+   * erased the next time somebody drags a node.
+   */
+  toFlowKey: string | null;
 }
 interface Graph { steps: Step[]; edges: Edge[] }
 interface FlowDoc {
@@ -134,6 +143,13 @@ export default function WorkflowCanvas() {
   const [gateDefs, setGateDefs] = useState<GateDef[]>([]);
   const [actionDefs, setActionDefs] = useState<ActionDef[]>([]);
   const [library, setLibrary] = useState<LibraryEntry[]>([]);
+  /**
+   * The workflows an arrow in THIS flow may hand a record to (0066): active, same status domain,
+   * not this one. Empty in every workspace that has drawn only one flow, and the border control is
+   * hidden entirely when it is — offering "hand this to…" with nothing to hand it to would be a
+   * dead control claiming a capability the workspace has not set up.
+   */
+  const [otherFlows, setOtherFlows] = useState<Array<{ flow_key: string; name_en: string }>>([]);
   const [sel, setSel] = useState<Sel | null>(null);
   const [linkFrom, setLinkFrom] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -214,15 +230,27 @@ export default function WorkflowCanvas() {
 
   // ── load ──────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
-    const [f, c] = await Promise.all([
+    const [f, c, l] = await Promise.all([
       api.get<FlowDoc>(`/admin/workflows/${id}`, { tenant: target }),
       api.get<{
         itemStatuses: CatalogStatus[]; vendorStatuses: CatalogStatus[]; roles: string[];
         pages: RoutablePage[]; holders: Record<string, number>; gates: GateDef[];
         actions: ActionDef[]; actionLibrary: LibraryEntry[];
       }>("/admin/workflows/catalog", { tenant: target }),
+      // The other flows, for the border picker and for naming a crossing on the canvas. Filtered
+      // to ACTIVE ones because that is what a crossing resolves to at run time — offering a draft
+      // would let an admin draw a border that activation then refuses.
+      api.get<{ flows: Array<{ flow_key: string; name_en: string; status: string; status_domain: string }> }>(
+        "/admin/workflows",
+        { tenant: target },
+      ),
     ]);
     setFlow(f);
+    setOtherFlows(
+      (l.flows ?? [])
+        .filter((x) => x.status === "active" && x.status_domain === f.status_domain && x.flow_key !== f.flow_key)
+        .map((x) => ({ flow_key: x.flow_key, name_en: x.name_en })),
+    );
     setCatalog(f.status_domain === "vendor" ? c.vendorStatuses : c.itemStatuses);
     setRoles(c.roles);
     setPages(c.pages ?? []);
@@ -255,6 +283,7 @@ export default function WorkflowCanvas() {
         condition: ((t.condition as Record<string, unknown>) ?? {}),
         autoAdvance: !!t.auto_advance,
         autoOnce: t.auto_once === undefined ? true : !!t.auto_once,
+        toFlowKey: (t.to_flow_key as string | null) ?? null,
       })),
     });
     hist.current = { past: [], future: [], lastKey: null };
@@ -549,7 +578,7 @@ export default function WorkflowCanvas() {
       edges: [...edges, {
         from, to, label: label || null,
         requiresApproval: false, allowedRoles: [], priority: 0, handoff: "pool", gates: [],
-        actions: [], condition: {}, autoAdvance: false, autoOnce: true,
+        actions: [], condition: {}, autoAdvance: false, autoOnce: true, toFlowKey: null,
       }],
     });
   }
@@ -567,6 +596,9 @@ export default function WorkflowCanvas() {
       commit({ ...graph, edges: [...edges, {
         from: linkFrom, to, requiresApproval: false, allowedRoles: [], priority: 0,
         handoff: "pool", gates: [], actions: [], condition: {}, autoAdvance: false, autoOnce: true,
+        // An arrow is an ORDINARY move until somebody deliberately makes it a border. Defaulting
+        // this to anything else would hand records to another workflow because a node was dragged.
+        toFlowKey: null,
       }] });
     }
     setLinkFrom(null);
@@ -619,6 +651,7 @@ export default function WorkflowCanvas() {
           requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
           handoff: e.handoff, gates: e.gates, actions: e.actions,
           condition: e.condition, autoAdvance: e.autoAdvance, autoOnce: e.autoOnce,
+          toFlowKey: e.toFlowKey,
         })),
       }, { tenant: target });
       // Only declare the document clean if nothing changed while the request was in flight;
@@ -834,6 +867,13 @@ export default function WorkflowCanvas() {
                   <marker id="ah-on" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                     <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--navy)" />
                   </marker>
+                  {/* A BORDER GETS ITS OWN ARROWHEAD, in the accent colour the canvas already uses
+                      for "this is not the ordinary case". An arrow that hands the record to another
+                      workflow and looks exactly like one that does not is the untruth this whole
+                      feature is supposed to avoid. */}
+                  <marker id="ah-x" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent, #d33)" />
+                  </marker>
                 </defs>
                 {edges.map((e) => {
                   const a = byCode.get(e.from);
@@ -850,17 +890,52 @@ export default function WorkflowCanvas() {
                   const d = `M ${x1} ${y1} C ${x1 + (fwd ? dx : -dx)} ${y1}, ${x2 - (fwd ? dx : -dx)} ${y2}, ${x2} ${y2}`;
                   const mx = (x1 + x2) / 2;
                   const my = (y1 + y2) / 2;
+                  /**
+                   * A CROSSING IS DRAWN AS A CROSSING (0066). Dashed, accent-coloured, its own
+                   * arrowhead, and the destination WORKFLOW named on the chip beneath the label —
+                   * because the one thing a reader cannot deduce from an ordinary-looking arrow is
+                   * that taking it changes which rulebook governs the order.
+                   *
+                   * The NAME is shown, falling back to the raw key. A key is what is stored (so the
+                   * target can republish without this flow needing a new version) but it is not what
+                   * anybody calls the thing, and a chip reading `insurance_claims` next to one
+                   * reading "Insurance claims" is a worse screen than either alone.
+                   */
+                  const crossing = e.toFlowKey
+                    ? (otherFlows.find((f) => f.flow_key === e.toFlowKey)?.name_en ?? e.toFlowKey)
+                    : null;
                   const text = e.label ?? (e.requiresApproval ? "approval" : "");
                   const w = Math.max(34, text.length * 6.4 + (e.requiresApproval ? 30 : 16));
                   const tx = e.requiresApproval ? 7 : 0; // shift text to clear the lock glyph
+                  const cw = crossing ? Math.max(48, crossing.length * 5.6 + 22) : 0;
                   return (
                     <g key={key} className="pointer-events-auto cursor-pointer"
                       onPointerDown={(ev) => ev.stopPropagation()}
                       onClick={() => setSel({ kind: "edge", key })}>
                       {/* invisible fat path so a thin curve is still easy to hit */}
                       <path d={d} fill="none" stroke="transparent" strokeWidth={18} />
-                      <path d={d} fill="none" stroke={on ? "var(--navy)" : "var(--muted)"}
-                        strokeWidth={on ? 2.25 : 1.5} markerEnd={on ? "url(#ah-on)" : "url(#ah)"} />
+                      <path d={d} fill="none"
+                        stroke={crossing ? "var(--accent, #d33)" : on ? "var(--navy)" : "var(--muted)"}
+                        strokeDasharray={crossing ? "6 4" : undefined}
+                        strokeWidth={on ? 2.25 : crossing ? 1.9 : 1.5}
+                        markerEnd={crossing ? "url(#ah-x)" : on ? "url(#ah-on)" : "url(#ah)"} />
+                      {crossing && (
+                        <g transform={`translate(${mx} ${my + (text || on ? 16 : 0)})`}>
+                          <rect x={-cw / 2} y={-9} width={cw} height={18} rx={9}
+                            fill="var(--panel)" stroke="var(--accent, #d33)" />
+                          {/* A drawn door-and-arrow rather than an emoji, for the reason the lock
+                              below is drawn: emoji ignore the canvas scale. */}
+                          <g transform={`translate(${-cw / 2 + 10} 0)`} stroke="var(--accent, #d33)"
+                            strokeWidth={1.2} fill="none" strokeLinecap="round">
+                            <path d="M -3 -4 V 4 M -3 -4 H 1 M -3 4 H 1" />
+                            <path d="M 0 0 H 4 M 2.4 -1.8 L 4.2 0 L 2.4 1.8" />
+                          </g>
+                          <text textAnchor="middle" x={7} y={3.5} fontSize={10}
+                            fill="var(--accent, #d33)">
+                            {crossing}
+                          </text>
+                        </g>
+                      )}
                       {(text || on) && (
                         <g transform={`translate(${mx} ${my})`}>
                           <rect x={-w / 2} y={-10} width={w} height={20} rx={10}
@@ -1131,6 +1206,33 @@ export default function WorkflowCanvas() {
                     {roles.map((r) => <option key={r} value={r}>{r.replace(/_/g, " ")}</option>)}
                   </select>
                 </div>
+
+                {/* THE BORDER (0066). Hidden when the workspace has no other active flow of this
+                    domain: a picker whose only option is "stays here" is a control that does
+                    nothing, and this codebase's rule is that no UI claims what the system will not
+                    do. It appears the moment a second flow is published. */}
+                {otherFlows.length > 0 && (
+                  <div>
+                    <label className="label">Hand it to another workflow</label>
+                    <select className="input" disabled={frozen} value={selEdge.toFlowKey ?? ""}
+                      onChange={(ev) => patchEdge(`${selEdge.from}>${selEdge.to}`, {
+                        toFlowKey: ev.target.value || null,
+                      })}>
+                      <option value="">Stays in this workflow</option>
+                      {otherFlows.map((f2) => (
+                        <option key={f2.flow_key} value={f2.flow_key}>{f2.name_en}</option>
+                      ))}
+                    </select>
+                    {/* Says what actually changes, because the consequence is not guessable from
+                        the control: the destination status must exist in BOTH graphs, and after the
+                        move it is the OTHER workflow's owners who hold the record. */}
+                    <p className="mt-1 text-[11.5px] text-faint">
+                      {selEdge.toFlowKey
+                        ? `Making this move puts the order under that workflow's rules, and its people take over at ${byCode.get(selEdge.to)?.label ?? selEdge.to}. That workflow needs the same status as a step, or the move is refused.`
+                        : "An ordinary move: the order stays under this workflow's rules."}
+                    </p>
+                  </div>
+                )}
                 {!frozen && (
                   <button className="btn btn-sm justify-center text-accent" onClick={() => removeSelection()}>
                     <Trash2 className="h-4 w-4" /> Remove transition
@@ -1199,6 +1301,10 @@ function AssistantPanel({
               requiresApproval: e.requiresApproval, allowedRoles: e.allowedRoles, priority: e.priority,
               handoff: e.handoff, gates: e.gates, actions: e.actions,
               condition: e.condition, autoAdvance: e.autoAdvance, autoOnce: e.autoOnce,
+              // Sent as part of "here is the current graph" so the model can see the borders that
+              // already exist. Without it, asking the assistant to adjust anything would have it
+              // propose a graph in which every crossing had quietly vanished.
+              toFlowKey: e.toFlowKey,
             })),
           },
         },
@@ -1218,6 +1324,7 @@ function AssistantPanel({
             gates: ((t2.gates as GateCfg[]) ?? []), actions: ((t2.actions as ActionCfg[]) ?? []),
             condition: ((t2.condition as Record<string, unknown>) ?? {}),
             autoAdvance: !!t2.autoAdvance, autoOnce: t2.autoOnce === undefined ? true : !!t2.autoOnce,
+            toFlowKey: (t2.toFlowKey as string | null) ?? null,
           })),
         });
       }

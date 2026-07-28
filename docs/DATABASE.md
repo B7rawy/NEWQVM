@@ -308,10 +308,10 @@ Generic multi-level engine. `entity_type` here is free `text`, not the enum — 
 
 | Table | | What it is | Key columns |
 |---|---|---|---|
-| `workflow_flows` | T E | A versioned state machine owned by the workspace | `flow_key`, `version`, `name_en/ar`, `status` (`draft`\|`active`\|`retired`), `is_default`, `status_domain`, `selection_condition` jsonb, `canvas` jsonb |
+| `workflow_flows` | T E | A versioned state machine owned by the workspace | `flow_key`, `version`, `name_en/ar`, `status` (`draft`\|`active`\|`retired`), `is_default`, `status_domain`, `selection_condition` jsonb, `selection_priority`, `entry_mode` (`selected`\|`handoff`, `0066`), `canvas` jsonb |
 | `workflow_steps` | T E | A node = one status | `flow_id`, `status_domain`, `item_status_id`, `vendor_status_id`, `sort_order`, `is_entry`, `is_terminal`, `sla_hours`, `canvas_x`, `canvas_y`, `pages` jsonb, `owner_roles` jsonb |
-| `workflow_transitions` | T E | An arrow | `flow_id`, `from_step_id`, `to_step_id`, `label_en/ar`, `requires_approval`, `allowed_roles` jsonb, `condition` jsonb, `priority`, `handoff` |
-| `workflow_record_state` | T E | Which flow a record is bound to, and who holds it now | `entity_type`, `entity_id`, `status_domain`, `flow_id`, `assignee_user_id`, `assignee_role`, `step_entered_at`, `due_at` |
+| `workflow_transitions` | T E | An arrow | `flow_id`, `from_step_id`, `to_step_id`, `label_en/ar`, `requires_approval`, `allowed_roles` jsonb, `condition` jsonb, `priority`, `handoff`, `to_flow_key` (the crossing, `0066`) |
+| `workflow_record_state` | T E | Which flow a record is bound to, and who holds it now | `entity_type`, `entity_id`, `status_domain`, `flow_id`, `origin_flow_id` (set only while away in a sub-flow, `0066`), `assignee_user_id`, `assignee_role`, `step_entered_at`, `due_at` |
 
 Details in §10. Note that five of the columns listed above exist only in the database and in raw SQL — see gap 1 in §11.
 
@@ -320,7 +320,7 @@ Details in §10. Note that five of the columns listed above exist only in the da
 | Table | | What it is | Key columns |
 |---|---|---|---|
 | `attachments` (`crosscutting.ts`) | T E | **One** attachments table, replacing four old ones (`files`, `quotation_attachments`, `purchase_invoice_attachments`, `returned_issue_attachments`) | `entity_type`, `entity_id`, `file_key`, `file_name`, `mime_type`, `size_bytes`, `uploaded_by` |
-| `status_logs` | T E | One polymorphic append-only status history instead of per-table columns | `entity_type`, `entity_id`, `status_domain`, `from_status_id`, `to_status_id`, `changed_by` |
+| `status_logs` | T E | One polymorphic append-only status history instead of per-table columns | `entity_type`, `entity_id`, `status_domain`, `from_status_id`, `to_status_id`, `changed_by`, `flow_id` (which rulebook judged this move, `0066`) |
 | `notes` | T E | One polymorphic notes table | `entity_type`, `entity_id`, `body`, `is_internal` |
 | `notification_log` | T E | Every outbound message attempt | `channel`, `recipient`, `template`, `payload`, `status` |
 | `order_number_counters` | T E | Per-(tenant, prefix, environment) counter, incremented atomically | `region_id`, `prefix`, `next_value` |
@@ -662,6 +662,8 @@ There is no `down` migration anywhere in this repo. Recovery is by restore, not 
 
 | **0064** | `workflow_webhook_outbox.sql` | The pending-delivery queue, its attempt/backoff state, and a per-workspace signing secret | Two objections had kept `webhook` out of the catalog, and this answers both. **Rollback:** the action writes an outbox row INSIDE the business transaction and sends nothing, so a transaction that rolls back takes the row with it and a receiver is only ever told about something that really committed — a webhook fired inline would leave it believing otherwise, with nobody aware. **SSRF:** a webhook is the first outbound request in this codebase whose destination a USER controls (the only other one is the AI call, to a hostname written in the source), issued from a server that can reach the database, its neighbours and the cloud metadata endpoint. `webhook-url.ts` refuses non-public destinations, and does it at DIAL time by handing the socket its own resolver — so the address that was judged is the address connected to, and a name that answers publicly when saved and with loopback when sent has no window to exploit |
 
+| **0066** | `workflow_crossings.sql` | `workflow_transitions.to_flow_key` — an arrow that also hands the record to another flow; `workflow_flows.entry_mode`; `workflow_record_state.origin_flow_id`; `status_logs.flow_id`; a `flow_id` column on `workflow_auto_fired` and `approval_requests`, folded into their unique indexes with `NULLS NOT DISTINCT` | A crossing is an **arrow**, so it is drawn on the canvas at both ends, refused at activation if either end is missing, and frozen while records execute it — and it is ONE move, so a crossing produces one `status_logs` row rather than a phantom second one that reads as an order going backwards. `origin_flow_id` is a **hint, not a pointer**: the return prefers the version the record left, and falls back to the live one when that version is a draft or has lost the landing status, so nothing strands when the hint goes bad. `entry_mode = 'handoff'` exists so a sub-flow is not forced to store `selection_condition = '{}'` — which this engine defines as "matches EVERY record" — merely to satisfy `workflow_flows_selection_complete`. The `flow_id` columns fix a real correctness bug the moment one record can execute two flows: `transition_key` is `from>to` with no flow in it, so a signature granted for `priced>confirmed` under one flow was spendable by the identically-named arrow of another, and one flow's `auto_once` suppressed the other's. It is a COLUMN and not a change to the key string, because `actions.ts` splits that string into the outbound webhook payload and two screens render it |
+
 For context, the earlier migrations fall into three groups: `0000`–`0010` build the foundation (full schema, security functions, app role, RLS helpers); `0011`–`0024` add modules in DDL+RLS pairs; `0025`–`0039` are hardening and QNEW-71 counterparty identity.
 
 ---
@@ -711,6 +713,7 @@ Every other `check (` in the migration tree is an RLS `WITH CHECK` clause. These
 ### Details that look arbitrary but are not
 
 - **`selection_condition` has three meaningful states.** `NULL` = never auto-selected (routing not yet decided; the default). `{}` = matches every record. `{…}` = matches records satisfying it. Without the `NULL` state a half-finished flow is born matching everything and quietly captures every new record ahead of the intended one. `workflow_flows_selection_complete` stops such a flow going active.
+- **`selection_priority` (0065) orders flows whose conditions both match**, `desc`, then oldest, then `id` — the rule `workflow_transitions.priority` already uses for two arrows joining the same pair of steps. Since 0065 the condition is *evaluated* when a record enters (`status.service.ts`), so a workspace runs as many flows per domain as it draws; the `is_default` one is held out of that ranking and used only as the fallback.
 - **Partial unique indexes carry the versioning logic.** `workflow_flows_active_uq ON (tenant_id, environment, flow_key) WHERE status = 'active'` — activation is two writes (retire v1, activate v2) and a crash between them would otherwise leave routing nondeterministic. `workflow_flows_default_uq ON (tenant_id, environment, status_domain) WHERE is_default AND status = 'active'` — the `status = 'active'` clause is load-bearing: without it a draft v2 collides with the live v1 and versioning becomes impossible. `workflow_steps_entry_uq ON (flow_id) WHERE is_entry` — zero entries wedges every new record, two makes the start nondeterministic.
 - **`canvas_x` / `canvas_y` are `double precision`, not `numeric`.** Drizzle returns `numeric` as a *string*, so the first drag would concatenate rather than add, the node would teleport, and that value would be saved.
 - **`workflow_record_state.status_domain` has no default,** deliberately. (`workflow_flows.status_domain` *does* default to `'item'`.) Defaulting the record-state column would silently mis-bind `rfq_vendor` — the one vendor-domain entity — to a flow speaking the wrong vocabulary, after which nothing resolves.
@@ -718,14 +721,14 @@ Every other `check (` in the migration tree is an RLS `WITH CHECK` clause. These
 
 ### The freeze triggers
 
-`workflow_flow_freeze()` (BEFORE UPDATE OR DELETE on `workflow_flows`): only a draft may be deleted; status moves forward only (`draft → active|retired`, `active → retired`); once past draft, `flow_key`, `version`, `environment`, `status_domain` and `selection_condition` are immutable.
+`workflow_flow_freeze()` (BEFORE UPDATE OR DELETE on `workflow_flows`): only a draft may be deleted; status moves forward only (`draft → active|retired`, `active → retired`); once past draft, `flow_key`, `version`, `environment`, `status_domain`, `selection_condition` and `selection_priority` (added by `0065`) are immutable. `is_default` is deliberately *not* frozen — activation hands it from the retired predecessor to the successor, and `workflow_flows_default_uq` is what keeps it single.
 
-`workflow_child_freeze()` (BEFORE INSERT OR UPDATE OR DELETE on `workflow_steps` and `workflow_transitions`): if the parent flow is not a draft, INSERT and DELETE are rejected outright, and UPDATE is rejected if it touches the semantic tuple. Current tuples after `0049`:
+`workflow_child_freeze()` (BEFORE INSERT OR UPDATE OR DELETE on `workflow_steps` and `workflow_transitions`): if the parent flow is not a draft, INSERT and DELETE are rejected outright, and UPDATE is rejected if it touches the semantic tuple. Current tuples after `0066`:
 
 | Table | Frozen columns |
 |---|---|
 | `workflow_steps` | `item_status_id`, `vendor_status_id`, `status_domain`, `is_entry`, `is_terminal`, `owner_roles` |
-| `workflow_transitions` | `from_step_id`, `to_step_id`, `condition`, `requires_approval`, `allowed_roles`, `priority`, `handoff` |
+| `workflow_transitions` | `from_step_id`, `to_step_id`, `condition`, `requires_approval`, `allowed_roles`, `priority`, `handoff`, `gates`, `auto_advance`, `auto_once`, `actions`, `to_flow_key` |
 
 Everything outside those tuples — canvas coordinates, `sort_order`, `sla_hours`, labels, `pages` — stays editable on an active flow.
 

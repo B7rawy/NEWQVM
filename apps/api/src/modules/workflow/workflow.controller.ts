@@ -194,6 +194,28 @@ export class WorkflowController {
     return this.svc.claim(this.ctx(req), entity, id, body?.userId);
   }
 
+  /**
+   * BREAK GLASS: bring a record home from the sub-flow it is away in (0066).
+   *
+   * NOT @WorkspaceRoute, unlike the two routes above: this is the class-level PlatformOnly door plus
+   * super_admin enforced in the service. That is deliberate and is the difference between a lever
+   * and a shortcut — the ordinary way home is the arrow, available to whoever the author allowed,
+   * and this exists only for the case where that arrow's holders cannot take it. Widening it to the
+   * workspace would make "who may move this record" answerable two ways.
+   *
+   * No declaration-order trap here, unlike page-view and action-library: this path is four segments
+   * and every `:id/...` route is two, so nothing can shadow it.
+   */
+  @Post("/records/:entity/:id/return")
+  returnRecord(
+    @Req() req: Request,
+    @Param("entity") entity: string,
+    @Param("id") id: string,
+    @Body() body: { toCode?: string },
+  ) {
+    return this.svc.returnRecord(this.ctx(req), entity, id, body?.toCode);
+  }
+
   /** Draft a graph from a description. Returns a PROPOSAL — the canvas renders it, the human saves. */
   @Post(":id/assist")
   assist(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {

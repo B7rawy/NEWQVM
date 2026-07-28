@@ -308,6 +308,14 @@ V2=$(wf -X POST $B/api/admin/workflows/$WFID/new-version | jf id)
 ok draft "$(psql "select status from workflow_flows where id='$V2'")" "the supported path is a new draft version"
 ok 3 "$(psql "select count(*) from workflow_steps where flow_id='$V2'")" "and the graph is cloned into it"
 
+# RETIRE IT HERE, not only in the cleanup at the bottom of this file. Nothing below reads $WFID, and
+# leaving it ACTIVE now costs everything that runs after it: since 0065 a non-default active flow
+# whose selection_condition is `{}` matches EVERY record, so this one would take every RFQ raised by
+# guard-check.sh and every workflow test after this point would be asserting against a rulebook it
+# did not draw. Before flow selection existed the same leftover was inert — `is_default` was the only
+# way a flow was ever chosen — which is precisely why it sat here unnoticed.
+ok 201 "$(scode POST /api/admin/workflows/$WFID/retire -H "Authorization: Bearer $ATOK" -H 'X-Tenant: riyadh')" "a flow can be retired when it is no longer the answer"
+
 # the database refuses even if the API is bypassed
 ok 3 "$(psql "select count(*) from pg_trigger where tgname like 'trg_workflow%_freeze'")" "the freeze is enforced by the DB, not just the API"
 

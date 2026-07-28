@@ -16,6 +16,17 @@ interface Flow {
   is_default: boolean;
   status_domain: "item" | "vendor";
   selection_condition: Record<string, unknown> | null;
+  /** Ties between two flows that both match. Higher goes first; see selection_summary. */
+  selection_priority: number;
+  /**
+   * WHICH RECORDS THIS FLOW TAKES, as a sentence, rendered by the server (describeSelection).
+   *
+   * Not derived here on purpose. `selection_condition` has three states — null, {}, and a real
+   * condition — and two of them look nearly identical in JSON while meaning opposite things ("never
+   * chosen" vs "chosen for everything"). One renderer, next to the evaluator that acts on it, is the
+   * only way this screen and the engine cannot drift apart.
+   */
+  selection_summary: string;
   steps: number;
   transitions: number;
   records: number;
@@ -87,10 +98,21 @@ export default function Workflows() {
     setErr("");
     setBusy(true);
     try {
-      const r = // isDefault matters: a flow that is neither the default nor conditional fails the
-      // workflow_flows_selection_complete CHECK on activation, so every flow created here was
-      // permanently stuck in draft.
-      await api.post<{ id: string }>("/admin/workflows", { flowKey, nameEn, nameAr, isDefault: true }, { tenant: target });
+      // WHETHER THIS ONE IS THE FALLBACK DEPENDS ON WHETHER THE WORKSPACE ALREADY HAS ONE, and it
+      // has to be decided here because nothing can change it later: `is_default` is set at creation
+      // and no endpoint updates it.
+      //
+      // Sending `true` unconditionally — which this did — was right when a workspace had at most one
+      // flow, and became a trap the moment provisioning gave every workspace a default: the second
+      // flow was born claiming a slot that was taken, and activation could only ever refuse it.
+      // Sending `false` when a fallback exists produces the flow the owner is actually asking for
+      // when they press "New workflow" beside an existing one — an alternative, chosen by a
+      // condition, running next to the fallback rather than replacing it.
+      const r = await api.post<{ id: string }>(
+        "/admin/workflows",
+        { flowKey, nameEn, nameAr, isDefault: !live("item") },
+        { tenant: target },
+      );
       nav(`/admin/workflows/${r.id}`);
     } catch (e) {
       setErr((e as Error).message);
@@ -114,11 +136,21 @@ export default function Workflows() {
     }
   }
 
-  // The flow each domain is actually RUNNING. status.service.ts consults the active default and
-  // nothing else, so this is the one row on the page that answers "what are our rules today".
+  // THE FALLBACK of each domain — the flow a record joins when no other flow's condition matched
+  // it. Every workspace has one, and until somebody draws a second flow it is the only flow there
+  // is, so it stays the headline of this screen.
   const live = (domain: "item" | "vendor") =>
     (rows ?? []).find((f) => f.status_domain === domain && f.status === "active" && f.is_default);
-  const others = (rows ?? []).filter((f) => f !== live("item") && f !== live("vendor"));
+  // The alternatives running BESIDE it — an insurance flow next to a cash flow. The server returns
+  // flows in the engine's own selection order (selection_priority desc, then oldest), so listing
+  // them in the order received is not a presentation choice: it is the order they are tried in, and
+  // the first one that matches takes the record.
+  const alsoLive = (domain: "item" | "vendor") =>
+    (rows ?? []).filter((f) => f.status_domain === domain && f.status === "active" && !f.is_default);
+  const onCard = new Set(
+    (["item", "vendor"] as const).flatMap((d) => [live(d), ...alsoLive(d)]).filter(Boolean).map((f) => f!.id),
+  );
+  const others = (rows ?? []).filter((f) => !onCard.has(f.id));
 
   return (
     <>
@@ -204,6 +236,17 @@ export default function Workflows() {
               </button>
             </div>
           </form>
+          {/* SAY WHAT KIND OF FLOW THIS WILL BE BEFORE IT IS MADE. A workspace's second flow is an
+              ALTERNATIVE, not a replacement, and it needs a condition of its own before it can go
+              live — which is a refusal at activation if nobody says so here. `is_default` is fixed
+              at creation, so this is also the last moment the answer can change. */}
+          {live("item") && (
+            <p className="mt-3 text-[12px] text-muted">
+              {live("item")!.name_en} stays the fallback for orders &amp; requests. This flow runs
+              beside it and needs a condition saying which records it takes, or it cannot be
+              activated.
+            </p>
+          )}
         </Card>
       )}
 
@@ -217,6 +260,7 @@ export default function Workflows() {
           <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {(["item", "vendor"] as const).map((domain) => {
               const f = live(domain);
+              const alts = alsoLive(domain);
               return (
                 <Card key={domain}>
                   <div className="flex items-start justify-between gap-3">
@@ -231,9 +275,21 @@ export default function Workflows() {
                             {f.name_en}
                             <span className="mr-2 ml-2"><Badge tone={TONE[f.status]}>{LABEL[f.status]}</Badge></span>
                           </h3>
+                          {/* "ON IT RIGHT NOW", not "in flight" — 0066 changed what this number
+                              counts. It is a count of workflow_record_state rows pointing at this
+                              flow, and a record that crosses into a sub-flow stops pointing here
+                              until it comes back. So "in flight" now overstates: an order away in
+                              the insurance flow is very much in flight and is not in this number. */}
                           <p className="mt-1 text-[12.5px] text-muted">
                             Version {f.version} · {f.steps} steps · {f.transitions} moves ·{" "}
-                            {f.records} record{f.records === 1 ? "" : "s"} in flight
+                            {f.records} record{f.records === 1 ? "" : "s"} on it right now
+                          </p>
+                          {/* WHICH RECORDS THIS ONE TAKES. Worth saying even when it is the only
+                              flow, because it is the sentence that stops making sense the moment a
+                              second one is drawn — and this is the screen where that happens. */}
+                          <p className="mt-1 text-[12.5px] text-muted">
+                            Takes {f.selection_summary}
+                            {alts.length > 0 && " — it is the fallback"}
                           </p>
                         </>
                       ) : (
@@ -244,6 +300,32 @@ export default function Workflows() {
                       )}
                     </div>
                   </div>
+
+                  {/* THE OTHER FLOWS LIVE IN THIS DOMAIN, in the order the engine tries them.
+                      A record is matched against these first, top to bottom, and the first one whose
+                      sentence is true takes it; anything left over goes to the flow above. Showing
+                      them in any other order would describe a rulebook the engine does not run. */}
+                  {alts.length > 0 && (
+                    <div className="mt-4 rounded-md border border-line bg-surface px-4 py-3">
+                      <h4 className="text-[12.5px] font-semibold text-ink">
+                        Checked before the fallback, in this order
+                      </h4>
+                      <ol className="mt-2 space-y-1.5">
+                        {alts.map((a, i) => (
+                          <li key={a.id} className="text-[12.5px] text-muted">
+                            <button
+                              className="font-medium text-ink underline-offset-2 hover:underline"
+                              onClick={() => nav(`/admin/workflows/${a.id}`)}
+                            >
+                              {i + 1}. {a.name_en}
+                            </button>{" "}
+                            — takes {a.selection_summary}
+                            {a.records > 0 && ` · ${a.records} in flight`}
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
 
                   {f && (
                     <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -279,8 +361,12 @@ export default function Workflows() {
                           is deleted — you can still open the retired one to read it.
                         </li>
                         <li>
+                          {/* Says "on it right now" rather than "already moving" because since
+                              0066 those are different sets: records away in a sub-flow are moving
+                              and are not counted here. They keep their rules too — the sentence
+                              after this one is the claim that matters, and it is true of both. */}
                           · {f && f.records > 0
-                            ? `${f.records} record${f.records === 1 ? "" : "s"} already moving will keep the rules ${f.records === 1 ? "it" : "they"} started under.`
+                            ? `${f.records} record${f.records === 1 ? "" : "s"} on it right now will keep the rules ${f.records === 1 ? "it" : "they"} started under.`
                             : "Records already moving keep the rules they started under."}{" "}
                           Only records raised from now on use the standard flow.
                         </li>
@@ -313,11 +399,14 @@ export default function Workflows() {
                   <tr>
                     <th className="th">Workflow</th>
                     <th className="th">Applies to</th>
+                    <th className="th">Takes</th>
                     <th className="th">Version</th>
                     <th className="th">Status</th>
                     <th className="th">Steps</th>
                     <th className="th">Transitions</th>
-                    <th className="th">In flight</th>
+                    {/* See the summary line above: this counts records bound to the flow AT THIS
+                        MOMENT, which since 0066 excludes the ones away in a sub-flow. */}
+                    <th className="th">On it now</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -326,9 +415,17 @@ export default function Workflows() {
                       <td className="td font-medium text-ink">
                         <GitBranch className="ml-1.5 inline h-4 w-4 text-faint" />
                         {f.name_en}
-                        {f.is_default && <Badge tone="blue">default</Badge>}
+                        {/* Only a LIVE default is the fallback. Rows retired before the flag was
+                            cleared on retirement still carry it, and badging a version nothing has
+                            executed for months as the workspace's fallback is a false claim about
+                            the running system. */}
+                        {f.is_default && f.status === "active" && <Badge tone="blue">fallback</Badge>}
                       </td>
                       <td className="td text-muted">{DOMAIN_LABEL[f.status_domain]}</td>
+                      {/* The routing a draft WOULD have. "nothing — no routing set" is the reason a
+                          draft cannot be activated, so it belongs where somebody is looking for it,
+                          not only in the error message they get when they press the button. */}
+                      <td className="td text-muted">{f.selection_summary}</td>
                       <td className="td tnum text-muted">v{f.version}</td>
                       <td className="td">
                         <Badge tone={TONE[f.status]}>{LABEL[f.status]}</Badge>

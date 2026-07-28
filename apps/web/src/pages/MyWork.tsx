@@ -26,6 +26,11 @@ interface WorkRow {
   status: string | null;
   part: string | null;
   flow: string | null;
+  /**
+   * The flow this record LEFT, set only while it is away in a sub-flow (0066). Null for almost
+   * everything, which is why it renders as an extra clause rather than a column of its own.
+   */
+  origin_flow: string | null;
 }
 
 const ENTITY_LABEL: Record<string, string> = {
@@ -62,6 +67,14 @@ function Row({ r, onClaim }: { r: WorkRow; onClaim?: () => void }) {
           {ENTITY_LABEL[r.entity_type] ?? r.entity_type}
           {r.status && <> · {r.status}</>}
           {r.assignee_role && <> · {r.assignee_role.replace(/_/g, " ")}</>}
+          {/* WHICH WORKFLOW, AND WHOSE RECORD IT IS — 0066. Shown only where it says something: the
+              flow name appears once a workspace runs more than one, and "from X" only while the
+              record is a VISITOR here. Without the second clause an insurance clerk sees an order
+              arrive with no idea where it came from, and the manager who owns it sees it leave
+              their pool with no explanation at all. */}
+          {r.flow && r.origin_flow && (
+            <> · <span className="text-muted">{r.flow} · from {r.origin_flow}</span></>
+          )}
         </p>
       </div>
       <div className="shrink-0 text-right">

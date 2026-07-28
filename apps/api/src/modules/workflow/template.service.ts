@@ -296,8 +296,12 @@ export class WorkflowTemplateService implements OnApplicationBootstrap {
       selection_condition: {},
     });
 
+    // `is_default = false` on the way out, matching activate(): the flag names THE flow serving as
+    // this domain's fallback right now, and the row being retired here has just stopped being it.
+    // Leaving it set would put a second claimant in every list of flows — a version nothing has
+    // executed since the reset — and the screen would have to guess which one to believe.
     const retired = (await tx.execute(sql`
-      update workflow_flows set status = 'retired'
+      update workflow_flows set status = 'retired', is_default = false
       where tenant_id = ${tenantId}::uuid and environment = ${environment} and status = 'active'
         and (flow_key = ${template.flowKey} or (is_default and status_domain = ${template.statusDomain}))
       returning id, flow_key, version`)) as Array<{ id: string; flow_key: string; version: number }>;

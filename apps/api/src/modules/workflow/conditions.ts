@@ -139,3 +139,23 @@ export function describe(cond: Condition | null | undefined): string {
   if (cond!.any?.length) parts.push(`(${cond!.any.map(one).join(" or ")})`);
   return parts.join(" and ");
 }
+
+/**
+ * WHICH RECORDS THIS FLOW TAKES, as a sentence — the flow-selection counterpart of describe().
+ *
+ * It lives here, beside describe(), because a flow's `selection_condition` has THREE states and only
+ * one of them is a condition. describe() alone would render the other two wrongly and dangerously:
+ * `null` means "never chosen automatically", and isEmptyCondition(null) is true, so describe(null)
+ * says "always" — the exact opposite. A screen that printed that would tell an admin a flow captures
+ * every record when in fact it captures none.
+ *
+ * THE DEFAULT IS NOT DESCRIBED BY ITS CONDITION AT ALL, because the engine does not select it by
+ * one: bindOnEntry ranks the conditional flows and falls back to the default when none matched. So
+ * the honest sentence for the default is what it actually is.
+ */
+export function describeSelection(isDefault: boolean, cond: Condition | null | undefined): string {
+  if (isDefault) return "any record no other flow claims";
+  if (cond === null || cond === undefined) return "nothing — no routing set, so it is never chosen";
+  if (isEmptyCondition(cond)) return "every record";
+  return describe(cond);
+}
