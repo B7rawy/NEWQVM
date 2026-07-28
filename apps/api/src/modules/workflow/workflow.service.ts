@@ -210,7 +210,53 @@ export const createFlowSchema = z.object({
    * everything.
    */
   entryMode: z.enum(["selected", "handoff"]).optional().default("selected"),
-});
+})
+  /**
+   * THE FALLBACK AND A HANDOFF FLOW ARE DIFFERENT ANSWERS TO THE SAME QUESTION, and holding both is
+   * the bug that produced "sub-flow captures newborn records".
+   *
+   * The database permits the pair and the engine does not read it as a contradiction: selectableFlows
+   * drops `entry_mode = 'handoff'` from the CANDIDATE list but reads the fallback off `is_default`
+   * alone, so a flow claiming both is handed every record no condition matched — at birth, into a
+   * rulebook whose terminals activation itself warns "stay in this workflow for good". Nothing
+   * anywhere would report it, because each flag on its own is ordinary.
+   *
+   * Refused here rather than repaired later: this is the only endpoint that could ever set the pair.
+   */
+  .refine((d) => !(d.isDefault && d.entryMode === "handoff"), {
+    message:
+      "a handoff flow cannot also be the fallback — the fallback takes every record no other flow " +
+      "claims, and a handoff flow takes only records another workflow hands to it. Pick one.",
+    path: ["entryMode"],
+  });
+
+/**
+ * HOW RECORDS GET INTO A FLOW — ONE choice, not three independent flags (QNEW-64).
+ *
+ * `is_default`, `selection_condition` and `entry_mode` are three columns answering ONE question, and
+ * modelling them as three switches is what let two of them be set together. A discriminated union
+ * makes the illegal combinations unrepresentable at the boundary rather than caught after the fact,
+ * and it is the shape the screen renders directly: three radio buttons, one answer.
+ *
+ * DRAFT ONLY, and that is not a limitation this schema invented — `workflow_flow_freeze()` refuses
+ * any change to selection_condition or selection_priority on a non-draft row, because routing decides
+ * which rulebook a record picks up when it is born and an active flow whose routing could be edited
+ * would re-aim live traffic with no version anywhere recording it. entry_mode and is_default are not
+ * in that trigger's tuple, but they are the same decision, so they get the same rule.
+ */
+export const routingSchema = z.discriminatedUnion("mode", [
+  /** The fallback: whatever no other flow claimed. Exactly one per domain — activate() enforces it. */
+  z.object({ mode: z.literal("fallback") }),
+  /** Chosen by matching the record's own facts, ahead of the fallback. */
+  z.object({
+    mode: z.literal("condition"),
+    condition: conditionSchema,
+    /** Only ever decides a tie between two flows that BOTH match. */
+    priority: z.number().int().min(-1000).max(1000).optional().default(0),
+  }),
+  /** A sub-flow: records only ever arrive by an arrow in another flow naming this one. */
+  z.object({ mode: z.literal("handoff") }),
+]);
 
 export const assistSchema = z.object({
   /** The whole exchange so far. A workflow is decided by talking it through, not by one sentence —
@@ -917,16 +963,32 @@ export class WorkflowService {
    * `selection_summary` is computed here rather than in the browser so there is ONE rendering of a
    * routing rule in the product. Its three states are not something a screen should be trusted to
    * get right: `null` and `{}` look almost identical and mean opposite things (see describeSelection).
+   *
+   * `entry_mode` IS SELECTED, and its absence was a defect rather than an omission. Without it this
+   * method could not tell a live sub-flow from an unfinished draft, so the Workflows screen listed an
+   * ACTIVE handoff flow among the conditional flows "checked before the fallback, in this order" —
+   * a race it is not in — and printed "takes nothing — no routing set, so it is never chosen" beside
+   * it. Two false statements about a flow doing exactly what it was configured to do.
    */
   async list(ctx: RlsContext) {
     const tenantId = this.requireTenant(ctx);
     const rows = (await this.dbService.withContext(ctx, (tx) =>
       tx.execute(sql`
         select f.id, f.flow_key, f.version, f.name_en, f.name_ar, f.status, f.is_default,
-               f.status_domain, f.selection_condition, f.selection_priority, f.created_at, f.updated_at,
+               f.entry_mode, f.status_domain, f.selection_condition, f.selection_priority,
+               f.created_at, f.updated_at,
                (select count(*)::int from workflow_steps s where s.flow_id = f.id) as steps,
                (select count(*)::int from workflow_transitions t where t.flow_id = f.id) as transitions,
-               (select count(*)::int from workflow_record_state r where r.flow_id = f.id) as records
+               (select count(*)::int from workflow_record_state r where r.flow_id = f.id) as records,
+               -- WILL PUBLISHING THIS DRAFT MAKE IT THE FALLBACK ANYWAY? activate() hands the flag
+               -- over from the predecessor it retires (see the note there), so v2 of the workspace's
+               -- fallback goes live as the fallback even though the clone carries is_default = false.
+               -- A screen that read only is_default would offer a routing choice this flow does not
+               -- have, which is the same class of untruth as the two lines above.
+               exists (select 1 from workflow_flows p
+                        where p.tenant_id = f.tenant_id and p.environment = f.environment
+                          and p.flow_key = f.flow_key and p.status = 'active' and p.is_default
+                          and p.id <> f.id) as inherits_default
         from workflow_flows f
         where f.tenant_id = ${tenantId}::uuid and f.environment = ${envOf(ctx)}
         order by f.status_domain, f.selection_priority desc, f.created_at asc, f.version desc`),
@@ -938,6 +1000,7 @@ export class WorkflowService {
         selection_summary: describeSelection(
           f.is_default as boolean,
           f.selection_condition as Condition | null,
+          f.entry_mode as string | null,
         ),
       })),
     };
@@ -947,11 +1010,19 @@ export class WorkflowService {
   async get(ctx: RlsContext, id: string) {
     const tenantId = this.requireTenant(ctx);
     return this.dbService.withContext(ctx, async (tx) => {
+      // entry_mode and inherits_default ride along for the same reason list() carries them: the
+      // canvas is where routing is now CHOSEN, and a picker that cannot see the current answer would
+      // either show the wrong one or silently reset it. See list() for what inherits_default means.
       const flow = (await tx.execute(sql`
-        select id, flow_key, version, name_en, name_ar, status, is_default, status_domain,
-               selection_condition, selection_priority, canvas, created_at, updated_at
-        from workflow_flows
-        where id = ${id}::uuid and tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+        select f.id, f.flow_key, f.version, f.name_en, f.name_ar, f.status, f.is_default,
+               f.entry_mode, f.status_domain, f.selection_condition, f.selection_priority,
+               f.canvas, f.created_at, f.updated_at,
+               exists (select 1 from workflow_flows p
+                        where p.tenant_id = f.tenant_id and p.environment = f.environment
+                          and p.flow_key = f.flow_key and p.status = 'active' and p.is_default
+                          and p.id <> f.id) as inherits_default
+        from workflow_flows f
+        where f.id = ${id}::uuid and f.tenant_id = ${tenantId}::uuid and f.environment = ${envOf(ctx)}
         limit 1`))[0] as Record<string, unknown> | undefined;
       if (!flow) throw new NotFoundException("flow not found in this workspace");
 
@@ -981,7 +1052,20 @@ export class WorkflowService {
         where t.flow_id = ${id}::uuid
         order by t.priority, t.created_at`);
 
-      return { ...flow, steps, transitions };
+      // The same sentence list() returns, from the same renderer. The canvas is where routing is
+      // chosen, so it is the screen that most needs to read back what is actually stored — and a
+      // second rendering in the browser is how a screen and the engine start disagreeing about
+      // what `null` and `{}` mean.
+      return {
+        ...flow,
+        selection_summary: describeSelection(
+          flow.is_default as boolean,
+          flow.selection_condition as Condition | null,
+          flow.entry_mode as string | null,
+        ),
+        steps,
+        transitions,
+      };
     });
   }
 
@@ -1000,6 +1084,148 @@ export class WorkflowService {
                 ${dto.statusDomain}, ${dto.isDefault}, ${dto.entryMode})
         returning id, version`)) as Array<{ id: string; version: number }>;
       return { id: row.id, flowKey: dto.flowKey, version: row.version, status: "draft", entryMode: dto.entryMode };
+    });
+  }
+
+  /**
+   * HOW RECORDS GET INTO THIS FLOW — the answer, changed after creation.
+   *
+   * WHY THIS ENDPOINT HAD TO EXIST. `is_default` and `entry_mode` were settable ONLY at creation and
+   * `selection_condition` only as a field of the whole-graph save the canvas does not send. So a
+   * second flow drawn in the product had no condition, no priority, no entry mode and was not the
+   * default — and activate() refuses exactly that flow, telling the admin to do one of three things
+   * the product gave them no way to do. Every multi-flow feature underneath (the crossing, the
+   * handoff, My Work's "from X") was unreachable behind that one gap.
+   *
+   * ONE CHOICE, NOT THREE FLAGS — see routingSchema. The union is the point: two of these set
+   * together is what produced "sub-flow captures newborn records", and a shape that cannot express
+   * the pair cannot store it.
+   *
+   * DRAFT ONLY. `workflow_flow_freeze()` already refuses selection_condition and selection_priority
+   * on a non-draft row, so two thirds of this write would be rejected by the database anyway; the
+   * other third is the same decision and gets the same rule rather than a quieter one. The screen
+   * says so instead of offering a control that throws.
+   */
+  async updateRouting(
+    ctx: RlsContext & { platformRole?: string | null },
+    id: string,
+    dto: z.infer<typeof routingSchema>,
+  ) {
+    this.requireSuperAdmin(ctx);
+    const tenantId = this.requireTenant(ctx);
+    return this.dbService.withContext(ctx, async (tx) => {
+      const flow = (await tx.execute(sql`
+        select f.id, f.flow_key, f.status, f.status_domain,
+               exists (select 1 from workflow_flows p
+                        where p.tenant_id = f.tenant_id and p.environment = f.environment
+                          and p.flow_key = f.flow_key and p.status = 'active' and p.is_default
+                          and p.id <> f.id) as inherits_default
+        from workflow_flows f
+        where f.id = ${id}::uuid and f.tenant_id = ${tenantId}::uuid and f.environment = ${envOf(ctx)}
+        limit 1`))[0] as
+        | { id: string; flow_key: string; status: string; status_domain: string; inherits_default: boolean }
+        | undefined;
+      if (!flow) throw new NotFoundException("flow not found in this workspace");
+      if (flow.status !== "draft")
+        throw new ConflictException(
+          `this flow is ${flow.status} — records are executing it, and routing decides which rulebook ` +
+            `a record picks up. Create a new version to change it.`,
+        );
+
+      /**
+       * A NEW VERSION OF THE FALLBACK IS STILL THE FALLBACK, and pretending otherwise would store a
+       * choice activation then overrules. activate() hands `is_default` over from the predecessor it
+       * retires — without that, publishing v2 of the workspace's own flow left the workspace with no
+       * fallback at all and every record raised afterwards moved unchecked. So a draft in that
+       * position cannot be made a handoff or a conditional flow: the flag would come back at
+       * publish, and `is_default` + `entry_mode = 'handoff'` is the very pair this union exists to
+       * prevent. Retiring the live fallback, or giving another flow the flag first, is the way.
+       */
+      if (flow.inherits_default && dto.mode !== "fallback")
+        throw new ConflictException(
+          `this is a new version of the workflow that is currently the fallback, so publishing it ` +
+            `makes it the fallback again — that is what stops the workspace being left without one. ` +
+            `Give another workflow the fallback first, or retire the live version, and then come back.`,
+        );
+
+      if (dto.mode === "condition") {
+        // `{}` IS "EVERY RECORD" IN THIS CODEBASE, and offering it from a condition picker is how a
+        // flow that looks conditional quietly captures everything — the exact failure the
+        // three-state column was designed to prevent. The honest way to say "every record" is to be
+        // the fallback, which is the choice next to this one.
+        if (!dto.condition.all?.length && !dto.condition.any?.length)
+          throw new BadRequestException(
+            "a condition needs at least one test, or it matches every record — which is what the " +
+              "fallback is for. Add a test, or make this the fallback instead.",
+          );
+        // Same catalog check saveGraph runs, for the same reason: an unknown field fails CLOSED at
+        // run time, so the flow would simply never be chosen — silently, weeks later, with every
+        // record going to the fallback and nothing anywhere saying why.
+        const bad = [...(dto.condition.all ?? []), ...(dto.condition.any ?? [])]
+          .map((c) => c.field)
+          .filter((k) => !conditionFieldByKey(k));
+        if (bad.length)
+          throw new BadRequestException(
+            `this flow would be selected on unknown field(s): ${[...new Set(bad)].join(", ")}`,
+          );
+      }
+
+      const isDefault = dto.mode === "fallback";
+      const entryMode = dto.mode === "handoff" ? "handoff" : "selected";
+      /**
+       * The condition is REPLACED by the other two answers rather than left where it was. A stored
+       * condition the engine never consults is dead data that reads as a live rule on every screen
+       * rendering the column, and the first person to clear is_default would inherit a routing rule
+       * nobody chose.
+       *
+       * THE FALLBACK STORES `{}`, NOT NULL, and that is the same choice template.service.ts makes
+       * about the provisioned flow for the same reason. Null would be tidier and it breaks the one
+       * path a fallback is most often taken down: newVersion() clones with `is_default = false`
+       * (two active defaults is a unique-index violation while the predecessor is still live), so
+       * the clone would carry no default flag AND no condition — and assertActivatable refuses
+       * exactly that as "routing is not set", before ever reaching the handover that would have
+       * given the flag back. Publishing v2 of the workspace's own fallback would be refused outright.
+       * `{}` reads as "matches every record", which is inert on a flow the engine consults by flag
+       * rather than by condition, and survives the clone.
+       */
+      const condition = dto.mode === "handoff" ? null : JSON.stringify(dto.mode === "condition" ? dto.condition : {});
+      const priority = dto.mode === "condition" ? dto.priority : 0;
+
+      await tx.execute(sql`
+        update workflow_flows
+           set is_default = ${isDefault}, entry_mode = ${entryMode},
+               selection_condition = ${condition === null ? sql`null` : sql`${condition}::jsonb`},
+               selection_priority = ${priority}, updated_at = now()
+         where id = ${id}::uuid`);
+
+      // WHO ELSE WANTS THIS SLOT. Only ONE active flow per domain may be the fallback, and the
+      // refusal lives at activation — which is a long way from the moment the choice is made. Naming
+      // the holder here lets the screen say it while the admin can still pick something else.
+      const holder =
+        isDefault
+          ? ((await tx.execute(sql`
+              select name_en, version from workflow_flows
+              where tenant_id = ${tenantId}::uuid and environment = ${envOf(ctx)}
+                and status_domain = ${flow.status_domain}::status_domain and status = 'active'
+                and is_default and flow_key <> ${flow.flow_key}
+              limit 1`))[0] as { name_en: string; version: number } | undefined)
+          : undefined;
+
+      return {
+        id,
+        mode: dto.mode,
+        isDefault,
+        entryMode,
+        selectionPriority: priority,
+        // `z.unknown()` on a clause's value infers it as OPTIONAL, which Condition does not — the
+        // same cast list() makes when handing a jsonb column to the one renderer of a routing rule.
+        selectionSummary: describeSelection(
+          isDefault,
+          dto.mode === "condition" ? (dto.condition as Condition) : null,
+          entryMode,
+        ),
+        fallbackHeldBy: holder ? `${holder.name_en} (v${holder.version})` : null,
+      };
     });
   }
 
@@ -1180,17 +1406,52 @@ export class WorkflowService {
        * trigger: activate() retires the predecessor inside its own transaction, having already
        * activated the successor moments later under the same key, so the key never stops resolving.
        * The standalone Retire button is the only path that can leave nothing behind.
+       *
+       * RETIRED VERSIONS COUNT TOO, for the same reason they do in assertCrossingsResolve: a record
+       * executes the version it was bound to, so a retired parent still carrying live records still
+       * hands them across this border. `f.status = 'active'` could not see them, and retiring the
+       * destination turned their one remaining move into a run-time refusal — the clerk holding the
+       * order finds out, the admin who pressed Retire does not.
+       *
+       * "STILL BEING EXECUTED" IS NOT "HAS EVER HELD A RECORD". workflow_record_state is upserted on
+       * every move and never deleted, so a record that finished months ago keeps its row pointing at
+       * the version it ended on. Testing for the row alone made this refusal UNSATISFIABLE: one
+       * long-finished order permanently blocked retiring the sub-flow, under a message telling the
+       * admin to republish a flow they had already republished. The step the record is standing on
+       * has to be consulted — a record on a terminal step is not going anywhere, least of all across
+       * a border.
        */
       const crossers = (await tx.execute(sql`
-        select distinct f.name_en, f.version from workflow_transitions t
-        join workflow_flows f on f.id = t.flow_id and f.status = 'active'
+        select distinct f.name_en, f.version, f.status::text as status from workflow_transitions t
+        join workflow_flows f on f.id = t.flow_id
+         and (f.status = 'active'
+              or exists (
+                select 1 from workflow_record_state rs
+                -- The record's CURRENT status lives on its own table, so resolving it is
+                -- polymorphic. Anything this join cannot resolve falls through as live, which is
+                -- the safe direction: refusing a retire is recoverable, stranding a record is not.
+                left join rfqs        rq on rs.entity_type = 'rfq'        and rq.id = rs.entity_id
+                left join rfq_items   ri on rs.entity_type = 'rfq_item'   and ri.id = rs.entity_id
+                left join orders      oo on rs.entity_type = 'order'      and oo.id = rs.entity_id
+                left join order_items oi on rs.entity_type = 'order_item' and oi.id = rs.entity_id
+                left join workflow_steps st on st.flow_id = f.id
+                  and st.item_status_id = coalesce(rq.status_id, ri.status_id, oo.status_id, oi.status_id)
+                where rs.flow_id = f.id
+                  and (st.id is null or not st.is_terminal)))
         join workflow_flows me on me.id = ${id}::uuid
         where t.to_flow_key = me.flow_key and f.id <> me.id
           and f.tenant_id = me.tenant_id and f.environment = me.environment
-          and f.status_domain = me.status_domain`)) as Array<{ name_en: string; version: number }>;
+          and f.status_domain = me.status_domain`)) as Array<
+        { name_en: string; version: number; status: string }
+      >;
       if (crossers.length)
         throw new ConflictException(
-          `${crossers.map((c) => `'${c.name_en}' (v${c.version})`).join(", ")} hands records to this ` +
+          `${crossers
+            .map(
+              (c) =>
+                `'${c.name_en}' (v${c.version}${c.status === "active" ? "" : `, ${c.status}, records still moving in it`})`,
+            )
+            .join(", ")} hands records to this ` +
             `workflow, so retiring it would leave that move with nowhere to go. Retire or republish ` +
             `${crossers.length > 1 ? "those workflows" : "that workflow"} first.`,
         );
@@ -1949,17 +2210,50 @@ export class WorkflowService {
     // THIS IS THE CHECK THAT STOPS A-v2 STRANDING RECORDS SITTING INSIDE B. Publishing a new version
     // of the parent is a completely ordinary act performed by somebody who may never have looked at
     // the sub-flow, and deleting a status from it is exactly how the way home disappears.
+    //
+    // ── AND IT LOOKED AT THE WRONG FLOWS. `f.status = 'active'` MISSED THE POPULATION IT PROTECTS ──
+    //
+    // A record executes the flow VERSION it was bound to and keeps executing it after that version
+    // is retired — that is the whole point of the binding, restated in three places in this file. So
+    // the versions holding records with a way home to defend are precisely the ones an active-only
+    // join cannot see: republish the sub-flow and its v1 is retired while every record inside it
+    // still runs v1's return arrow. Republishing the PARENT without the status that retired arrow
+    // lands on was then accepted silently, and a record inside v1 had no move left to make: its
+    // return is refused at run time ("has no step for"), and it is not away in anything the
+    // break-glass lever can act on differently.
+    //
+    // Driven from workflow_record_state instead: a version with rows pointing at it is a version
+    // something is executing, whatever its status says. ACTIVE flows stay in scope on their own
+    // merit — they have no records yet and will — so the predicate is a union of "live" and "being
+    // executed", not a replacement of one by the other.
     const inbound = (await tx.execute(sql`
-      select distinct f.name_en as source_name, coalesce(i.code, v.code) as code
+      select distinct f.name_en as source_name, f.version as source_version, f.status::text as source_status,
+             coalesce(i.code, v.code) as code
       from workflow_transitions t
-      join workflow_flows f on f.id = t.flow_id and f.status = 'active'
+      join workflow_flows f on f.id = t.flow_id
+       and (f.status = 'active'
+            or exists (
+                select 1 from workflow_record_state rs
+                -- The record's CURRENT status lives on its own table, so resolving it is
+                -- polymorphic. Anything this join cannot resolve falls through as live, which is
+                -- the safe direction: refusing a retire is recoverable, stranding a record is not.
+                left join rfqs        rq on rs.entity_type = 'rfq'        and rq.id = rs.entity_id
+                left join rfq_items   ri on rs.entity_type = 'rfq_item'   and ri.id = rs.entity_id
+                left join orders      oo on rs.entity_type = 'order'      and oo.id = rs.entity_id
+                left join order_items oi on rs.entity_type = 'order_item' and oi.id = rs.entity_id
+                left join workflow_steps st on st.flow_id = f.id
+                  and st.item_status_id = coalesce(rq.status_id, ri.status_id, oo.status_id, oi.status_id)
+                where rs.flow_id = f.id
+                  and (st.id is null or not st.is_terminal)))
       join workflow_steps s on s.id = t.to_step_id
       left join item_statuses i on i.id = s.item_status_id
       left join vendor_statuses v on v.id = s.vendor_status_id
       where t.to_flow_key = ${self.flow_key}
         and f.tenant_id = ${self.tenant_id}::uuid and f.environment = ${self.environment}::environment_type
         and f.status_domain = ${self.status_domain}::status_domain
-        and f.id <> ${id}::uuid`)) as Array<{ source_name: string; code: string }>;
+        and f.id <> ${id}::uuid`)) as Array<
+      { source_name: string; source_version: number; source_status: string; code: string }
+    >;
 
     const mine = new Set(
       ((await tx.execute(sql`
@@ -1971,8 +2265,14 @@ export class WorkflowService {
     for (const i of inbound) {
       if (!mine.has(i.code))
         errs.push(
-          `the '${i.source_name}' workflow hands records back to this one at '${i.code}', and this ` +
-            `version has no '${i.code}' step — records inside it would have nowhere to return to`,
+          `the '${i.source_name}' workflow (v${i.source_version}${
+            // Naming the version and saying it is retired is the difference between a message an
+            // admin can act on and one they will argue with: their screen shows that workflow live
+            // on a later version, and the thing being protected is the records still inside the
+            // older one.
+            i.source_status === "active" ? "" : `, ${i.source_status}, records still moving in it`
+          }) hands records back to this one at '${i.code}', and this version has no '${i.code}' ` +
+            `step — records inside it would have nowhere to return to`,
         );
     }
 

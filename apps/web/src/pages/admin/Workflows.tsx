@@ -14,6 +14,17 @@ interface Flow {
   name_ar: string;
   status: "draft" | "active" | "retired";
   is_default: boolean;
+  /**
+   * HOW RECORDS GET IN. 'selected' — matched against selection_condition, or taken as the fallback.
+   * 'handoff' — a SUB-FLOW: records only ever arrive by an arrow in another workflow naming this
+   * one, so it is not in the selection race at all (0066).
+   *
+   * This screen listed an active handoff flow among the flows "checked before the fallback, in this
+   * order" and printed "takes nothing — no routing set" beside it, because the column was not
+   * fetched and the server's sentence had no parameter for it. Both statements were false about a
+   * flow doing exactly what it was configured to do.
+   */
+  entry_mode: "selected" | "handoff";
   status_domain: "item" | "vendor";
   selection_condition: Record<string, unknown> | null;
   /** Ties between two flows that both match. Higher goes first; see selection_summary. */
@@ -98,16 +109,19 @@ export default function Workflows() {
     setErr("");
     setBusy(true);
     try {
-      // WHETHER THIS ONE IS THE FALLBACK DEPENDS ON WHETHER THE WORKSPACE ALREADY HAS ONE, and it
-      // has to be decided here because nothing can change it later: `is_default` is set at creation
-      // and no endpoint updates it.
+      // WHETHER THIS ONE IS THE FALLBACK DEPENDS ON WHETHER THE WORKSPACE ALREADY HAS ONE.
       //
       // Sending `true` unconditionally — which this did — was right when a workspace had at most one
       // flow, and became a trap the moment provisioning gave every workspace a default: the second
       // flow was born claiming a slot that was taken, and activation could only ever refuse it.
       // Sending `false` when a fallback exists produces the flow the owner is actually asking for
-      // when they press "New workflow" beside an existing one — an alternative, chosen by a
-      // condition, running next to the fallback rather than replacing it.
+      // when they press "New workflow" beside an existing one — an alternative running next to the
+      // fallback rather than replacing it.
+      //
+      // IT IS A STARTING POINT NOW, NOT A LIFE SENTENCE. This used to be the last moment the answer
+      // could change — `is_default` was settable only at creation — which is why a second flow made
+      // here could never be activated at all. The Routing tab on the canvas is where it is really
+      // decided; this form only has to avoid being wrong on arrival.
       const r = await api.post<{ id: string }>(
         "/admin/workflows",
         { flowKey, nameEn, nameAr, isDefault: !live("item") },
@@ -145,10 +159,27 @@ export default function Workflows() {
   // flows in the engine's own selection order (selection_priority desc, then oldest), so listing
   // them in the order received is not a presentation choice: it is the order they are tried in, and
   // the first one that matches takes the record.
+  //
+  // HANDOFF FLOWS ARE EXCLUDED, and that is the fix rather than a tidy-up. selectableFlows() in the
+  // engine drops them from the candidate list before it ranks anything, so a sub-flow is not in this
+  // race at any position — printing it as "1." in an order it does not participate in described a
+  // rulebook the engine does not run.
   const alsoLive = (domain: "item" | "vendor") =>
-    (rows ?? []).filter((f) => f.status_domain === domain && f.status === "active" && !f.is_default);
+    (rows ?? []).filter(
+      (f) => f.status_domain === domain && f.status === "active" && !f.is_default
+        && f.entry_mode !== "handoff",
+    );
+  // The sub-flows: live, reachable, and reached a different way. They get their own group below
+  // because "when is this one used" has a different answer for them, not a different position.
+  const handoffLive = (domain: "item" | "vendor") =>
+    (rows ?? []).filter(
+      (f) => f.status_domain === domain && f.status === "active" && f.entry_mode === "handoff",
+    );
   const onCard = new Set(
-    (["item", "vendor"] as const).flatMap((d) => [live(d), ...alsoLive(d)]).filter(Boolean).map((f) => f!.id),
+    (["item", "vendor"] as const)
+      .flatMap((d) => [live(d), ...alsoLive(d), ...handoffLive(d)])
+      .filter(Boolean)
+      .map((f) => f!.id),
   );
   const others = (rows ?? []).filter((f) => !onCard.has(f.id));
 
@@ -236,15 +267,16 @@ export default function Workflows() {
               </button>
             </div>
           </form>
-          {/* SAY WHAT KIND OF FLOW THIS WILL BE BEFORE IT IS MADE. A workspace's second flow is an
-              ALTERNATIVE, not a replacement, and it needs a condition of its own before it can go
-              live — which is a refusal at activation if nobody says so here. `is_default` is fixed
-              at creation, so this is also the last moment the answer can change. */}
+          {/* SAY WHAT KIND OF FLOW THIS WILL BE BEFORE IT IS MADE, and say where the answer is
+              given. A workspace's second flow is an ALTERNATIVE, not a replacement, and it cannot
+              be published until it says how records reach it — which used to be a refusal at
+              activation with no way anywhere in the product to satisfy it. */}
           {live("item") && (
-            <p className="mt-3 text-[12px] text-muted">
+            <p className="mt-3 text-[12px] leading-relaxed text-muted">
               {live("item")!.name_en} stays the fallback for orders &amp; requests. This flow runs
-              beside it and needs a condition saying which records it takes, or it cannot be
-              activated.
+              beside it, and the <b>Routing</b> tab on the next screen is where you say how records
+              reach it — a test they must match, or handed over from another workflow. It cannot be
+              published until you do.
             </p>
           )}
         </Card>
@@ -261,6 +293,7 @@ export default function Workflows() {
             {(["item", "vendor"] as const).map((domain) => {
               const f = live(domain);
               const alts = alsoLive(domain);
+              const subs = handoffLive(domain);
               return (
                 <Card key={domain}>
                   <div className="flex items-start justify-between gap-3">
@@ -324,6 +357,37 @@ export default function Workflows() {
                           </li>
                         ))}
                       </ol>
+                    </div>
+                  )}
+
+                  {/* THE SUB-FLOWS, IN THEIR OWN GROUP AND NOT IN A NUMBERED ORDER. A handoff flow
+                      is never matched against a new record — it is entered by an arrow in another
+                      workflow naming it — so a position in the list above would be a rank in a race
+                      it is not running. An unordered list says the true thing: these are live, and
+                      records reach them a different way. */}
+                  {subs.length > 0 && (
+                    <div className="mt-4 rounded-md border border-line bg-surface px-4 py-3">
+                      <h4 className="text-[12.5px] font-semibold text-ink">
+                        Reached only by being handed a record
+                      </h4>
+                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-faint">
+                        Not checked when a record is raised. A move in another workflow hands work
+                        here, and the way back is an arrow drawn in here.
+                      </p>
+                      <ul className="mt-2 space-y-1.5">
+                        {subs.map((s) => (
+                          <li key={s.id} className="text-[12.5px] text-muted">
+                            <button
+                              className="font-medium text-ink underline-offset-2 hover:underline"
+                              onClick={() => nav(`/admin/workflows/${s.id}`)}
+                            >
+                              {s.name_en}
+                            </button>{" "}
+                            — takes {s.selection_summary}
+                            {s.records > 0 && ` · ${s.records} in it right now`}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 

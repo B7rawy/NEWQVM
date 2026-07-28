@@ -2950,6 +2950,347 @@ xclean
 psql "delete from approval_actions; delete from approval_requests;
       delete from approval_levels; delete from approval_policies" > /dev/null
 
+# ── ROUTING AN ADMIN CAN ACTUALLY SET (QNEW-64) ─────────────────────────────────────────────────
+#
+# Everything above this line was configured with curl, and that is not a convenience of the test —
+# it is how it HAD to be configured. `isDefault` and `entryMode` were settable only at creation, and
+# `selectionCondition` only as a field of the whole-graph save the canvas does not send. So a second
+# workflow made in the product carried no routing at all, Activate refused exactly that flow, and
+# the three things its message told the admin to do were three things the product offered no way to
+# do. Everything underneath was unreachable behind that one gap: no second flow could go live, so
+# the canvas never had another flow to offer, so the crossing picker never rendered, so `to_flow_key`
+# could only ever be set by hand.
+#
+# These drive the endpoint the Routing tab calls, in the order a person meets it.
+rtclean(){
+  wfclean
+  psql "delete from workflow_exceptions; delete from status_logs;
+        update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number like 'RT-%');
+        delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'RT-%'));
+        delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number like 'RT-%');
+        delete from workflow_record_state where entity_id in (select id from rfq_items where rfq_id in (select id from rfqs where plate_number like 'RT-%'));
+        delete from rfq_items where rfq_id in (select id from rfqs where plate_number like 'RT-%');
+        delete from notification_log where template='vendor_rfq_invite';
+        delete from workflow_record_state where entity_id in (select id from rfqs where plate_number like 'RT-%');
+        delete from rfqs where plate_number like 'RT-%'" > /dev/null
+}
+# EXACTLY the body Workflows.tsx posts when somebody presses "New workflow" beside an existing one:
+# a key, two names, and isDefault false because the workspace already has a fallback. No routing of
+# any kind, because that form has never had anywhere to put one.
+rtnew(){ # $1 = key suffix, $2 = graph json -> flow id, graph saved, still a draft
+  local F
+  F=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+    -d "$(printf '{"flowKey":"smoke-%s","nameAr":"مسار","nameEn":"RT %s","isDefault":false}' "$1" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/graph" -d "$2"
+  echo "$F"
+}
+rtroute(){ curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$1/routing" -d "$2"; }
+rtactivate(){ curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$1/activate"; }
+# Is this refusal the one we meant? Needles are matched against `message`, so a check cannot pass on
+# a DIFFERENT refusal that happens to arrive with the right status code.
+rthas(){ echo "$2" | $PY -c "
+import sys, json
+print(1 if '$1' in str(json.load(sys.stdin).get('message','')) else 0)"; }
+# What the Workflows screen reads for one flow. Deliberately through the LIST endpoint rather than
+# the database: the defect being fixed was that the screen could not see a column, not that the
+# column was wrong.
+rtlist(){ curl -s "${AR[@]}" "$B/api/admin/workflows" | $PY -c "
+import sys, json
+print(next((str(f.get('$2','MISSING')) for f in json.load(sys.stdin)['flows'] if f['flow_key']=='$1'), 'MISSING'))"; }
+# The same read, addressed by id. Two versions of one flow share a key, and the draft is the row
+# that has to be asked about when the question is what publishing it will do.
+rtlistid(){ curl -s "${AR[@]}" "$B/api/admin/workflows" | $PY -c "
+import sys, json
+print(next((str(f.get('$2','MISSING')) for f in json.load(sys.stdin)['flows'] if f['id']=='$1'), 'MISSING'))"; }
+
+rtclean
+RTG='{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"},
+                {"from":"priced","to":"confirmed","labelEn":"Confirm"}]}'
+RTDEF=$(rtnew rt-def "$RTG")
+ok 1 "$(rthas "routing is not set" "$(rtactivate "$RTDEF")")" \
+  "a flow made the way the product makes one has NO routing, and Activate refuses it"
+ok "nothing — no routing set, so it is never chosen" "$(rtlist smoke-rt-def selection_summary)" \
+  "…and the list says so where somebody is actually looking, not only in that refusal"
+ok active "$(rtroute "$RTDEF" '{"mode":"fallback"}' > /dev/null; rtactivate "$RTDEF" | $PY -c "
+import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "answering the question makes it publishable — which is the whole of what was missing"
+ok "any record no other flow claims" "$(rtlist smoke-rt-def selection_summary)" \
+  "…and the fallback now says what it takes"
+
+# ── THE CONDITION, CHOSEN FROM THE CATALOG ──────────────────────────────────────────────────────
+RTC=$(rtnew rt-cond "$RTG")
+ok 1 "$(rthas "matches every record" "$(rtroute "$RTC" '{"mode":"condition","condition":{}}')")" \
+  "a condition with no tests is refused: it would match EVERY record, which is what the fallback is"
+ok 1 "$(rthas "unknown field" "$(rtroute "$RTC" '{"mode":"condition","condition":{"all":[{"field":"payer_typo","op":"eq","value":"insurance"}]}}')")" \
+  "and a field this server does not know is refused at the moment it is written, not silently at run time"
+ok "Who pays is insurance" "$(rtroute "$RTC" '{"mode":"condition","condition":{"all":[{"field":"payer_type","op":"eq","value":"insurance"}]},"priority":7}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('selectionSummary',''))")" \
+  "a real condition is accepted and read back as the sentence the list will print"
+ok "false|selected|7" "$(psql "select is_default||'|'||entry_mode||'|'||selection_priority from workflow_flows where id='$RTC'")" \
+  "…stored as one answer: not the fallback, not a handoff, and carrying the tie-break beside it"
+ok active "$(rtactivate "$RTC" | $PY -c "import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "…and a SECOND flow now goes live from the product, which is what nothing could do before"
+ok 1 "$(rthas "records are executing it" "$(rtroute "$RTC" '{"mode":"handoff"}')")" \
+  "routing is frozen once it is live — a record must not change rulebooks because somebody re-aimed one"
+
+# ── THE THIRD ANSWER, AND THE PAIR THAT MUST NOT BE STORED ──────────────────────────────────────
+RTH=$(rtnew rt-hand '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},{"status":"confirmed","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"confirmed","labelEn":"Hand back","toFlowKey":"smoke-rt-def"}]}')
+ok handoff "$(rtroute "$RTH" '{"mode":"handoff"}' > /dev/null; psql "select entry_mode from workflow_flows where id='$RTH'")" \
+  "a sub-flow says so in a column rather than storing an empty condition, which means EVERY record"
+ok active "$(rtactivate "$RTH" | $PY -c "import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "…and publishes with no selection condition at all, because nothing selects it"
+ok 1 "$(rthas "cannot also be the fallback" "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-rt-both","nameAr":"مسار","nameEn":"Both","isDefault":true,"entryMode":"handoff"}')")" \
+  "the fallback and a handoff are two answers to ONE question, and the pair is refused at the door"
+ok 0 "$(psql "select count(*) from workflow_flows where flow_key='smoke-rt-both'")" \
+  "…leaving nothing behind — the pair is what makes a sub-flow capture records at birth"
+
+# ── HONEST LABELS FOR A LIVE SUB-FLOW ───────────────────────────────────────────────────────────
+# The Workflows screen listed an ACTIVE handoff flow among the flows "checked before the fallback,
+# in this order" and printed "takes nothing — no routing set, so it is never chosen" beside it. Both
+# false: it is not in that race at any position, and not being in it IS its routing. The screen
+# could not know better — list() did not select entry_mode and describeSelection had no parameter
+# for it — so both halves are asserted through the endpoint the screen reads.
+ok "only records another workflow hands to it" "$(rtlist smoke-rt-hand selection_summary)" \
+  "a live sub-flow is described by how it is really reached, not as a flow that is never chosen"
+ok handoff "$(rtlist smoke-rt-hand entry_mode)" \
+  "…and the list carries the column the screen groups on, so it is not printed inside a numbered order"
+ok selected "$(rtlist smoke-rt-cond entry_mode)" \
+  "…while a conditional flow still says it is one, which is what keeps it IN that order"
+
+# ── AND THE CROSSING CONTROL HAS SOMETHING TO OFFER ─────────────────────────────────────────────
+# WorkflowCanvas hides "Hand it to another workflow" unless this list is non-empty: active, same
+# status domain, not this flow. It was empty in every workspace, for ever, because no second flow
+# could be published — so the control could not render and `to_flow_key` was unreachable.
+ok 2 "$(curl -s "${AR[@]}" "$B/api/admin/workflows" | $PY -c "
+import sys, json
+d = json.load(sys.stdin)['flows']
+me = next(f for f in d if f['flow_key'] == 'smoke-rt-def')
+print(sum(1 for f in d
+          if f['status'] == 'active' and f['status_domain'] == me['status_domain']
+          and f['flow_key'] != me['flow_key']))")" \
+  "the canvas now has other workflows to hand a record to, which is what renders the border control"
+
+# ── A NEW VERSION OF THE FALLBACK IS STILL THE FALLBACK ─────────────────────────────────────────
+# activate() hands is_default over from the version it retires — without that, republishing a
+# workspace's own flow left it with NO fallback and every record raised afterwards moved unchecked.
+# So the routing choice is genuinely not open on such a draft, and storing a different answer would
+# be storing one activation overrules — arriving at is_default AND entry_mode='handoff' together,
+# which is the exact pair refused above.
+RTV2=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$RTDEF/new-version" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok True "$(rtlistid "$RTV2" inherits_default)" \
+  "the list says a draft will take the fallback over when it is published"
+ok 1 "$(rthas "makes it the fallback again" "$(rtroute "$RTV2" '{"mode":"handoff"}')")" \
+  "…so it cannot be routed to anything else, in words rather than by having the answer overruled later"
+ok "false|selected" "$(psql "select is_default||'|'||entry_mode from workflow_flows where id='$RTV2'")" \
+  "…and the refused write changed nothing"
+curl -s -o /dev/null "${AR[@]}" -X DELETE "$B/api/admin/workflows/$RTV2"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# A → B → C → A: WHERE IS HOME WHEN A RECORD HAS CROSSED MORE THAN ONCE
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# `origin_flow_id` was written on EVERY outbound crossing with the flow being left. Fine for one hop.
+# On the second the memory of home was overwritten, so the arrow back into A no longer matched the
+# origin, was judged an OUTBOUND crossing, and set origin = C — leaving a record standing in its own
+# home flow permanently flagged as away from it: counted for ever in workflow_record_state_away_idx,
+# labelled "from C" in My Work while it sits on A, and handed to the break-glass lever, which then
+# reports bringing it back from C to B about a record already home.
+#
+# The rule is that HOME IS WHERE THE RECORD STARTED — written once, on the first crossing out, and
+# cleared only by arriving back there. The three hops below are all real product moves: the winning
+# quote, an approved cancellation, and the break-glass return, which is the one that could not
+# possibly work before because it looks up the way home by the origin's key.
+mhclean(){ rtclean; }
+mhflow(){ # $1 = key suffix, $2 = graph, $3 = routing json -> flow id, ROUTED, still a draft
+  local F; F=$(rtnew "$1" "$2")
+  curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$F/routing" -d "$3"
+  echo "$F"
+}
+# Create, send and quote — but do NOT pick the winner. Several checks below need a record sitting on
+# its entry step, bound to a flow, with the crossing still ahead of it.
+rtquote(){ # $1 = plate -> echoes the rfq id
+  local rid tok it
+  rid=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+    -d "$(printf '{"workshopBranchId":"%s","plateNumber":"%s","items":[{"partNumber":"GP","quantity":1}]}' "$BR" "$1")" \
+    | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+  tok=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs/$rid/send" -d "$(printf '{"vendorIds":["%s"]}' "$VID")" \
+    | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0]['token'] if d.get('results') else '')")
+  it=$(psql "select id from rfq_items where rfq_id='$rid' limit 1")
+  curl -s -o /dev/null -X POST "$B/api/quote-access/$tok/quote" -H 'Content-Type: application/json' \
+    -d "$(printf '{"items":[{"rfqItemId":"%s","offeredCost":50}]}' "$it")"
+  echo "$rid"
+}
+rtpick(){ # $1 = rfq id -> echoes the winning-quote response
+  local it qi
+  it=$(psql "select id from rfq_items where rfq_id='$1' limit 1")
+  qi=$(psql "select id from rfq_vendor_items where rfq_item_id='$it' limit 1")
+  curl -s "${AR[@]}" -X POST "$B/api/rfqs/$1/items/$it/winning-quote" -d "$(printf '{"quoteItemId":"%s"}' "$qi")"
+}
+
+mhclean
+# A — home. Nothing crosses back into it at 'cancelled', so it does not need that step; C hands
+# records back at 'settled', which it does.
+MHA=$(mhflow mh-a '{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","x":340,"y":100},{"status":"settled","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"To the insurer","toFlowKey":"smoke-mh-b"},
+                {"from":"priced","to":"settled","labelEn":"Settle"}]}' '{"mode":"fallback"}')
+MHB=$(mhflow mh-b '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"cancelled","labelEn":"On to returns","toFlowKey":"smoke-mh-c"}]}' '{"mode":"handoff"}')
+MHC=$(mhflow mh-c '{"steps":[{"status":"cancelled","isEntry":true,"x":80,"y":100},
+          {"status":"settled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"cancelled","to":"settled","labelEn":"Home","toFlowKey":"smoke-mh-a"}]}' '{"mode":"handoff"}')
+# Published in the order the checks at both ends allow: a border may name a DRAFT (that is only a
+# warning, or a mutually-referencing pair could never go up) but the flow it names must exist.
+ok "active|active|active" "$(rtactivate "$MHA" > /dev/null; rtactivate "$MHC" > /dev/null; rtactivate "$MHB" > /dev/null
+  psql "select string_agg(status::text, '|' order by flow_key) from workflow_flows where flow_key like 'smoke-mh-%'")" \
+  "three workflows, each handing on to the next and the last handing back — all live"
+
+MHR=$(rtquote RT-HOP)
+MHIT=$(psql "select id from rfq_items where rfq_id='$MHR' limit 1")
+ok "smoke-mh-a/v1|home" "$(xwhere "$MHIT")" "a record is raised at home, away from nothing"
+ok 0 "$(blocked "$(rtpick "$MHR")")" "HOP ONE: the winning quote hands it to B"
+ok "smoke-mh-b/v1|smoke-mh-a" "$(xwhere "$MHIT")" "…and home is recorded as A, the flow it left"
+MHE=$(xraise "$MHIT")
+ok 0 "$(blocked "$(xdecide "$MHE")")" "HOP TWO: an approved cancellation hands it on again, B to C"
+ok cancelled "$(xstatus "$MHIT")" "…the status really moved, so this is a second crossing and not a re-run of the first"
+ok "smoke-mh-c/v1|smoke-mh-a" "$(xwhere "$MHIT")" \
+  "…and home is STILL A. It was overwritten with B here, which is what made the way back unrecognisable"
+
+# THE BREAK-GLASS LEVER IS THE PROOF, because it does nothing of its own: it finds the arrow whose
+# to_flow_key is the record's origin and takes it through the ordinary guard. With home overwritten
+# to B it looked for a way back to B from inside C, found none, and refused with a sentence that was
+# false in both halves — the record was not away from B, and the flow it was away from had an arrow
+# home drawn all along.
+MHG=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/records/rfq_item/$MHIT/return" -d '{}')
+ok "settled" "$(echo "$MHG" | $PY -c "import sys,json;print(json.load(sys.stdin).get('at',''))")" \
+  "HOP THREE: the way home is found from two hops away, and it is the arrow the author drew"
+ok "RT mh-a" "$(echo "$MHG" | $PY -c "import sys,json;print(json.load(sys.stdin).get('returnedTo',''))")" \
+  "…and it names A, the flow the record actually came from"
+ok "smoke-mh-a/v1|home" "$(xwhere "$MHIT")" \
+  "…so the record is home AND is no longer flagged as away, which it was for ever before"
+ok 0 "$(psql "select count(*) from workflow_record_state where entity_id='$MHIT' and origin_flow_id is not null")" \
+  "…and it has left the index of records that owe somebody a return"
+ok 1 "$(blocked "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/records/rfq_item/$MHIT/return" -d '{}')")" \
+  "…which a record standing in its own home flow must be: there is nothing to bring it back from"
+# NOTHING IS LOST BY REMEMBERING ONLY WHERE HOME IS. The hops themselves are in status_logs, which
+# carries the flow every move was judged under since 0066 — so "where has this record been" is
+# answered by the history rather than by a column that can only hold one value at a time.
+ok "smoke-mh-a|smoke-mh-b|smoke-mh-c|smoke-mh-a" "$(psql "select string_agg(f.flow_key, '|' order by l.created_at)
+      from status_logs l join workflow_flows f on f.id=l.flow_id where l.entity_id='$MHIT'")" \
+  "the full itinerary is in the history: born at A, judged by B, then C, then home again"
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+# THE POPULATION THE BORDER CHECKS PROTECT IS NOT THE ACTIVE FLOWS
+# ══════════════════════════════════════════════════════════════════════════════════════════════════
+#
+# A record executes the flow VERSION it was bound to and goes on executing it after that version is
+# retired — that is the whole point of the binding. So the versions holding records with a way home
+# to defend are exactly the ones `f.status = 'active'` cannot see. Both border checks joined on it.
+rtclean
+RVH_G='{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":600,"y":100},{"status":"settled","isTerminal":true,"x":600,"y":260}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Out","toFlowKey":"smoke-rv-sub"},
+                {"from":"priced","to":"cancelled","labelEn":"Cancel"},{"from":"priced","to":"settled","labelEn":"Settle"}]}'
+RVH=$(mhflow rv-home "$RVH_G" '{"mode":"fallback"}')
+# v1 of the sub-flow hands records back at 'cancelled'.
+RVS=$(mhflow rv-sub '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"cancelled","labelEn":"Refused","toFlowKey":"smoke-rv-home"}]}' '{"mode":"handoff"}')
+ok "active|active" "$(rtactivate "$RVH" > /dev/null; rtactivate "$RVS" > /dev/null
+  psql "select string_agg(status::text, '|' order by flow_key) from workflow_flows where flow_key like 'smoke-rv-%'")" \
+  "a home flow and the sub-flow it hands records to are both live"
+RVR=$(rtquote RT-REVERSE)
+RVIT=$(psql "select id from rfq_items where rfq_id='$RVR' limit 1")
+rtpick "$RVR" > /dev/null
+ok "smoke-rv-sub/v1|smoke-rv-home" "$(xwhere "$RVIT")" "a record crosses into v1 of the sub-flow and stays there"
+
+# v2 of the SUB-FLOW hands records back somewhere else. v1 is retired by that publish and keeps the
+# record — and keeps its own arrow home, to 'cancelled', which nothing active mentions any more.
+RVS2=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$RVS/new-version" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RVS2/graph" \
+  -d '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},{"status":"settled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"settled","labelEn":"Settled","toFlowKey":"smoke-rv-home"}]}'
+ok active "$(rtactivate "$RVS2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "the sub-flow is republished, returning at a different status this time"
+ok "retired|1" "$(psql "select f.status||'|'||(select count(*) from workflow_record_state rs where rs.flow_id=f.id)
+                        from workflow_flows f where f.id='$RVS'")" \
+  "…so v1 is retired with a record still inside it, still carrying the only way that record can leave"
+
+# Republishing the PARENT without 'cancelled' is the ordinary act that breaks it, done by somebody
+# who may never have opened the sub-flow. Reading only the ACTIVE sub-flow, this was accepted with
+# no warning: v2 returns at 'settled', which the new parent has.
+RVH2=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$RVH/new-version" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+RVH_DROP='{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"settled","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Out","toFlowKey":"smoke-rv-sub"},
+                {"from":"priced","to":"settled","labelEn":"Settle"}]}'
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RVH2/graph" -d "$RVH_DROP"
+RVREF=$(rtactivate "$RVH2")
+ok 1 "$(rthas "hands records back to this one" "$RVREF")" \
+  "REVERSE: dropping the status a RETIRED sub-flow version returns to is refused — that version is what is running"
+ok 1 "$(rthas "records still moving in it" "$RVREF")" \
+  "…and the refusal says which version and why, because the admin's screen shows that flow live on a later one"
+ok draft "$(psql "select status from workflow_flows where id='$RVH2'")" \
+  "…so the record inside it cannot have its way home deleted from underneath it"
+ok 0 "$(blocked "$(xhome "$RVIT")")" "and the record does come home along that arrow, which is what was being defended"
+ok "smoke-rv-home/v1|home" "$(xwhere "$RVIT")" "…to the version it left, no longer away in anything"
+
+# THE CHECK IS NOT A BLANKET REFUSAL. With nothing left executing that retired version, the status it
+# used to return to may be dropped like any other — the rule is about records, not about history.
+# The draft still holds the graph that was refused: a refused activation writes nothing.
+ok active "$(rtactivate "$RVH2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "once nothing is executing that version any more, the same publish goes through"
+
+# ── AND THE SAME HOLE IN retire() ───────────────────────────────────────────────────────────────
+# Retiring a flow that something crosses INTO turns a drawn border into a refusal every record hits.
+# The check read active flows only, so a retired PARENT still carrying records that have not crossed
+# yet was invisible — and those are precisely the records whose next move is the border.
+rtclean
+RRH_G='{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Out","toFlowKey":"smoke-rr-sub"},
+                {"from":"priced","to":"cancelled","labelEn":"Cancel"}]}'
+RRH=$(mhflow rr-home "$RRH_G" '{"mode":"fallback"}')
+RRS=$(mhflow rr-sub '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"cancelled","labelEn":"Refused","toFlowKey":"smoke-rr-home"}]}' '{"mode":"handoff"}')
+ok "active|active" "$(rtactivate "$RRH" > /dev/null; rtactivate "$RRS" > /dev/null
+  psql "select string_agg(status::text, '|' order by flow_key) from workflow_flows where flow_key like 'smoke-rr-%'")" \
+  "a home flow and the sub-flow it hands records to are both live"
+RRR=$(rtquote RT-RETIRE)
+RRIT=$(psql "select id from rfq_items where rfq_id='$RRR' limit 1")
+ok "smoke-rr-home/v1|home" "$(xwhere "$RRIT")" "a record is raised under v1 of the parent, with the border still ahead of it"
+# The parent is republished WITHOUT the border. Nothing active crosses into the sub-flow any more —
+# but v1 is retired holding a record that will.
+RRH2=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$RRH/new-version" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$RRH2/graph" \
+  -d '{"steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"},{"from":"priced","to":"cancelled","labelEn":"Cancel"}]}'
+ok active "$(rtactivate "$RRH2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "the parent is republished without the border, so no LIVE flow crosses into the sub-flow at all"
+RRREF=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$RRS/retire")
+ok 1 "$(rthas "hands records to this" "$RRREF")" \
+  "retiring the sub-flow is still refused — a retired parent with records in it crosses this border too"
+ok 1 "$(rthas "records still moving in it" "$RRREF")" "…and the refusal names the version doing it"
+ok active "$(psql "select status from workflow_flows where id='$RRS'")" "…so the destination stays live"
+ok 0 "$(blocked "$(rtpick "$RRR")")" "and the record whose only next move is that border still takes it"
+ok "smoke-rr-sub/v1|smoke-rr-home" "$(xwhere "$RRIT")" "…arriving where it was always going to"
+
+rtclean
+psql "delete from approval_actions; delete from approval_requests;
+      delete from approval_levels; delete from approval_policies" > /dev/null
+
 # ════════════════════════════════════════════════════════════════════════════════════════════════
 # THE STANDARD FLOW — every workspace arrives with one, and can put it back
 # ════════════════════════════════════════════════════════════════════════════════════════════════

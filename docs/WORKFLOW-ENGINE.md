@@ -390,7 +390,7 @@ The model is also explicitly instructed to **set `drawGraph=false`** for greetin
 | no steps | nothing to run |
 | no entry step | new records would have nowhere to start. (*Two* entry steps are stopped earlier — `validateGraph:729-731` requires exactly one, and `workflow_steps_entry_uq` makes it impossible to store two) |
 | no terminal step | records could never finish |
-| not default **and** `selection_condition IS NULL` | "routing is not set" |
+| not default **and** `selection_condition IS NULL` **and** `entry_mode <> 'handoff'` | "routing is not set: give it a selection condition, make it the default flow, or mark it a handoff flow". Three answers to one question — `PUT :id/routing` is where an admin gives one; see §12 |
 | `is_default` **and** another active flow already holds the fallback slot for this domain (different `flow_key`) | Two flows cannot both be "the answer when nothing matches". Refused as a 409 naming the flow holding the slot — it used to be a 500 quoting `workflow_flows_default_uq`. A second active flow in the same domain is otherwise **legitimate** since 0065 |
 | a non-terminal step with no outgoing transition | records would stall there |
 | a step unreachable from the entry step (BFS, `:790-801`) | dead weight the canvas will happily draw |
@@ -727,6 +727,15 @@ passes wins (`status.service.ts:382-399`). The catalog of fields a condition may
 facts. `describe()` renders a refusal a person can act on: *"this move is only allowed when Who pays
 is insurance"*.
 
+`ConditionEditor.tsx` is where one is written, and it is a **picker over that code catalog, never a
+formula box** — same reason `GateEditor` is one: a chooser cannot name a column that does not exist,
+one that would leak, or one the evaluator fails closed on. It serves both places the catalog is
+asked about, because they are one question asked twice: which records a FLOW takes (the Routing tab)
+and when a MOVE may be taken (the canvas inspector). Its operator words — "is", "is not", "is more
+than", "is one of" — are exactly what `describe()` prints, so the sentence read back is the sentence
+that was built. Until it existed, `condition` had been stored, round-tripped, frozen and evaluated
+with nowhere in the product to write one.
+
 ### ~~`selection_condition` is never evaluated~~ — BUILT (0065)
 
 A workspace runs as many flows per domain as it draws. When a record ENTERS, `bindOnEntry`
@@ -784,8 +793,56 @@ selection condition from exactly that shape of flow — the cheap way to satisfy
 this engine defines as "matches EVERY record". `handoff` is a third valid answer to "how do records
 get here", accepted by `assertActivatable`.
 
-**`workflow_record_state.origin_flow_id` is a HINT, never a pointer.** Written on the way out,
-cleared on the way back. On return the resolver prefers it when that flow is non-draft AND still has
+### Routing is ONE choice, and `PUT :id/routing` is where it is made
+
+For a while all of the above existed and none of it could be reached from the product. `is_default`
+and `entry_mode` were settable only at creation and `selection_condition` only as a field of
+`PUT :id/graph`, which the canvas does not send — so a second workflow made in the product had no
+routing at all, `assertActivatable` refused exactly that flow, and the three things its message told
+the admin to do were three things there was no way to do. Nothing below it was reachable either: no
+second flow could go live, so the canvas never had another flow to offer, so the crossing picker
+(gated on `otherFlows.length > 0`) never rendered, and `to_flow_key` could only be set by hand.
+
+`PUT /admin/workflows/:id/routing` takes a **discriminated union**, not three fields:
+`{mode:"fallback"}` | `{mode:"condition", condition, priority}` | `{mode:"handoff"}`. That shape is
+the point — `is_default` together with `entry_mode = 'handoff'` is what makes a sub-flow capture
+records at birth (`selectableFlows` drops handoff flows from the CANDIDATE list but reads the
+fallback off `is_default` alone), and a union cannot express the pair. `createFlowSchema` refuses it
+too, since creation is the only other way in.
+
+Three rules worth knowing:
+
+- **draft only.** `workflow_flow_freeze()` already refuses `selection_condition` and
+  `selection_priority` on a non-draft row; `entry_mode` and `is_default` are the same decision and
+  get the same rule rather than a quieter one.
+- **`{mode:"fallback"}` stores `{}`, not NULL.** Null would be tidier and would break the path a
+  fallback is most often taken down: `newVersion()` clones with `is_default = false`, so the clone
+  would carry no flag AND no condition, and `assertActivatable` refuses that as "routing is not set"
+  before ever reaching the handover that gives the flag back. `{}` is inert on a flow the engine
+  consults by flag, and survives the clone — the same choice `template.service.ts` makes.
+- **a new version of the fallback cannot be routed elsewhere.** `activate()` hands `is_default` over
+  from the version it retires, so the choice is not open; the endpoint says so instead of storing an
+  answer activation would overrule. `list()` and `get()` return `inherits_default` so the screen can
+  lock the control rather than pretend.
+
+`list()` and `get()` also return `entry_mode` and a server-rendered `selection_summary`. Both matter:
+without the column the Workflows screen listed an ACTIVE handoff flow among the flows "checked before
+the fallback, in this order" — a race it is not in at any position — and `describeSelection()`, which
+had no parameter for it, printed "takes nothing — no routing set, so it is never chosen" beside a
+flow doing exactly what it was configured to do.
+
+**`workflow_record_state.origin_flow_id` is a HINT, never a pointer.** Written on the FIRST crossing
+out and cleared by arriving back there — **home is where the record started**, not the flow it most
+recently left. That distinction only shows up on a multi-hop journey, and there it decides
+everything: writing it on every outbound crossing meant `A → B → C → A` rewrote home to B on the
+second hop, so the arrow back into A no longer matched the origin, was judged an outbound crossing,
+and set origin = C. The record then stood in its own home flow permanently flagged as away —
+counted for ever in `workflow_record_state_away_idx`, labelled "from C" in My Work, and refused by
+break-glass, which looked for a way back to a flow the record was not away from. "Most recently
+left" cannot be made coherent with one column (no single value can be both B and A), and the
+alternative is the call stack `0066` refused. Nothing is lost: `status_logs.flow_id` records which
+flow judged every move, so the itinerary is answered by the history rather than by a column that can
+hold one value at a time. On return the resolver prefers it when that flow is non-draft AND still has
 a step for the landing status, and otherwise falls back to the active version of the named key. So a
 record comes home to the version it left in every ordinary case — and a null, stale or unusable
 value costs it nothing, because nothing depends on the column existing. That is the whole difference
@@ -796,15 +853,23 @@ on the day it cannot.
 
 - FORWARD — every `to_flow_key` leaving this flow names a key with an active version in this
   workspace/environment/domain, and that version has the destination status as a step.
-- REVERSE — no active flow crosses INTO this flow_key at a status this version does not contain.
-  This is what stops republishing a parent that has dropped the status a sub-flow hands back to.
+- REVERSE — nothing that is **currently being executed** crosses INTO this flow_key at a status this
+  version does not contain. This is what stops republishing a parent that has dropped the status a
+  sub-flow hands back to. "Currently being executed" is `status = 'active' OR it has rows in
+  workflow_record_state`, and the second half is not decoration: a record executes the flow VERSION
+  it was bound to and goes on executing it after that version is retired, so the versions holding
+  records with a way home to defend are exactly the ones an active-only join cannot see. Joining on
+  `status = 'active'` alone accepted a parent republished without a status a RETIRED sub-flow version
+  hands back to, and a record inside that version then had no move it could make.
 - REACHABILITY, both ways — the existing forward BFS from the entry step, plus a new BFS *backwards*
   from every terminal. The three older checks looked like they already guaranteed "every step can
   reach an ending" and did not: `entry→X, X→Y, Y→X, entry→T` passes all three and orbits forever.
   That defect predates crossings and is fixed for every flow, not only for the ones that cross.
-- `retire()`, which was a bare `UPDATE` with no checks, now refuses to retire a flow an ACTIVE flow
-  crosses into. A version bump is unaffected: `activate()` retires the predecessor in the same
-  transaction, so the key never stops resolving.
+- `retire()`, which was a bare `UPDATE` with no checks, now refuses to retire a flow that anything
+  still being executed crosses into — same predicate as REVERSE above, and for the same reason: a
+  retired parent still holding records that have not reached the border yet is precisely the
+  population whose next move that border is. A version bump is unaffected: `activate()` retires the
+  predecessor in the same transaction, so the key never stops resolving.
 
 Activation **warns but does not block** on a handoff flow whose terminal has no crossing back. A
 sub-flow that legitimately ends some records for ever is indistinguishable from one whose way home
@@ -847,9 +912,13 @@ on more pages, never fewer — but whoever authors the first sub-flow has to be 
 domain — `true` when it does not, `false` when it does. Every flow created before the first fix was
 permanently stuck in draft with no way to satisfy `assertActivatable` from any screen; sending `true`
 unconditionally (the first fix) became the opposite trap once provisioning gave every workspace a
-default, because `is_default` is set at creation and no endpoint changes it, so the second flow was
-born claiming a slot that was taken. A second flow now needs a selection condition instead, which is
-what the form says.
+default, so the second flow was born claiming a slot that was taken.
+
+That left the second flow needing a selection condition and still with nowhere to write one: the
+form's answer was final, because `is_default` was settable only at creation. The real fix is
+`PUT :id/routing` and the **Routing** tab on the canvas — see §12, *Routing is ONE choice*. The
+create form is now only a starting point that must avoid being wrong on arrival, and it says where
+the answer is actually given.
 
 ### ~~"My work" is unreachable for the people custody assigns work to~~ — FIXED
 

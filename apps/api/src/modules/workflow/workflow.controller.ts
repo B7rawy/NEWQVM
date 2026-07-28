@@ -8,7 +8,7 @@ import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly, WorkspaceRoute } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
-  actionEntrySchema, assistSchema, createFlowSchema, placementSchema, saveGraphSchema,
+  actionEntrySchema, assistSchema, createFlowSchema, placementSchema, routingSchema, saveGraphSchema,
   WorkflowService,
 } from "./workflow.service.js";
 import { WorkflowTemplateService } from "./template.service.js";
@@ -220,6 +220,24 @@ export class WorkflowController {
   @Post(":id/assist")
   assist(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.assist(this.ctx(req), id, assistSchema.parse(body));
+  }
+
+  /**
+   * WHICH RECORDS THIS FLOW TAKES — the fallback, a condition, or handoff-only.
+   *
+   * Its own route rather than three more optional fields on PUT :id/graph, because it is a different
+   * KIND of write: the graph save is a full replace of steps and transitions that the canvas sends
+   * on every Save, and routing is one deliberate choice a person makes once. Folding it in would
+   * mean every drag-and-save carried a routing answer, and a client that omitted it would silently
+   * reset the flow's routing — which is exactly how selection_condition came to be unreachable in
+   * the first place. Same shape as :id/placement, which is here for the same reason.
+   *
+   * DRAFT ONLY; the service says so in words. See routingSchema for why the three answers are one
+   * choice and not three switches.
+   */
+  @Put(":id/routing")
+  routing(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
+    return this.svc.updateRouting(this.ctx(req), id, routingSchema.parse(body));
   }
 
   /** Tunable on an ACTIVE flow by design — routing is a view, not a rule. See 0048. */

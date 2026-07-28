@@ -869,9 +869,10 @@ export class StatusService {
             and entity_type = ${entity} and entity_id = ${m.id}::uuid
           limit 1`))[0] as { origin_flow_id: string | null } | undefined;
 
-        // IS THIS A RETURN? Only if the record is currently away AND this arrow names the very flow
-        // it left. Anything else is an outbound crossing, including a second hop from one sub-flow
-        // into another — which needs no special case precisely because there is no stack to unwind.
+        // IS THIS A RETURN? Only if the record is currently away AND this arrow names the flow it
+        // calls HOME. Anything else is an outbound crossing, including a second hop from one
+        // sub-flow into another — which needs no special case precisely because there is no stack to
+        // unwind. What "home" means is settled at the write below; read that note first.
         const originKey = away?.origin_flow_id
           ? ((await tx.execute(sql`
               select flow_key, status from workflow_flows where id = ${away.origin_flow_id}::uuid`))[0] as
@@ -938,10 +939,40 @@ export class StatusService {
 
         targetFlowId = target.id;
         landingStep = step;
-        // On the way OUT, remember where home is. On the way BACK, forget — the record is home, and
-        // a stale origin would make it look away forever to the break-glass endpoint and to anyone
-        // reading workflow_record_state_away_idx.
-        originFlowId = isReturn ? null : flowId;
+        /**
+         * WHAT "HOME" MEANS, WITHOUT A STACK — and this line is the whole answer.
+         *
+         * It was `isReturn ? null : flowId`: every outbound crossing overwrote the origin with
+         * whatever flow the record happened to be leaving. Fine for one hop. For A → B → C → A —
+         * an order that detours through insurance, is passed on to returns, and finishes at home —
+         * the second hop rewrote home from A to B, so the arrow back into A no longer matched the
+         * origin, was judged an OUTBOUND crossing, and set origin = C. The record is standing in A,
+         * which is its home, permanently flagged as away from a flow it is not in: counted for ever
+         * in workflow_record_state_away_idx, labelled "from Returns" in My Work while it sits on the
+         * standard flow, and handed to the break-glass endpoint, which reports "bring it back from
+         * C to A" about a record already in A — false in both halves.
+         *
+         * THE RULE IS: HOME IS WHERE THE RECORD STARTED, and it is written ONCE — on the first
+         * crossing out of it — and cleared only by arriving back there. `away?.origin_flow_id ??`
+         * is the entire implementation: an origin that already exists is never overwritten, so B → C
+         * keeps home = A and C → A is recognised as the return it is.
+         *
+         * WHY THAT RULE AND NOT "the flow it most recently left". The alternative needs a stack to
+         * be coherent — with only one column, "most recently left" makes A → B → C → A unclosable,
+         * because no single value can be both B (for a hop back to B) and A (for a hop home). A
+         * stack is exactly what 0066 refused, and for a reason that has not changed: every frame it
+         * pushes is a frame that can be orphaned, and an orphaned frame is a record sitting
+         * somewhere nobody drew. One column answering one question — "is this record away from
+         * home, and where is home" — cannot be orphaned, because the question has one answer at
+         * every instant of the record's life.
+         *
+         * NOTHING IS LOST BY NOT REMEMBERING THE HOPS. status_logs carries flow_id on every row
+         * since 0066, so the full itinerary — which flow judged each move, in order — is already
+         * recorded and is where "where has this record been" is answered. This column is not a
+         * history; it is the single fact the run-time resolver, the away index and the break-glass
+         * lever each need, and it is now true at every point on a multi-hop journey.
+         */
+        originFlowId = isReturn ? null : (away?.origin_flow_id ?? flowId);
         originDecided = true;
       }
 
