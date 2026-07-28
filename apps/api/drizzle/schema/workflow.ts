@@ -77,6 +77,30 @@ export const workflowFlows = pgTable(
      * every new record ahead of the intended flow.
      */
     selectionCondition: jsonb("selection_condition"),
+    /**
+     * Which flow wins when TWO conditions both match the record entering (0065).
+     *
+     * Highest first, then oldest — the same rule `workflow_transitions` uses for two arrows joining
+     * the same pair of steps, deliberately reused rather than invented again one level up. Ignored
+     * on the `is_default` flow: that one is the fallback, not a candidate, so it can never outrank
+     * the specific flow an admin drew for insurance work.
+     */
+    selectionPriority: integer("selection_priority").notNull().default(0),
+    /**
+     * How records get INTO this flow at all (0066).
+     *
+     *   'selected' → a record entering the domain is matched against selectionCondition, or lands
+     *                here because this is the default. Every flow before 0066 is this.
+     *   'handoff'  → records only ever arrive by crossing a transition whose `toFlowKey` names this
+     *                flow. Nothing selects it, so it needs no selection condition.
+     *
+     * It exists to stop a lie being stored. A sub-flow must be active and non-default (only one
+     * active default per domain), and `workflow_flows_selection_complete` then demands a non-null
+     * selectionCondition from exactly that shape of flow. The cheap way to satisfy it is `{}` — which
+     * this file defines two comments above as "matches EVERY record". That would be a flow declaring
+     * it accepts every new record, waiting for the day selection is evaluated to capture them.
+     */
+    entryMode: text("entry_mode").notNull().default("selected"),
     /** Canvas-wide metadata (zoom/pan). Layout belonging to a STEP lives on the step. */
     canvas: jsonb("canvas").notNull().default({}),
     ...audit,
@@ -204,6 +228,20 @@ export const workflowTransitions = pgTable(
      * (flow_id, from_step_id) are evaluated in priority order and the FIRST matching condition wins.
      */
     priority: integer("priority").notNull().default(0),
+    /**
+     * THE CROSSING (0066). Taking this arrow also hands the record to the ACTIVE version of the flow
+     * named here, landing on that flow's step for the destination status. Null — almost always —
+     * means an ordinary move inside this flow.
+     *
+     * A KEY, NOT AN ID, so the target flow can republish on its own schedule without every flow that
+     * crosses into it needing a new version. An id would pin the border to one version and aim it at
+     * a retired graph the day the target published v2.
+     *
+     * Frozen by workflow_child_freeze() on a non-draft flow: it decides which RULEBOOK governs the
+     * record after the move, so re-aiming a live border would redirect orders already crossing it
+     * with no version change and nothing in the audit trail.
+     */
+    toFlowKey: text("to_flow_key"),
     ...audit,
   },
   (t) => [
@@ -258,6 +296,18 @@ export const workflowRecordState = pgTable(
      *  vendor-domain entity, to a flow speaking the wrong vocabulary — and then nothing resolves. */
     statusDomain: statusDomain("status_domain").notNull(),
     flowId: uuid("flow_id").notNull(),
+    /**
+     * Where the record came from while it is AWAY in a sub-flow (0066) — written on the outbound
+     * crossing, cleared on the return.
+     *
+     * A HINT, NOT A POINTER, and that word is the whole safety argument. On the way home the resolver
+     * PREFERS this version when it is non-draft and still contains the landing status, and otherwise
+     * falls back to the active version of the flow the return arrow names. So a null, stale or
+     * unusable value costs the record nothing: the crossing still completes against the live graph.
+     * A return address that MUST resolve is precisely the thing that strands a record on the day it
+     * cannot, which is why this one is never required.
+     */
+    originFlowId: uuid("origin_flow_id"),
     // `audit`, not `timestamps`: apply_tenant_rls attaches trg_set_row_audit unconditionally, and
     // set_row_audit() writes created_by/updated_by — without those columns the FIRST insert dies
     // with "record new has no field created_by".
@@ -275,7 +325,25 @@ export const workflowRecordState = pgTable(
       ],
       name: "workflow_record_state_flow_scope_fk",
     }).onUpdate("cascade"),
+    // Mirrors the FK above for the flow the record is AWAY from. MATCH SIMPLE, so it is simply
+    // unchecked while origin_flow_id is null — which is the wanted behaviour (a record that is not
+    // away has no origin) and the same trick the flow FK relies on.
+    foreignKey({
+      columns: [t.originFlowId, t.tenantId, t.environment, t.statusDomain],
+      foreignColumns: [
+        workflowFlows.id,
+        workflowFlows.tenantId,
+        workflowFlows.environment,
+        workflowFlows.statusDomain,
+      ],
+      name: "workflow_record_state_origin_flow_fk",
+    }).onUpdate("cascade"),
     unique("workflow_record_state_entity_uq").on(t.tenantId, t.environment, t.entityType, t.entityId),
     index("workflow_record_state_flow_idx").on(t.flowId),
+    // "which records are currently away in a sub-flow" is a small set inside a table holding every
+    // live record, so the index is partial.
+    index("workflow_record_state_away_idx")
+      .on(t.tenantId, t.environment)
+      .where(sql`origin_flow_id is not null`),
   ],
 );

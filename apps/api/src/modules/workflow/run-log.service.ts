@@ -88,7 +88,20 @@ export class WorkflowRunLogService {
                -- who" and "nobody was signed in" are different facts and were being collapsed.
                (e.actor_user_id is not null) as has_actor,
                coalesce(r.order_number, o.order_number, ir.order_number, io.order_number) as reference,
-               coalesce(ii.part_number, oi.final_part_number) as part
+               coalesce(ii.part_number, oi.final_part_number) as part,
+               -- WHICH RULEBOOK WAS IN FORCE FOR THIS MOVE — 0066.
+               --
+               -- Read from status_logs.flow_id, stamped at the moment the guard judged the move, and
+               -- NOT looked up from workflow_record_state now. That distinction is the whole value of
+               -- the column: by the time anybody reads this screen the record may have crossed into
+               -- a sub-flow and back, and the live binding would answer "standard" for a move that
+               -- was actually judged under "insurance". A history that re-derives its facts from the
+               -- present is not a history.
+               --
+               -- Null on every action row (an action is a consequence of a move, and the move above
+               -- it carries the answer) and on moves from before this column existed. The screen
+               -- renders nothing rather than guessing in both cases.
+               wf.name_en as flow
         from (
           -- Each branch is limited and ordered on its own so both can ride an index — 0056's for
           -- workflow_action_runs and 0059's for status_logs. That second one did not exist when this
@@ -106,7 +119,11 @@ export class WorkflowRunLogService {
                   a.entity_id, a.transition_key, a.action, a.outcome, a.detail,
                   a.auto_advanced, null::text as override_reason,
                   null::uuid as from_status_id, null::uuid as to_status_id,
-                  null::text as status_domain, a.actor_user_id
+                  null::text as status_domain, a.actor_user_id,
+                  -- workflow_action_runs has no flow of its own: an action is something a MOVE
+                  -- caused, and the move directly above it in this list carries the flow it was
+                  -- judged under. Inventing one here would be a second answer to the same question.
+                  null::uuid as flow_id
              from workflow_action_runs a
             where a.tenant_id = ${ctx.tenantId}::uuid and a.environment = ${envOf(ctx)}
               and (${outcome}::text is null or a.outcome = ${outcome}::text)
@@ -116,7 +133,8 @@ export class WorkflowRunLogService {
           (select 'move'::text, l.created_at, l.entity_type::text, l.entity_id,
                   null::text, null::text, null::text, null::text,
                   l.auto_advanced, l.override_reason,
-                  l.from_status_id, l.to_status_id, l.status_domain::text, l.changed_by
+                  l.from_status_id, l.to_status_id, l.status_domain::text, l.changed_by,
+                  l.flow_id
              from status_logs l
             where l.tenant_id = ${ctx.tenantId}::uuid and l.environment = ${envOf(ctx)}
               and ${outcome}::text is null
@@ -135,6 +153,9 @@ export class WorkflowRunLogService {
         left join order_items oi on e.entity_type = 'order_item' and oi.id = e.entity_id
         left join rfqs   ir on ir.id = ii.rfq_id
         left join orders io on io.id = oi.order_id
+        -- No tenant predicate needed: a flow id on a status_logs row of this workspace can only be
+        -- this workspace's flow, and RLS scopes the table besides.
+        left join workflow_flows wf on wf.id = e.flow_id
         -- THE TIEBREAKERS ARE LOAD-BEARING. Both source tables default their timestamp to now(),
         -- which in postgres is the TRANSACTION timestamp — so a move, the actions it fired, and every
         -- other move in an auto-advance chain all carry the same instant to the microsecond. With

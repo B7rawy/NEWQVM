@@ -674,7 +674,9 @@ Two gates on submit (`vendor-portal.service.ts:156-161`): `assertEnvironment` �
 
 ### 6.32 `admin/workflows` — the workflow engine
 
-`@PlatformOnly()` at the class level. **Seven of the twelve routes additionally require `platformRole === "super_admin"`**, enforced in the service (`workflow.service.ts:96-99`): `create`, `saveGraph`, `assist`, `activate`, `retire`, `newVersion`, `remove`. Staff may look; only a super admin may change.
+`@PlatformOnly()` at the class level. **Eight of the thirteen routes additionally require `platformRole === "super_admin"`**, enforced in the service: `create`, `saveGraph`, `assist`, `activate`, `retire`, `newVersion`, `remove`, and `returnRecord` (the `0066` break-glass). Staff may look; only a super admin may change.
+
+Two routes are marked `@WorkspaceRoute` instead — `my-work` and `claim` — because they are the workspace's own queue, and the class-level door made them unreachable for the exact people custody hands work to. `returnRecord` is deliberately NOT one of them: the ordinary way home is the arrow, open to whoever the author allowed, and this exists only for when that arrow's holders cannot take it.
 
 | Method | Path | super_admin? | Body | Called by web? |
 |---|---|---|---|---|
@@ -682,14 +684,17 @@ Two gates on submit (`vendor-portal.service.ts:156-161`): `assertEnvironment` �
 | GET | `/admin/workflows` | no | — | yes |
 | GET | `/admin/workflows/my-work` | no | — | yes |
 | GET | `/admin/workflows/:id` | no | — | yes |
-| POST | `/admin/workflows` | **yes** | `{flowKey, nameEn, nameAr, statusDomain?: "item"\|"vendor", isDefault?}` | yes |
+| POST | `/admin/workflows` | **yes** | `{flowKey, nameEn, nameAr, statusDomain?: "item"\|"vendor", isDefault?, entryMode?: "selected"\|"handoff"}` | yes |
 | PUT | `/admin/workflows/:id/graph` | **yes** | see below | yes |
 | POST | `/admin/workflows/records/:entity/:id/claim` | no | `{userId?}` | yes |
+| POST | `/admin/workflows/records/:entity/:id/return` | **yes** | `{toCode?}` | **no** |
 | POST | `/admin/workflows/:id/assist` | **yes** | `{messages: [{role: "user"\|"assistant", text}] (1–40), graph?}` | yes |
 | POST | `/admin/workflows/:id/activate` | **yes** | — | yes |
 | POST | `/admin/workflows/:id/retire` | **yes** | — | yes |
 | POST | `/admin/workflows/:id/new-version` | **yes** | — | yes |
 | DELETE | `/admin/workflows/:id` | **yes** | — | **no** |
+
+`GET /admin/workflows` returns every flow in the workspace + environment, ordered the way the engine tries them (`status_domain`, then `selection_priority desc`, then oldest) — so filtering the response to the *active* flows of one domain gives exactly the sequence a new record is matched against. Each row carries `selection_priority` and `selection_summary` — the routing rule rendered as a sentence (`describeSelection`), because `null` and `{}` look almost identical in jsonb and mean opposite things. Activating a second flow in the same status domain is allowed; activating a second **default** is a 409 naming the flow that already holds the fallback slot.
 
 `GET /catalog` returns the governed vocabulary the canvas and the AI may reference: `{itemStatuses, vendorStatuses, roles, pages, holders}`. `roles` is the whole `membership_role` enum; `holders` is a count of how many people in this workspace actually hold each role — used to refuse activating a flow whose steps are owned by a role nobody has.
 
@@ -698,7 +703,11 @@ Two gates on submit (`vendor-portal.service.ts:156-161`): `assertEnvironment` �
 ```jsonc
 {
   "nameEn": "…", "nameAr": "…",
-  "selectionCondition": null | {} | {…},  // null = never auto-selected; {} = matches everything
+  "selectionCondition": null | {} | {…},  // null = never auto-selected; {} = matches everything.
+                                          // Same schema as a transition's condition, and EVALUATED
+                                          // when a record enters (0065). Omit to keep what is stored.
+  "selectionPriority": 0,                 // ties between two flows that both match: highest first,
+                                          // then oldest. Omit to keep what is stored.
   "canvas": { … },
   "steps": [{ "status": "new_rfq", "isEntry": true, "isTerminal": false,
               "slaHours": 24, "x": 0, "y": 0, "sortOrder": 0,
@@ -706,7 +715,11 @@ Two gates on submit (`vendor-portal.service.ts:156-161`): `assertEnvironment` �
   "transitions": [{ "from": "new_rfq", "to": "priced", "labelEn": "…", "labelAr": "…",
                     "requiresApproval": false, "allowedRoles": [],
                     "condition": {}, "priority": 0,
-                    "handoff": "pool" | "keep" | "actor" }]          // 0–1000
+                    "handoff": "pool" | "keep" | "actor",
+                    "toFlowKey": null | "insurance" }]              // 0–1000
+                    // toFlowKey (0066) makes the arrow a BORDER: taking it also hands the record to
+                    // the active version of that flow, landing on that flow's step for `to`. It must
+                    // not name this flow's own key, and both ends are re-checked at activation.
 }
 ```
 
@@ -714,7 +727,11 @@ Only a **draft** can be saved; the save is a full replace (delete transitions �
 
 `POST /:id/assist` **proposes only — nothing is persisted** (`workflow.service.ts:689`). The model is handed only the governed catalog for this flow's status domain, and the reply then passes three checks in order: the same `saveGraphSchema` zod parse the human save path uses; a rejection of the whole reply if any returned status code is not in the catalog; then the same `validateGraph`. Returns `{reply, drew: true, flow, steps, transitions}`, or `{reply, drew: false}` for a conversational turn with nothing to draw. Requires `AI_PROVIDER=gemini` and `GEMINI_API_KEY`; otherwise 503.
 
-`POST /:id/activate` is stricter than saving (`assertActivatable`, `workflow.service.ts:758-824`): ≥1 step, exactly one entry, ≥1 terminal, no non-terminal step without an outgoing transition, every step reachable from entry, a non-default flow must have a selection condition, and no non-terminal step may name an `ownerRoles` entry with zero holders in this workspace. Activation retires the predecessor first, because the partial unique index permitting one active version is not deferrable.
+`POST /:id/activate` is stricter than saving (`assertActivatable`): ≥1 step, exactly one entry, ≥1 terminal, no non-terminal step without an outgoing transition, every step reachable from entry, **every step able to reach some terminal** (a backwards BFS added by `0066` — the older checks all pass on `entry→X, X→Y, Y→X, entry→T`, in which a record at X orbits for ever), a non-default flow must have a selection condition **or `entryMode: "handoff"`**, and no non-terminal step may name an `ownerRoles` entry with zero holders. `0066` adds both directions of every border: each `toFlowKey` must name a flow with an active version containing the destination status, and no active flow may cross INTO this flow_key at a status this version does not contain. It returns `{id, status, warnings}` — a handoff flow whose terminal hands nothing back is WARNED about and still activated, because a sub-flow that legitimately ends some records is indistinguishable from one whose way home was never drawn. Activation retires the predecessor first, because the partial unique index permitting one active version is not deferrable.
+
+`POST /:id/retire` refuses while an ACTIVE flow crosses into this one (`0066`) — a drawn border must not become a dead end. A version bump is unaffected: `activate()` retires the predecessor in its own transaction, so the key never stops resolving.
+
+`POST /records/:entity/:id/return` is BREAK GLASS (`0066`): super_admin only, valid only while the record is away in a sub-flow (`origin_flow_id` set). It finds the return arrow the author drew from where the record stands and takes it through `StatusService` like any other move — same guard, same gates, one `status_logs` row with a real actor — so it cannot produce a state an ordinary return could not. `toCode` picks between several ways home; it is required only when more than one is drawn. It refuses when none is, rather than dropping the record on a status nobody connected.
 
 `POST /records/:entity/:id/claim` deliberately does **not** move the status — claiming is responsibility, not progress. It refuses handing a record to someone lacking the step's role, because that would strand it where nobody looks.
 

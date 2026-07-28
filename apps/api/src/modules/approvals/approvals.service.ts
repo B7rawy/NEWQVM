@@ -175,11 +175,34 @@ export class ApprovalsService {
    */
   async requestForMove(ctx: RlsContext, dto: z.infer<typeof requestMoveSchema>) {
     return this.dbService.withContext(ctx, async (tx) => {
+      /**
+       * WHICH RULEBOOK IS THIS SIGNATURE FOR? — 0066.
+       *
+       * `transition_key` is `${from}>${to}` and carries no flow, which was enough while a record
+       * could only execute one. Since a record can now cross into a sub-flow and back, the same
+       * record can meet a `priced>confirmed` arrow in two flows, and a grant that did not say which
+       * one it was for would be spendable by either. So the request is stamped with the flow
+       * governing the record right now — the same flow the guard will judge the move under.
+       *
+       * Null when the record is bound to nothing (it predates the engine, or the workspace has no
+       * flow). The guard treats null as "matches whatever is judging", which is correct: with no
+       * binding there is only ever one flow in play.
+       */
+      const flowId = ((await tx.execute(sql`
+        select flow_id from workflow_record_state
+        where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
+          and entity_type = ${dto.entityType}::entity_type and entity_id = ${dto.entityId}::uuid
+        limit 1`))[0] as { flow_id: string } | undefined)?.flow_id ?? null;
+
+      // The idempotency read is scoped the same way as the write below, or "join the request already
+      // waiting" would join one raised for the same-named arrow of a DIFFERENT flow — and the second
+      // approver would be signing off a move they were never shown.
       const existing = (await tx.execute(sql`
         select id, current_level from approval_requests
         where tenant_id = ${ctx.tenantId}::uuid and environment = ${envOf(ctx)}
           and entity_type = ${dto.entityType} and entity_id = ${dto.entityId}::uuid
-          and transition_key = ${dto.transitionKey} and overall_status = 'pending'
+          and transition_key = ${dto.transitionKey} and flow_id is not distinct from ${flowId}::uuid
+          and overall_status = 'pending'
         limit 1`))[0] as { id: string; current_level: number } | undefined;
       if (existing) return { requestId: existing.id, status: "pending", currentLevel: existing.current_level, joined: true };
 
@@ -196,9 +219,10 @@ export class ApprovalsService {
       const [r] = (await tx.execute(sql`
         insert into approval_requests
           (tenant_id, environment, policy_id, entity_type, entity_id, requested_by,
-           current_level, overall_status, transition_key, requested_by_name)
+           current_level, overall_status, transition_key, flow_id, requested_by_name)
         values (${ctx.tenantId}::uuid, ${envOf(ctx)}, ${policy.id}::uuid, ${dto.entityType},
                 ${dto.entityId}::uuid, ${ctx.userId}::uuid, 1, 'pending', ${dto.transitionKey},
+                ${flowId}::uuid,
                 (select full_name from users where id = ${ctx.userId}::uuid))
         returning id`)) as Array<{ id: string }>;
 

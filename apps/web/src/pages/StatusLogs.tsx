@@ -43,6 +43,12 @@ interface Row {
   actor_name: string | null;
   reference: string | null;
   part: string | null;
+  /**
+   * The workflow this MOVE was judged under, as it was at the time (0066). Null on action rows and
+   * on moves recorded before the column existed — the badge is simply absent, which is honest;
+   * inventing "standard" for an unstamped row would assert something nobody recorded.
+   */
+  flow: string | null;
 }
 
 const ENTITY: Record<string, string> = {
@@ -298,6 +304,17 @@ export default function StatusLogs() {
                             {r.from_status ?? "—"}
                             <ArrowRight className="h-3.5 w-3.5 text-faint" />
                             <span className="font-medium text-ink">{r.to_status ?? "—"}</span>
+                            {/* WHICH RULEBOOK JUDGED THIS MOVE — 0066. A record can cross into a
+                                sub-flow and back, so two adjacent rows of one order's history can
+                                legitimately have been decided by two different graphs, and without
+                                this the reader has no way to tell. Rendered per row rather than per
+                                record for exactly that reason: the answer changes DURING a history,
+                                and the current binding cannot reconstruct it afterwards. */}
+                            {r.flow && (
+                              <span className="rounded bg-[var(--chip-gray-bg)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--chip-gray-fg)]">
+                                {r.flow}
+                              </span>
+                            )}
                           </p>
                         ) : (
                           <p className="text-[12.5px] text-sub">

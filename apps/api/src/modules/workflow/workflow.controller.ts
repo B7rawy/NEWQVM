@@ -8,7 +8,7 @@ import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly, WorkspaceRoute } from "../../common/roles.decorator.js";
 import { getContext } from "../../common/request-context.js";
 import {
-  actionEntrySchema, assistSchema, createFlowSchema, placementSchema, saveGraphSchema,
+  actionEntrySchema, assistSchema, createFlowSchema, placementSchema, routingSchema, saveGraphSchema,
   WorkflowService,
 } from "./workflow.service.js";
 import { WorkflowTemplateService } from "./template.service.js";
@@ -194,10 +194,50 @@ export class WorkflowController {
     return this.svc.claim(this.ctx(req), entity, id, body?.userId);
   }
 
+  /**
+   * BREAK GLASS: bring a record home from the sub-flow it is away in (0066).
+   *
+   * NOT @WorkspaceRoute, unlike the two routes above: this is the class-level PlatformOnly door plus
+   * super_admin enforced in the service. That is deliberate and is the difference between a lever
+   * and a shortcut — the ordinary way home is the arrow, available to whoever the author allowed,
+   * and this exists only for the case where that arrow's holders cannot take it. Widening it to the
+   * workspace would make "who may move this record" answerable two ways.
+   *
+   * No declaration-order trap here, unlike page-view and action-library: this path is four segments
+   * and every `:id/...` route is two, so nothing can shadow it.
+   */
+  @Post("/records/:entity/:id/return")
+  returnRecord(
+    @Req() req: Request,
+    @Param("entity") entity: string,
+    @Param("id") id: string,
+    @Body() body: { toCode?: string },
+  ) {
+    return this.svc.returnRecord(this.ctx(req), entity, id, body?.toCode);
+  }
+
   /** Draft a graph from a description. Returns a PROPOSAL — the canvas renders it, the human saves. */
   @Post(":id/assist")
   assist(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
     return this.svc.assist(this.ctx(req), id, assistSchema.parse(body));
+  }
+
+  /**
+   * WHICH RECORDS THIS FLOW TAKES — the fallback, a condition, or handoff-only.
+   *
+   * Its own route rather than three more optional fields on PUT :id/graph, because it is a different
+   * KIND of write: the graph save is a full replace of steps and transitions that the canvas sends
+   * on every Save, and routing is one deliberate choice a person makes once. Folding it in would
+   * mean every drag-and-save carried a routing answer, and a client that omitted it would silently
+   * reset the flow's routing — which is exactly how selection_condition came to be unreachable in
+   * the first place. Same shape as :id/placement, which is here for the same reason.
+   *
+   * DRAFT ONLY; the service says so in words. See routingSchema for why the three answers are one
+   * choice and not three switches.
+   */
+  @Put(":id/routing")
+  routing(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
+    return this.svc.updateRouting(this.ctx(req), id, routingSchema.parse(body));
   }
 
   /** Tunable on an ACTIVE flow by design — routing is a view, not a rule. See 0048. */
