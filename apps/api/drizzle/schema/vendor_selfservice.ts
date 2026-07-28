@@ -63,7 +63,6 @@ export const vendorPricingPolicies = pgTable(
   (t) => [
     // UNIQUE (…) NULLS NOT DISTINCT added by hand migration (drizzle 0.36 limitation) so
     // resolvePrice is deterministic and setPricingPolicy upserts per scope.
-    index("vendor_pricing_scope_idx").on(t.tenantId, t.vendorId, t.scopeType, t.regionId, t.workshopBranchId),
     index("vendor_pricing_tenant_idx").on(t.tenantId),
     index("vendor_pricing_vendor_idx").on(t.tenantId, t.vendorId),
     index("vendor_pricing_region_idx").on(t.regionId),

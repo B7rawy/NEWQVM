@@ -147,7 +147,12 @@ rpsql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
        alter table workflow_flows enable trigger trg_workflow_flows_freeze;
        alter table workflow_steps enable trigger trg_workflow_steps_freeze;
        alter table workflow_transitions enable trigger trg_workflow_transitions_freeze;
-       delete from status_logs where entity_id='$PRFQ';
+       -- The LINES get their own status_logs row when the request is raised (creation became a
+       -- real move in QNEW-90 item 7), and deleting only the header's left one orphan behind on
+       -- production per deploy — history pointing at a line that no longer exists. Found by
+       -- auditing the database, five runs later.
+       delete from status_logs where entity_id = '$PRFQ'
+          or entity_id in (select id from rfq_items where rfq_id = '$PRFQ');
        delete from rfq_items where rfq_id='$PRFQ';
        delete from rfqs where id='$PRFQ'" > /dev/null
 ok 0 "$(rpsql "select count(*) from workflow_flows where flow_key like 'smoke-prod-%'")" \

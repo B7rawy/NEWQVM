@@ -34,7 +34,6 @@ export const invoices = pgTable(
   },
   (t) => [
     index("invoices_tenant_idx").on(t.tenantId),
-    index("invoices_order_idx").on(t.orderId),
     index("invoices_status_idx").on(t.statusId),
     // DB backstop for "one invoice per order" (services check-then-insert; 23505 → 400)
     uniqueIndex("invoices_order_uq").on(t.orderId),
