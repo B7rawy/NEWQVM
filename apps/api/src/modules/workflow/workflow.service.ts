@@ -9,6 +9,7 @@ import { ROUTABLE_PAGES, isPageKey, pageByKey } from "./pages.js";
 import { GATES, gateByKey } from "./gates.js";
 import { ACTIONS, actionByKey } from "./actions.js";
 import { validateWebhookUrl } from "./webhook-url.js";
+import { WORKFLOW_ROLES, describeUnknownRole, holderCounts, isRoleKey } from "./roles.js";
 import {
   CONDITION_FIELDS, conditionFieldByKey, describeSelection, type Condition,
 } from "./conditions.js";
@@ -330,17 +331,17 @@ export class WorkflowService {
         select code, label_en, label_ar from item_statuses where is_active order by sort_order, code`);
       const vendor = await tx.execute(sql`
         select code, label_en, label_ar from vendor_statuses where is_active order by sort_order, code`);
-      const roles = await tx.execute(sql`
-        select unnest(enum_range(null::membership_role))::text as code`);
-      const holders = (await tx.execute(sql`
-        select role::text as code, count(*)::int as n from tenant_memberships
-        where tenant_id = ${ctx.tenantId}::uuid and is_active group by role`)) as Array<
-        { code: string; n: number }
-      >;
+      // The picker offered `membership_role` alone, so the two roles only platform staff hold
+      // (finance_manager, pricing_supervisor) could not be chosen on this screen at all — while the
+      // guard would have honoured either. roles.ts is the union, and it is the same list
+      // validateGraph refuses a save against, so nothing the canvas offers can fail on save.
+      const holders = (await tx.execute(
+        holderCounts(sql`${ctx.tenantId}::uuid`),
+      )) as Array<{ code: string; n: number }>;
       return {
         itemStatuses: item,
         vendorStatuses: vendor,
-        roles: roles.map((r) => (r as { code: string }).code),
+        roles: WORKFLOW_ROLES,
         pages: ROUTABLE_PAGES,
         conditionFields: CONDITION_FIELDS.map((f) => ({
           key: f.key, labelEn: f.labelEn, labelAr: f.labelAr,
@@ -843,10 +844,11 @@ export class WorkflowService {
         where t.flow_id = ${flow.id}::uuid
         order by t.priority desc`)) as Array<Record<string, unknown>>;
 
+      // Same count as the canvas and as the activation check — roles.ts, one definition. This screen
+      // renders a "nobody holds this role" warning beside every owner, and a count that omitted
+      // platform staff put that warning on steps their own people work every day.
       const holders = Object.fromEntries(
-        ((await tx.execute(sql`
-          select role::text as code, count(*)::int as n from tenant_memberships
-          where tenant_id = ${ctx.tenantId}::uuid and is_active group by role`)) as Array<
+        ((await tx.execute(holderCounts(sql`${ctx.tenantId}::uuid`))) as Array<
           { code: string; n: number }
         >).map((h) => [h.code, h.n]),
       );
@@ -1611,10 +1613,11 @@ export class WorkflowService {
         select code, label_en, label_ar from ${table} where is_active order by sort_order, code`)) as Array<{
         code: string; label_en: string; label_ar: string;
       }>;
-      const r = (await tx.execute(sql`select unnest(enum_range(null::membership_role))::text as code`)) as Array<{ code: string }>;
-      const h = (await tx.execute(sql`
-        select role::text as code, count(*)::int as n from tenant_memberships
-        where tenant_id = ${tenantId}::uuid and is_active group by role`)) as Array<
+      // The model is given the SAME closed vocabulary and the SAME head-count the canvas gets, from
+      // roles.ts. It is told below to draw only roles from this list and to leave a step unowned when
+      // nobody holds the natural owner — advice that was actively wrong while the count ignored
+      // platform staff, since it steered the model away from the roles only they hold.
+      const h = (await tx.execute(holderCounts(sql`${tenantId}::uuid`))) as Array<
         { code: string; n: number }
       >;
       /**
@@ -1635,7 +1638,7 @@ export class WorkflowService {
       return {
         flow: f,
         catalog: cat,
-        roles: r.map((x) => x.code),
+        roles: WORKFLOW_ROLES,
         holders: Object.fromEntries(h.map((x) => [x.code, x.n])) as Record<string, number>,
         crossable: cross,
       };
@@ -1994,6 +1997,31 @@ export class WorkflowService {
         throw new BadRequestException(
           `'${t.from}' → '${t.to}' uses unknown rule(s): ${unknown.join(", ")}`,
         );
+
+      /**
+       * A ROLE THAT DOES NOT EXIST BLOCKS EVERYONE, AND NOTHING USED TO SAY SO.
+       *
+       * `allowedRoles` is the one field in this document that fails CLOSED and reports nothing when
+       * it is wrong. An unknown status code is refused at save, an unknown action or gate key is
+       * refused three lines above, an unknown condition field is refused above that — but a
+       * misspelt role saved, activated and then matched nobody, because `effectiveRoles` returns
+       * the roles people really hold and no one holds "brnach_manager". The arrow became a button
+       * that does nothing for every user in the workspace except a super_admin, who holds every
+       * role by construction and so never sees it. It is found when an order stops.
+       *
+       * `ownerRoles` was caught only indirectly and only sometimes: a nonexistent role has zero
+       * holders, so activation refused the step — unless the step was terminal, which that check
+       * skips — and the message talked about hiring rather than spelling. Both are checked here now,
+       * at save, against the same closed set, so the staffing message at activation is only ever
+       * about a real role nobody happens to hold.
+       */
+      const badRoles = t.allowedRoles.filter((r) => !isRoleKey(r));
+      if (badRoles.length)
+        throw new BadRequestException(
+          `'${t.from}' → '${t.to}' may only be taken by ${badRoles.map(describeUnknownRole).join(" ")} ` +
+            `Nobody can hold a role that does not exist, so this move would be refused for everyone. ` +
+            `The roles are: ${WORKFLOW_ROLES.join(", ")}`,
+        );
     }
 
     for (const st of dto.steps) {
@@ -2001,6 +2029,13 @@ export class WorkflowService {
       if (bad.length)
         throw new BadRequestException(
           `step '${st.status}' is routed to unknown page(s): ${bad.join(", ")}`,
+        );
+
+      const badOwners = st.ownerRoles.filter((r) => !isRoleKey(r));
+      if (badOwners.length)
+        throw new BadRequestException(
+          `step '${st.status}' is owned by ${badOwners.map(describeUnknownRole).join(" ")} ` +
+            `The roles are: ${WORKFLOW_ROLES.join(", ")}`,
         );
     }
   }
@@ -2100,15 +2135,22 @@ export class WorkflowService {
 
     const crossingWarns = await this.assertCrossingsResolve(tx, id, edges);
 
-    // An owner role with no holders is not a configuration opinion — it is a step no human can move
-    // a record out of. Activation is the last cheap moment to say so; after it, real orders stall.
+    /**
+     * An owner role with no holders is not a configuration opinion — it is a step no human can move
+     * a record out of. Activation is the last cheap moment to say so; after it, real orders stall.
+     *
+     * IT MUST COUNT THE SAME PEOPLE THE GUARD WILL LET THROUGH. This counted `tenant_memberships`
+     * alone while `StatusService.effectiveRoles` unions `platform_members`, so a step owned by
+     * finance_manager or pricing_supervisor — roles only platform staff can hold — was reported as
+     * having nobody and REFUSED, telling the admin to hire for a role the people who would work that
+     * step already have. roleHolders() is that union and is now the only definition in the codebase;
+     * the tenant arrives as the flow's own, since this is the one caller that knows the flow rather
+     * than the workspace.
+     */
     const holders = new Map(
-      ((await tx.execute(sql`
-        select m.role::text as code, count(*)::int as n
-        from tenant_memberships m
-        join workflow_flows f on f.tenant_id = m.tenant_id
-        where f.id = ${id}::uuid and m.is_active
-        group by m.role`)) as Array<{ code: string; n: number }>).map((h) => [h.code, h.n]),
+      ((await tx.execute(
+        holderCounts(sql`(select f.tenant_id from workflow_flows f where f.id = ${id}::uuid)`),
+      )) as Array<{ code: string; n: number }>).map((h) => [h.code, h.n]),
     );
     for (const st of steps as Array<{ code: string; is_terminal: boolean; owner_roles?: string[] }>) {
       const unstaffed = (st.owner_roles ?? []).filter((r) => !holders.get(r));

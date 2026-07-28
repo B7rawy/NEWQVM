@@ -6,6 +6,7 @@ import {
   jsonb,
   pgTable,
   text,
+  timestamp,
   uuid,
   index,
   unique,
@@ -14,6 +15,7 @@ import {
 import { sql } from "drizzle-orm";
 import { audit, pk } from "./_shared";
 import { entityType, environmentType, statusDomain, workflowFlowStatus } from "./enums";
+import { users } from "./identity";
 import { itemStatuses, vendorStatuses } from "./reference";
 import { tenants } from "./tenancy";
 
@@ -242,6 +244,32 @@ export const workflowTransitions = pgTable(
      * with no version change and nothing in the audit trail.
      */
     toFlowKey: text("to_flow_key"),
+    /**
+     * ── DECLARED HERE BECAUSE THE DATABASE ALREADY HAS THEM (0067) ────────────────────────────
+     *
+     * Everything from here down was added by hand-written SQL — `handoff` by 0049, `gates` by 0051,
+     * `auto_advance` / `auto_once` by 0055, `actions` by 0056 — and never written back into this
+     * file. That is not a cosmetic gap. `drizzle-kit generate` diffs THIS FILE against the snapshot,
+     * so a column the file does not mention is a column drizzle believes does not exist: it gets no
+     * type, `db:studio` and `push` treat it as unknown, and the next person to add a real column
+     * here generates a migration written against a table that is five columns out of date.
+     *
+     * The shape and defaults below are read off the live database, not guessed. The CHECK
+     * constraints that go with them (`workflow_transitions_handoff_mode`, `_gates_shape`,
+     * `_actions_shape`, `_actions_ref_shape`) stay in the migrations — drizzle-kit 0.28 does not
+     * model table CHECKs, and inventing an approximation here would be a second, weaker copy of a
+     * rule the database already enforces.
+     */
+    /** What this move does to custody: hand to the destination's pool, keep the holder, or take it. */
+    handoff: text("handoff").notNull().default("pool"),
+    /** Exit gates from the code catalog (gates.ts) — conditions the record must satisfy to leave. */
+    gates: jsonb("gates").notNull().default(sql`'[]'::jsonb`),
+    /** Fire this move by itself once its rules hold. Never inferred — see status.service.ts. */
+    autoAdvance: boolean("auto_advance").notNull().default(false),
+    /** …and at most once per record, so a status legitimately revisited does not re-fire it. */
+    autoOnce: boolean("auto_once").notNull().default(true),
+    /** What happens after the move succeeds — copies of catalog actions (actions.ts). */
+    actions: jsonb("actions").notNull().default(sql`'[]'::jsonb`),
     ...audit,
   },
   (t) => [
@@ -272,6 +300,12 @@ export const workflowTransitions = pgTable(
     index("workflow_transitions_from_step_idx").on(t.fromStepId),
     index("workflow_transitions_to_step_idx").on(t.toStepId),
     index("workflow_transitions_tenant_idx").on(t.tenantId, t.environment),
+    // "which flows carry a receipt for this library entry" is a jsonb containment test run on every
+    // load of the action library screen (workflow.service.ts libraryRows) — 0060.
+    index("workflow_transitions_action_ref_idx").using(
+      "gin",
+      sql`${t.actions} jsonb_path_ops`,
+    ),
   ],
 );
 
@@ -308,6 +342,28 @@ export const workflowRecordState = pgTable(
      * cannot, which is why this one is never required.
      */
     originFlowId: uuid("origin_flow_id"),
+    /**
+     * ── CUSTODY AND THE SLA CLOCK (0049), DECLARED HERE FOR THE FIRST TIME (0067) ─────────────
+     *
+     * Written and read only through raw SQL until now, which meant drizzle's model of this table was
+     * four columns short of the table itself. See the note on workflow_transitions above for why
+     * that is dangerous rather than untidy.
+     *
+     * assigneeUserId is ON DELETE SET NULL and that is the right answer rather than a convenience:
+     * deleting a user must not delete the record's workflow state, and must not leave it pointing at
+     * somebody who is gone. The record falls back to its role pool, which is where an unclaimed
+     * record already lives. Its foreign key is declared in the config block below so it can keep the
+     * name 0049 gave it — an inline `.references()` would be called
+     * `workflow_record_state_assignee_user_id_users_id_fk` instead, and drizzle's
+     * `EXCEPTION WHEN duplicate_object` only forgives a name that already exists.
+     */
+    assigneeUserId: uuid("assignee_user_id"),
+    /** The role holding it while nobody has claimed it — the pool `myWork` offers. */
+    assigneeRole: text("assignee_role"),
+    /** When the record arrived at its current step. The SLA clock starts here, not at creation. */
+    stepEnteredAt: timestamp("step_entered_at", { withTimezone: true }).notNull().defaultNow(),
+    /** stepEnteredAt + the step's slaHours, or null when the step sets none. */
+    dueAt: timestamp("due_at", { withTimezone: true }),
     // `audit`, not `timestamps`: apply_tenant_rls attaches trg_set_row_audit unconditionally, and
     // set_row_audit() writes created_by/updated_by — without those columns the FIRST insert dies
     // with "record new has no field created_by".
@@ -338,8 +394,24 @@ export const workflowRecordState = pgTable(
       ],
       name: "workflow_record_state_origin_flow_fk",
     }).onUpdate("cascade"),
+    foreignKey({
+      columns: [t.assigneeUserId],
+      foreignColumns: [users.id],
+      name: "workflow_record_state_assignee_user_id_fkey",
+    }).onDelete("set null"),
     unique("workflow_record_state_entity_uq").on(t.tenantId, t.environment, t.entityType, t.entityId),
     index("workflow_record_state_flow_idx").on(t.flowId),
+    // The three reads My Work makes, each given the partial index it needs: what this person holds,
+    // what their roles may claim, and what is late.
+    index("workflow_record_state_assignee_idx")
+      .on(t.tenantId, t.environment, t.assigneeUserId)
+      .where(sql`assignee_user_id is not null`),
+    index("workflow_record_state_pool_idx")
+      .on(t.tenantId, t.environment, t.assigneeRole)
+      .where(sql`assignee_user_id is null`),
+    index("workflow_record_state_due_idx")
+      .on(t.tenantId, t.environment, t.dueAt)
+      .where(sql`due_at is not null`),
     // "which records are currently away in a sub-flow" is a small set inside a table holding every
     // live record, so the index is partial.
     index("workflow_record_state_away_idx")

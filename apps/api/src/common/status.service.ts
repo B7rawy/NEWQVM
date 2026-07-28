@@ -4,6 +4,7 @@ import type { Tx } from "../db/db.service.js";
 import { envOf, type Environment } from "./env-guards.js";
 import { runGates, type GateConfig, type GateFailure } from "../modules/workflow/gates.js";
 import { runActions, type ActionConfig } from "../modules/workflow/actions.js";
+import { holdersOfAny, roleHolders } from "../modules/workflow/roles.js";
 import { NotificationsService } from "../modules/notifications/notifications.service.js";
 import {
   evaluate, describe, gatherFacts, isEmptyCondition, type Condition,
@@ -125,12 +126,14 @@ export class StatusService {
    */
   private async effectiveRoles(tx: Tx, ctx: StatusContext): Promise<Set<string>> {
     if (!ctx.userId) return new Set();
+    // The union this reads used to be written out here and nowhere else, while four places that
+    // COUNT the same people counted tenant_memberships alone — so the engine refused to publish
+    // configurations it would then have enforced correctly. It is one shared definition now
+    // (roles.ts), and this is its most important reader: whatever it returns is who may move a
+    // record, so any count that disagrees with it is wrong by construction rather than by degree.
     const rows = (await tx.execute(sql`
-      select role::text as code from tenant_memberships
-        where user_id = ${ctx.userId}::uuid and tenant_id = ${ctx.tenantId}::uuid and is_active
-      union
-      select role::text from platform_members
-        where user_id = ${ctx.userId}::uuid and is_active`)) as Array<{ code: string }>;
+      select h.role as code from ${roleHolders(sql`${ctx.tenantId}::uuid`)} h
+      where h.user_id = ${ctx.userId}::uuid`)) as Array<{ code: string }>;
     return new Set(rows.map((r) => r.code));
   }
 
@@ -478,16 +481,20 @@ export class StatusService {
           // destination step's owners hold it, and a step with exactly ONE possible owner
           // auto-assigns, because leaving a record unclaimed when there is only one candidate is
           // busywork.
+          //
+          // "Possible owner" is roles.ts's definition — the same union effectiveRoles applies a few
+          // lines up and the same one claim() accepts a hand-over against. Reading only
+          // tenant_memberships here meant the sole holder of a platform-only role was invisible, so
+          // the record arrived unclaimed on a step exactly one person could work, and claim() would
+          // then happily let that same person take it.
           const owners = (toStep.owner_roles ?? []) as string[];
           let assignee: string | null = null;
           let assigneeRole: string | null = null;
           if (owners.length) {
             assigneeRole = owners[0];
-            const one = (await tx.execute(sql`
-              select user_id from tenant_memberships
-              where tenant_id = ${ctx.tenantId}::uuid and is_active
-                and role::text in (${sql.join(owners.map((r) => sql`${r}`), sql`, `)})
-              limit 2`)) as Array<{ user_id: string }>;
+            const one = (await tx.execute(
+              sql`${holdersOfAny(sql`${ctx.tenantId}::uuid`, owners)} limit 2`,
+            )) as Array<{ user_id: string }>;
             if (one.length === 1) assignee = one[0].user_id;
           }
           arrivals.set(flowId, { assignee, assigneeRole, slaHours: toStep.sla_hours });
@@ -1006,12 +1013,11 @@ export class StatusService {
         assignee = ctx.userId;
         assigneeRole = toOwners[0] ?? null;
       } else if (toOwners.length) {
+        // Same single definition of "who can hold this" as the arrival path above — roles.ts.
         assigneeRole = toOwners[0];
-        const one = (await tx.execute(sql`
-          select user_id from tenant_memberships
-          where tenant_id = ${ctx.tenantId}::uuid and is_active
-            and role::text in (${sql.join(toOwners.map((r) => sql`${r}`), sql`, `)})
-          limit 2`)) as Array<{ user_id: string }>;
+        const one = (await tx.execute(
+          sql`${holdersOfAny(sql`${ctx.tenantId}::uuid`, toOwners)} limit 2`,
+        )) as Array<{ user_id: string }>;
         if (one.length === 1) assignee = one[0].user_id;
       }
       const due = landingStep.sla_hours

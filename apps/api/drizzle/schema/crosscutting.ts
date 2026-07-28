@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, integer, jsonb, pgTable, text, timestamp, uuid, index, unique } from "drizzle-orm/pg-core";
+import { bigint, boolean, foreignKey, integer, jsonb, pgTable, text, timestamp, uuid, index, unique } from "drizzle-orm/pg-core";
 import { audit, pk, timestamps } from "./_shared";
 import { entityType, environmentType, statusDomain } from "./enums";
 import { tenants } from "./tenancy";
@@ -59,12 +59,36 @@ export const statusLogs = pgTable(
     fromStatusId: uuid("from_status_id"),
     toStatusId: uuid("to_status_id"),
     changedBy: uuid("changed_by").references(() => users.id),
+    /**
+     * ── ADDED BY THE WORKFLOW ENGINE'S HAND-WRITTEN MIGRATIONS, DECLARED HERE BY 0067 ─────────
+     *
+     * `override_reason` / `overridden_gates` came with 0051, `auto_advanced` with 0059 and `flow_id`
+     * with 0066. None was written back into this file, so drizzle's model of the log was four
+     * columns short of the log — and a column drizzle cannot see is a column the next generated
+     * migration is written without.
+     */
+    /** Why a warn_override gate was overridden, and which ones — the record of a judgement call. */
+    overrideReason: text("override_reason"),
+    overriddenGates: jsonb("overridden_gates"),
+    /** True when the engine made this move by itself, so the run log can say nobody did it. */
+    autoAdvanced: boolean("auto_advanced").notNull().default(false),
+    /**
+     * WHICH FLOW JUDGED THIS MOVE — on a crossing, the flow the record landed in (0066). Read by
+     * the run log rather than re-derived from today's binding, because by then the record may be
+     * home again and the binding no longer says where it was.
+     */
+    flowId: uuid("flow_id"),
     ...timestamps,
   },
   (t) => [
     index("status_logs_tenant_idx").on(t.tenantId),
     index("status_logs_entity_idx").on(t.tenantId, t.entityType, t.entityId),
     index("status_logs_changed_by_idx").on(t.changedBy),
+    // `.nullsFirst()` is not decoration: Postgres reads a bare `DESC` as `DESC NULLS FIRST`, which
+    // is how 0059 created this index, while drizzle spells `.desc()` out as `DESC NULLS LAST`. The
+    // two are the same index here (created_at is NOT NULL) and different index DEFINITIONS, and the
+    // difference is what a future `generate` would offer to "fix" by rebuilding it.
+    index("status_logs_recent_idx").on(t.tenantId, t.environment, t.createdAt.desc().nullsFirst()),
   ],
 );
 
@@ -134,13 +158,17 @@ export const inAppNotifications = pgTable(
   "in_app_notifications",
   {
     id: pk(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id),
+    /**
+     * The two foreign keys are declared in the config block below rather than inline, purely so they
+     * can be NAMED. 0061 was hand-written SQL, so Postgres named them `…_fkey`, while an inline
+     * `.references()` makes drizzle call them `…_tenant_id_tenants_id_fk`. The DO-$$-EXCEPTION
+     * wrapper drizzle emits only swallows `duplicate_object`, and a different name is not a
+     * duplicate — so the mismatch would have added a SECOND, redundant foreign key on the same
+     * column the first time anyone generated against this table.
+     */
+    tenantId: uuid("tenant_id").notNull(),
     environment: environmentType("environment").notNull().default("live"),
-    recipientUserId: uuid("recipient_user_id")
-      .notNull()
-      .references(() => users.id),
+    recipientUserId: uuid("recipient_user_id").notNull(),
     title: text("title").notNull(),
     body: text("body"),
     /** In-app router path ("/approvals"); a DB check refuses absolute and protocol-relative URLs. */
@@ -159,12 +187,25 @@ export const inAppNotifications = pgTable(
     index("in_app_notifications_unread_idx")
       .on(t.recipientUserId, t.tenantId, t.environment)
       .where(sql`read_at is null`),
+    // `.nullsFirst()` for the same reason as status_logs_recent_idx above — 0061 wrote a bare
+    // `created_at DESC`, which Postgres stores as DESC NULLS FIRST.
     index("in_app_notifications_inbox_idx").on(
       t.recipientUserId,
       t.tenantId,
       t.environment,
-      t.createdAt.desc(),
+      t.createdAt.desc().nullsFirst(),
     ),
+    // Named to match what 0061 actually created — see the note on tenantId above.
+    foreignKey({
+      columns: [t.tenantId],
+      foreignColumns: [tenants.id],
+      name: "in_app_notifications_tenant_id_fkey",
+    }),
+    foreignKey({
+      columns: [t.recipientUserId],
+      foreignColumns: [users.id],
+      name: "in_app_notifications_recipient_user_id_fkey",
+    }),
   ],
 );
 

@@ -142,6 +142,43 @@ tags={e['tag'] for e in json.load(open(d+'/meta/_journal.json'))['entries']}
 print(len([f for f in os.listdir(d) if f.endswith('.sql') and f[:-4] not in tags]))")" \
   "no migration is orphaned from meta/_journal.json"
 
+# ── THE SCHEMA FILES, THE NEWEST SNAPSHOT AND THE DATABASE MUST AGREE (0067) ────────────────────
+#
+# THE CHECK THAT WOULD HAVE CAUGHT NINETEEN MIGRATIONS OF DRIFT. `drizzle-kit generate` diffs the
+# schema .ts against the newest snapshot and knows nothing about the live database, so both halves
+# of the drift were silent:
+#   * pages / owner_roles were in the .ts and in the database but NOT in the snapshot, so generate
+#     emitted `ADD COLUMN` for columns that already existed — SQL that dies on the first statement,
+#     on every database, with no IF NOT EXISTS to save it;
+#   * the seventeen columns 0049-0066 added by hand were in the database and in NEITHER of the other
+#     two, so nothing in TypeScript could see them at all.
+# Neither shows up until somebody runs db:generate, and that person is never the one who caused it.
+#
+# Only the tables the schema files actually MODEL are compared. The eight other workflow_* tables
+# are hand-authored SQL that drizzle was deliberately never told about, and it emits nothing for
+# what it does not know — counting them would make this check fail for ever on purpose.
+SCHEMACOLS=$( (cd "$(dirname "$0")/.." && corepack pnpm exec tsx scripts/schema-columns.ts workflow_) 2>/dev/null )
+DBCOLS=$(psql "select 'db'||chr(9)||table_name||'.'||column_name from information_schema.columns
+               where table_schema='public' and table_name like 'workflow\\_%'")
+ok "read|0|0" "$(printf '%s\n%s\n' "$SCHEMACOLS" "$DBCOLS" | $PY -c "
+import sys
+from collections import defaultdict
+by = defaultdict(set)
+for line in sys.stdin:
+    line = line.rstrip('\n')
+    if not line: continue
+    src, col = line.split('\t')
+    by[src].add(col)
+modelled = {c.split('.')[0] for c in by['schema']}
+db = {c for c in by['db'] if c.split('.')[0] in modelled}
+# The first field is not decoration. Two empty sets have an empty symmetric difference, so a run
+# where tsx failed to start would report 0|0 and pass while comparing nothing at all — the exact
+# shape of green-for-no-reason this check exists to refuse. The other two are separate numbers so a
+# failure says WHICH pair disagrees rather than only that something does.
+print(('read' if by['schema'] and by['snapshot'] and db else 'NOTHING-READ')
+      + '|' + str(len(by['schema'] ^ db)) + '|' + str(len(by['schema'] ^ by['snapshot'])))")" \
+  "the schema files, the newest snapshot and the database agree on the workflow tables' columns"
+
 # ── who may make the move (0048) ────────────────────────────────────────────────────────────────
 # Every status endpoint here is platform-staff-only and the seeded admin is super_admin, who is
 # break-glass BY DESIGN. So a rule restricting an arrow can only ever be observed to bite against a
@@ -186,6 +223,157 @@ curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$FID3/graph" -d '
 ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$FID3/activate" | $PY -c "
 import sys,json;d=json.load(sys.stdin);print(1 if 'nobody in this workspace holds' in str(d.get('message','')) else 0)")" \
   "activation refuses a step owned by a role nobody holds"
+
+# ── A ROLE THAT DOES NOT EXIST IS REFUSED WHERE IT IS WRITTEN (0067) ────────────────────────────
+#
+# `allowed_roles` used to be validated by nothing at all — zod took any string up to 40 characters —
+# so "brnach_manager" saved, activated, and then matched NOBODY, because effectiveRoles returns the
+# roles people really hold. The arrow became a button that did nothing for every user in the
+# workspace except a super_admin, who holds every role by construction and therefore never saw it.
+# There was no error at save, no warning at activation and nothing at run time connecting the
+# stalled order to the misspelt word; it was found when an order stopped.
+#
+# It is now refused at SAVE, next to the unknown-action and unknown-gate checks that were already
+# there, and the refusal has to be USEFUL — say the value, say which arrow, and say what was
+# probably meant.
+saidall(){ local hay="$1"; shift; $PY -c "
+import sys
+hay = sys.argv[1]
+print(1 if all(n in hay for n in sys.argv[2:]) else 0)" "$hay" "$@"; }
+
+RFID=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-rolevocab","nameAr":"مفردات الأدوار","nameEn":"Role vocabulary","isDefault":false}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+# echoes the server's refusal, or '' when the graph was accepted
+rsave(){ curl -s "${AR[@]}" -X PUT "$B/api/admin/workflows/$RFID/graph" -d "$1" \
+  | $PY -c "import sys,json;print(str(json.load(sys.stdin).get('message','')))"; }
+
+ok 1 "$(saidall "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","allowedRoles":["brnach_manager"]}]}')" \
+  "brnach_manager" "'new_rfq' → 'priced'" "did you mean 'branch_manager'")" \
+  "a misspelt role on an arrow is refused at save, naming the value, the arrow and the near miss"
+
+ok 1 "$(saidall "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100,"ownerRoles":["srvice_advisor"]},
+          {"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"}]}')" \
+  "step 'new_rfq'" "srvice_advisor" "did you mean 'service_advisor'")" \
+  "and so is a misspelt OWNER role, which used to be caught only at activation and only if non-terminal"
+
+# A TERMINAL step is the case the old indirect catch missed entirely: assertActivatable skips the
+# holder check for terminals, so a typo there survived activation and reached run time.
+ok 1 "$(saidall "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},
+          {"status":"priced","isTerminal":true,"x":340,"y":100,"ownerRoles":["brnach_manager"]}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"}]}')" \
+  "step 'priced'" "brnach_manager")" \
+  "including on a TERMINAL step, which the activation-time holder check deliberately skips"
+
+# The near miss is the point of the suggestion, so it must not be offered for something that is not
+# one — a hint pointing at an unrelated role would be worse than none.
+ok 1 "$(saidall "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","allowedRoles":["whoever signs it off"]}]}')" \
+  "whoever signs it off" "which is not a role.")" \
+  "a value that is nothing like a role is refused with no invented suggestion"
+ok 0 "$(saidall "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","allowedRoles":["whoever signs it off"]}]}')" \
+  "did you mean")" \
+  "and the message says 'did you mean' only when it really means it"
+
+# The check must not refuse correct configurations, which is the failure mode of every new
+# validation. A real role from EITHER enum saves cleanly.
+ok "" "$(rsave '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100,"ownerRoles":["service_advisor"]},
+          {"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price","allowedRoles":["finance_manager","branch_manager"]}]}')" \
+  "a graph naming real roles from both enums saves with no complaint"
+
+# WHAT THE PICKER OFFERS MUST BE WHAT THE SAVE ACCEPTS. The canvas read `membership_role` alone, so
+# the two platform-only roles could not be chosen on the screen at all — while the guard would have
+# honoured either. If these two lists ever diverge again, one of them is lying.
+ok 0 "$(psql "select count(*) from (
+                select unnest(enum_range(null::membership_role))::text
+                union select unnest(enum_range(null::platform_role))::text) v(code)
+              where code not in (select jsonb_array_elements_text('$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" \
+                | $PY -c "import sys,json;print(json.dumps(json.load(sys.stdin)['roles']))")'::jsonb))")" \
+  "the role list the canvas is given is exactly the two database role enums, unioned"
+
+psql "delete from workflow_flows where flow_key='smoke-rolevocab'" > /dev/null
+
+# ── A HOLDER IS ANYBODY WHO CAN ACT, NOT ANYBODY IN tenant_memberships (0067) ───────────────────
+#
+# assertActivatable counted tenant_memberships alone while effectiveRoles unions platform_members,
+# so a step owned by finance_manager or pricing_supervisor — roles NO workspace membership can hold,
+# because they exist only in platform_role — was reported as having zero holders and REFUSED. The
+# admin was told to hire for a role the people who would work that step already had.
+#
+# rolecheck@qparts.local above is a platform member. Give it the platform-only role and the count
+# must find it.
+psql "insert into users (email, full_name, password_hash, is_active)
+      values ('holdercheck@qparts.local','Holder Check','$HASH',true)
+      on conflict (email) do update set is_active=true;
+      insert into platform_members (user_id, role, is_active)
+      select id,'finance_manager',true from users where email='holdercheck@qparts.local'
+      on conflict do nothing" > /dev/null
+
+ok 1 "$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" | $PY -c "
+import sys,json;print(1 if json.load(sys.stdin)['holders'].get('finance_manager',0) >= 1 else 0)")" \
+  "a role only platform staff hold is counted as having holders"
+ok 0 "$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" | $PY -c "
+import sys,json;print(json.load(sys.stdin)['holders'].get('pricing_supervisor',0))")" \
+  "and a role genuinely nobody holds still counts zero — the check has not been softened"
+
+HFID=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows" \
+  -d '{"flowKey":"smoke-holders","nameAr":"حائزون","nameEn":"Holders","isDefault":false}' \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+curl -s -o /dev/null "${AR[@]}" -X PUT "$B/api/admin/workflows/$HFID/graph" -d '{"selectionCondition":{},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100,"ownerRoles":["finance_manager"]},
+          {"status":"priced","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Price"}]}'
+ok active "$(curl -s -o /dev/null "${AR[@]}" -X POST "$B/api/admin/workflows/$HFID/activate"; \
+  psql "select status from workflow_flows where id='$HFID'")" \
+  "activation ACCEPTS a non-terminal step owned by a role only platform staff hold"
+
+# …and the same flow with a role nobody holds is still refused, so the fix widened the count rather
+# than removing the check. Both triggers off for the rewind: workflow_flow_freeze refuses
+# active → draft (status moves forward only) and workflow_child_freeze refuses any change to
+# owner_roles on a non-draft flow — which is exactly the protection being tested elsewhere.
+psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      update workflow_flows set status='draft' where id='$HFID';
+      update workflow_steps set owner_roles='[\"pricing_supervisor\"]'::jsonb
+        where flow_id='$HFID' and is_entry;
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze" > /dev/null
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$HFID/activate" | $PY -c "
+import sys,json;print(1 if 'nobody in this workspace holds' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "and still refuses one owned by a role nobody holds anywhere"
+
+# THE FOUR COUNTING SITES MUST AGREE, which is the whole reason they now share one definition. The
+# canvas catalog and the Pages projection are the two a person reads; assertActivatable is the one
+# that refuses. A number that differs between them is a screen contradicting a refusal.
+ok 1 "$($PY -c "
+import json,sys
+cat = json.loads(sys.argv[1]); proj = json.loads(sys.argv[2])
+print(1 if cat.get('finance_manager') == proj.get('finance_manager') and cat.get('finance_manager', 0) >= 1 else 0)" \
+  "$(curl -s "${AR[@]}" "$B/api/admin/workflows/catalog" | $PY -c "import sys,json;print(json.dumps(json.load(sys.stdin)['holders']))")" \
+  "$(curl -s "${AR[@]}" "$B/api/admin/workflows/page-view" | $PY -c "import sys,json;print(json.dumps(json.load(sys.stdin)['holders']))")")" \
+  "the canvas catalog and the Pages screen report the same head-count for that role"
+
+psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps disable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions disable trigger trg_workflow_transitions_freeze;
+      delete from workflow_transitions where flow_id='$HFID';
+      delete from workflow_steps where flow_id='$HFID';
+      delete from workflow_flows where id='$HFID';
+      alter table workflow_flows enable trigger trg_workflow_flows_freeze;
+      alter table workflow_steps enable trigger trg_workflow_steps_freeze;
+      alter table workflow_transitions enable trigger trg_workflow_transitions_freeze;
+      delete from platform_members where user_id in (select id from users where email='holdercheck@qparts.local');
+      delete from users where email='holdercheck@qparts.local'" > /dev/null
 
 wfclean
 psql "delete from status_logs;

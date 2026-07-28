@@ -1,0 +1,53 @@
+-- 0067_snapshot_sync — INTENTIONAL NO-OP (same pattern as 0035_snapshot_sync and 0044_snapshot_sync).
+--
+-- Purpose: refresh drizzle's snapshot so a future `drizzle-kit generate` diffs against the CURRENT
+-- schema. The chain had stalled at meta/0047_snapshot.json while 0048-0066 were hand-written (the
+-- whole workflow engine: governance, custody, gates, approvals, auto-advance, actions, holds, the
+-- action library, in-app notifications, removals, digests, the webhook outbox, flow selection and
+-- crossings). Left stale, the next generate emitted 23 bare `ADD COLUMN`s for columns that already
+-- exist — none guarded by IF NOT EXISTS, so a hard error on the first one, on every database.
+--
+-- IT IS ALSO A SCHEMA-FILE REPAIR, WHICH THE TWO EARLIER SYNCS WERE NOT. Seventeen columns existed
+-- in the database and in NO schema file, so they were invisible to drizzle in both directions: they
+-- got no types, `db:studio` and `push` read them as unknown, and — worst — a future migration
+-- generated for this table would have been written against a table seventeen columns out of date.
+-- They are declared now, in drizzle/schema/{workflow,crosscutting,approvals}.ts:
+--   workflow_transitions   handoff (0049), gates (0051), auto_advance + auto_once (0055), actions (0056)
+--   workflow_record_state  assignee_user_id, assignee_role, step_entered_at, due_at (0049)
+--   status_logs            override_reason + overridden_gates (0051), auto_advanced (0059), flow_id (0066)
+--   approval_requests      transition_key + consumed_at (0052), requested_by_name (0053), flow_id (0066)
+-- …together with the ten indexes and four foreign keys those migrations created alongside them.
+--
+-- VERIFIED BEFORE EMPTYING — every statement drizzle wanted to emit is already applied in the live
+-- database, checked statement by statement rather than by eye:
+--   * 1 CREATE TABLE (in_app_notifications): table present, and its 13 columns are exactly the 13
+--     the schema file declares — no column on either side the other does not have.
+--   * 23 ADD COLUMN: each present, with the same type, the same nullability and the same default.
+--   * 4 ADD CONSTRAINT … FOREIGN KEY: each present under that exact name. Three of them had to be
+--     re-declared with an explicit `name:` to get there — 0049 and 0061 were hand-written, so
+--     Postgres named them `…_fkey` while an inline `.references()` makes drizzle call them
+--     `…_users_id_fk`. Drizzle wraps each FK in `EXCEPTION WHEN duplicate_object THEN null`, and a
+--     DIFFERENT name is not a duplicate, so the mismatch would have added a second, redundant
+--     foreign key to the same column rather than being skipped.
+--   * 10 CREATE INDEX: each built under a probe name inside a rolled-back transaction and compared
+--     with `pg_get_indexdef` against the live index — byte-identical, name aside, all ten. That is
+--     what caught `status_logs_recent_idx` / `in_app_notifications_inbox_idx`, where drizzle spells
+--     `.desc()` as `DESC NULLS LAST` while the hand-written SQL wrote a bare `DESC`, which Postgres
+--     stores as `DESC NULLS FIRST`. Same index, different definition — and the difference is
+--     precisely what a later generate would have offered to "fix" by rebuilding it.
+--
+-- ZERO DROPs, zero ALTER COLUMN, zero unexplained statements of any kind: the diff was additions
+-- only, and every addition was already there. The schema .ts and the live DB are in lockstep.
+--
+-- NOT DECLARED, AND DELIBERATELY: `approval_requests_open_uq` (NULLS NOT DISTINCT on a partial
+-- unique INDEX — drizzle-orm 0.36 offers that clause only on a unique CONSTRAINT, which is why 0026
+-- is hand-written too), every table CHECK constraint, and the eight `workflow_*` tables written
+-- entirely in hand-authored SQL. Those are not drift: drizzle was never told about them on purpose,
+-- and it emits nothing for what it does not know.
+--
+-- `guard-check.sh` now asserts the three-way agreement this migration restores — schema .ts,
+-- newest snapshot, live database — so the next twenty hand-written migrations cannot re-open the
+-- gap silently.
+--
+-- The snapshot is the deliverable of this migration, not DDL.
+SELECT 1;

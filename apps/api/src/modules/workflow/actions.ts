@@ -4,6 +4,7 @@ import type { Tx } from "../../db/db.service.js";
 import type { Environment } from "../../common/env-guards.js";
 import type { NotificationsService } from "../notifications/notifications.service.js";
 import { validateWebhookUrl } from "./webhook-url.js";
+import { holdersOfAny } from "./roles.js";
 
 /**
  * WHAT A MOVE DOES — QNEW-90 items 3 and 4.
@@ -500,10 +501,12 @@ export const ACTIONS: ActionDef[] = [
           limit 1`)) as Array<{ owner_roles: string[] | null }>;
         const roles = (step?.owner_roles ?? []) as string[];
         if (roles.length) {
-          const holders = (await tx.execute(sql`
-            select user_id from tenant_memberships
-            where tenant_id = ${ctx.tenantId}::uuid and is_active
-              and role::text in (${sql.join(roles.map((r) => sql`${r}`), sql`, `)})`)) as Array<{ user_id: string }>;
+          // "Who owns this step" is asked in five places and must have ONE answer — roles.ts. Reading
+          // tenant_memberships alone told nobody at all when the destination is owned by a role only
+          // platform staff hold, and the run log would have said the action ran fine.
+          const holders = (await tx.execute(
+            holdersOfAny(sql`${ctx.tenantId}::uuid`, roles),
+          )) as Array<{ user_id: string }>;
           for (const h of holders)
             if (!recipients.has(h.user_id)) recipients.set(h.user_id, "responsible for this step");
         }

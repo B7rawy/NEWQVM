@@ -227,7 +227,7 @@ ok f "…prosrc like '%NEW.pages%'…"    "but NOT pages — a mis-routed status
 
 ### `workflow_steps.owner_roles` — who is responsible while a record sits here
 
-A jsonb array of `membership_role` codes. `[]` means "no opinion" — grants nobody, restricts nobody. `0048:18-20` calls this **permissive until configured**: a workspace that never opens the workflow screen sees no behaviour change at all.
+A jsonb array of role codes from `WORKFLOW_ROLES` (`roles.ts`) — the union of `membership_role` and `platform_role`, refused at save if it names anything else (§12). `[]` means "no opinion" — grants nobody, restricts nobody. `0048:18-20` calls this **permissive until configured**: a workspace that never opens the workflow screen sees no behaviour change at all.
 
 ### `workflow_transitions.allowed_roles` — who may fire this one arrow
 
@@ -332,7 +332,7 @@ The guard runs **per record**, and each iteration issues 4–6 queries (bound fl
 
 | Route | Notes |
 |---|---|
-| `GET /catalog` | The governed vocabulary the canvas and the AI may reference: active item + vendor statuses, `enum_range(membership_role)`, `ROUTABLE_PAGES`, and a **holders count per role** in this workspace (`:111-132`) |
+| `GET /catalog` | The governed vocabulary the canvas and the AI may reference: active item + vendor statuses, `WORKFLOW_ROLES` (both role enums unioned — `roles.ts`), `ROUTABLE_PAGES`, and a **holders count per role**, counted the same way `effectiveRoles` counts (§12) |
 | `GET /` , `GET /:id` | Scoped to tenant **and** environment |
 | `GET /my-work` | Declared **before** `@Get(":id")` so the literal wins routing (`controller:48-49`) |
 | `POST /records/:entity/:id/claim` | Claim or hand over |
@@ -942,29 +942,119 @@ correlating each row to its own tenant, one workspace's flow would filter anothe
 
 Its header (`pages.ts:11-16`) says "activation warns about them" for unwired screens, and that `personas` "drives ordering in the picker and lets the activation check ask the useful question". Neither exists: `assertActivatable` never looks at `pages`, and `personas` / `entities` are read by nothing — they are returned in the catalog payload and typed in the canvas (`WorkflowCanvas.tsx:35`) but never used. The unwired warning is a canvas-only hint (`:876-887`). `pageByKey` is imported by `workflow.service.ts:7` and never called.
 
-### `allowed_roles` is never validated against the role enum
+### ~~`allowed_roles` is never validated against the role enum~~ — FIXED (0067)
 
-`validateGraph` (`:722-752`) checks structure — duplicate steps, exactly one entry, both endpoints of every transition existing, no self-loop, no two transitions sharing a `(from, to, priority)` — and then page keys against `isPageKey`. It never validates role strings, and zod accepts any `string().max(40)` for `ownerRoles` and `allowedRoles`. A typo in `owner_roles` is caught indirectly at activation (any nonexistent role has zero holders → refused, unless the step is terminal). A typo in a transition's `allowedRoles` is caught by nothing, and at runtime silently blocks everyone except a `super_admin`.
+`validateGraph` checks role strings now, in the same pass and the same idiom as the unknown-action
+and unknown-gate keys beside it, and it checks `ownerRoles` on a step as well as `allowedRoles` on
+an arrow.
 
-### Holder counts read only `tenant_memberships`
+**Why this one was the sharpest of the three.** `allowed_roles` is the only field in the whole
+document that fails CLOSED and reports nothing. An unknown status code is refused at save; an
+unknown action, gate or condition field is refused at save; a misspelt role saved, activated and
+then matched NOBODY, because `effectiveRoles` returns the roles people really hold and nobody holds
+"brnach_manager". The arrow became a button that did nothing for every user in the workspace except
+a `super_admin` — who holds every role by construction and therefore never saw it. It was found when
+an order stopped. `owner_roles` was caught only indirectly and only sometimes: a nonexistent role
+has zero holders so activation refused the step, unless the step was terminal (that check skips
+terminals), and the message talked about hiring rather than spelling.
 
-`catalog` (`:119-123`), the assist prompt (`:517-521`), the auto-assign lookup (`status.service.ts:287-291`) and `assertActivatable`'s holder map (`:806-813`) all count `tenant_memberships` alone. `effectiveRoles` at runtime unions `platform_members`. A step owned by a role held only by platform staff will therefore be reported as having 0 holders and refused at activation, even though those users could in fact act on it.
+**The vocabulary is `roles.ts`**, and it is the union of BOTH database enums —
+`tenant_memberships.role` is `membership_role`, `platform_members.role` is `platform_role`, and they
+differ at both ends: `finance_manager` / `pricing_supervisor` exist only on the platform side, the
+company and vendor roles only on the workspace side. `effectiveRoles` reads both, so both are legal
+in a flow. It is derived from the `pgEnum` declarations in `drizzle/schema/enums.ts` rather than
+retyped, and `guard-check.sh` asserts the list the canvas is handed is exactly `enum_range` of the
+two types unioned — so a third, drifting copy cannot appear.
 
-### Schema drift: the Drizzle schema, the snapshot and the database all disagree
+**The refusal names the value, the arrow, and the near miss.** Levenshtein ≤ 3, compared
+lower-cased: wide enough for a transposition, a doubled letter, a hyphen for an underscore or a
+stray capital, narrower than the distance between two genuine role names (the closest pair is
+`branch_manager` / `finance_manager` at 4). Above that there is no suggestion at all, because a hint
+pointing at an unrelated role is worse than none:
 
-Verified against the running Postgres container and `apps/api/drizzle/migrations/meta/0047_snapshot.json` (the newest snapshot — `0048` and `0049` were hand-written SQL and produced none).
+> `'new_rfq' → 'priced'` may only be taken by `'brnach_manager'`, which is not a role — did you mean
+> `'branch_manager'`? Nobody can hold a role that does not exist, so this move would be refused for
+> everyone.
 
-| Columns | In DB | In `workflow.ts` | In snapshot |
-|---|---|---|---|
-| `workflow_steps.pages`, `.owner_roles` | yes | yes | **no** |
-| `workflow_record_state.assignee_user_id`, `.assignee_role`, `.step_entered_at`, `.due_at`; `workflow_transitions.handoff` | yes | **no** | **no** |
+`catalog()` also stopped offering `membership_role` alone. The picker showed ten of the twelve roles
+while the guard would have honoured any of them, so the two platform-only roles were unpickable on
+the very screen that authors the rule. What the picker offers is now exactly what the save accepts.
 
-Two distinct consequences:
+### ~~Holder counts read only `tenant_memberships`~~ — FIXED (0067)
 
-- The five `0049` columns are invisible to Drizzle. They are read and written only through raw SQL (`status.service.ts:271-311`, `workflow.service.ts:158-221`, `:271`, `:348-467`) and get no types. Because they are absent from *both* the `.ts` and the snapshot, `drizzle-kit generate` will not emit a `DROP COLUMN` for them — but any tool that diffs against the live database (`drizzle-kit push`, `db:studio`) will treat them as unknown.
-- `pages` and `owner_roles` are in the `.ts` but not the snapshot, so the next `pnpm db:generate` will emit `ADD COLUMN` statements for columns that already exist. That migration will fail on apply unless it is hand-edited — the same trap `0047:99-100` documents for the `0046` columns.
+There is one definition of "who holds a role here" and it lives in `roles.ts`: `roleHolders()`, the
+`union` of this workspace's active memberships and every active platform member. Eight sites read
+it — `catalog`, the Pages projection, the assist prompt, `assertActivatable`, both auto-assign
+lookups in `status.service.ts`, the `notify` action's step-owner audience, and `effectiveRoles`
+itself, which is the one that decides whether a person may actually move a record.
 
-**Reconcile the schema file and regenerate a snapshot before anyone runs `db:generate`.**
+That last inclusion is the point of the fix rather than a tidy-up. The four counting sites disagreed
+with `effectiveRoles`, so **the engine refused to publish configurations it would then have enforced
+correctly**: a step owned by `finance_manager` or `pricing_supervisor` — roles no workspace
+membership can hold, because they exist only in `platform_role` — was reported as having zero
+holders and refused at activation, and the message told the admin to hire for a role the people who
+would work that step already had. Making `effectiveRoles` a reader of the same definition is what
+makes a future disagreement impossible rather than unlikely.
+
+`union`, not `union all`: somebody who is both a workspace member and a platform member under the
+same role name is one person, and counting them twice would turn "exactly one candidate" — the test
+the auto-assign uses — into two.
+
+The check itself is unchanged in strength, and `guard-check.sh` asserts both halves: activation
+ACCEPTS a non-terminal step owned by a role only platform staff hold, and still REFUSES one owned by
+a role nobody holds anywhere.
+
+### ~~Schema drift: the Drizzle schema, the snapshot and the database all disagree~~ — FIXED (0067)
+
+`0067_snapshot_sync.sql` is an intentional no-op (`SELECT 1;`) whose deliverable is
+`meta/0067_snapshot.json`, the same pattern as `0035` and `0044`. The acceptance test is empirical:
+`corepack pnpm db:generate` now prints **"No schema changes, nothing to migrate"** and writes no
+file at all.
+
+It was worse than the earlier two syncs, because it was drift in BOTH directions:
+
+- the snapshot chain had stalled at `0047` while `0048`–`0066` were hand-written, so `generate`
+  emitted **23 bare `ADD COLUMN`s for columns that already existed** — none guarded by
+  `IF NOT EXISTS`, so a hard error on the first statement, on every database;
+- **17 columns existed in the database and in no schema file at all**, so drizzle could not see them
+  in either direction: no types, unknown to `push` and `db:studio`, and any future migration for
+  those tables would have been generated against a table 17 columns out of date. They are declared
+  now — `workflow_transitions.handoff/gates/auto_advance/auto_once/actions`,
+  `workflow_record_state.assignee_user_id/assignee_role/step_entered_at/due_at`,
+  `status_logs.override_reason/overridden_gates/auto_advanced/flow_id`, and
+  `approval_requests.transition_key/consumed_at/requested_by_name/flow_id` — together with the ten
+  indexes and four foreign keys those migrations created alongside them.
+
+Everything the diff wanted was checked against the live database statement by statement before the
+file was emptied, and the migration header records it: 1 `CREATE TABLE` whose 13 columns match
+exactly, 23 `ADD COLUMN`s each present with the same type, nullability and default, 4 foreign keys
+present under exactly those names, and 10 `CREATE INDEX`es each rebuilt under a probe name inside a
+rolled-back transaction and compared with `pg_get_indexdef` — byte-identical, name aside, all ten.
+**Zero `DROP`s, zero `ALTER COLUMN`, nothing unexplained.**
+
+Two things that only the byte-level comparison would have caught, and both are the kind of
+difference that reads as noise until it rebuilds an index or duplicates a constraint on a live
+database:
+
+- drizzle spells `.desc()` as `DESC NULLS LAST`, while the hand-written SQL wrote a bare `DESC`,
+  which Postgres stores as `DESC NULLS FIRST`. Same index, different *definition* — and the
+  difference is exactly what a later `generate` would offer to "fix" by rebuilding it.
+- three foreign keys were created by hand-written migrations, so Postgres named them `…_fkey`, while
+  an inline `.references()` makes drizzle call them `…_users_id_fk`. Drizzle wraps each FK in
+  `EXCEPTION WHEN duplicate_object THEN null`, and a *different* name is not a duplicate — so the
+  mismatch would have added a second, redundant foreign key to the same column rather than being
+  skipped. They are declared with an explicit `name:` now.
+
+Deliberately still not in the `.ts`, and none of it is drift: `approval_requests_open_uq`
+(`NULLS NOT DISTINCT` on a partial unique INDEX — drizzle-orm 0.36 offers that clause only on a
+unique CONSTRAINT, which is why `0026` is hand-written too), every table `CHECK`, and the eight
+`workflow_*` tables written entirely in hand-authored SQL. Drizzle emits nothing for what it was
+never told about.
+
+`guard-check.sh` now asserts the three-way agreement — schema `.ts`, newest snapshot, live database
+— over the workflow tables drizzle models, using `apps/api/scripts/schema-columns.ts`. The
+assertion's first field is `read`, not a number, so a run where the helper failed to start reports
+`NOTHING-READ` instead of comparing two empty sets and passing.
 
 ### `status.service.ts` `history()` only resolves item-domain codes
 
@@ -1002,6 +1092,9 @@ completely separate from Live, and a workspace is not given the standard flow he
 3. `apps/api/src/common/status.service.ts` — the single write path, then the guard at `:170`.
 4. `apps/api/src/modules/workflow/workflow.service.ts` — authoring, `assist` at `:499`, `assertActivatable` at `:758`.
 5. `apps/api/src/modules/workflow/routing.ts` and `pages.ts` — routing and the safety rule.
+5a. `apps/api/src/modules/workflow/roles.ts` — the role vocabulary a flow may name, and the ONE
+    definition of who holds one. Short, and it is the answer to both "why was my arrow dead" and
+    "why did activation say nobody holds a role my colleagues have".
 5b. `apps/api/src/modules/workflow/template.ts` and `template.service.ts` — the flow every workspace
     arrives with, and the rules for handing it out and putting it back.
 6. `apps/web/src/pages/admin/WorkflowCanvas.tsx` — the one-document shape as the client sees it.

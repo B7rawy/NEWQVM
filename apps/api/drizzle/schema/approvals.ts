@@ -1,4 +1,4 @@
-import { boolean, integer, pgTable, text, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, integer, pgTable, text, timestamp, uuid, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { audit, isActive, pk } from "./_shared";
 import { approvalActionType, approvalLevelMode, approvalStatus, environmentType } from "./enums";
@@ -70,6 +70,27 @@ export const approvalRequests = pgTable(
     requestedBy: uuid("requested_by").references(() => users.id),
     currentLevel: integer("current_level").notNull().default(1),
     overallStatus: approvalStatus("overall_status").notNull().default("pending"),
+    /**
+     * ── THE WORKFLOW ENGINE'S HALF OF THIS TABLE, DECLARED HERE BY 0067 ───────────────────────
+     *
+     * `transition_key` and `consumed_at` came with 0052, `requested_by_name` with 0053 and
+     * `flow_id` with 0066, all as hand-written SQL that never came back to this file. Drizzle
+     * therefore modelled a four-column-smaller table than the one it manages.
+     */
+    /** `from>to` — which ARROW the signature is for. Null on a request nothing in a flow raised. */
+    transitionKey: text("transition_key"),
+    /** Spent when the approved move is performed, so one signature cannot authorise two moves. */
+    consumedAt: timestamp("consumed_at", { withTimezone: true }),
+    /** The requester's name AS IT WAS, so the inbox reads correctly after they leave. */
+    requestedByName: text("requested_by_name"),
+    /**
+     * WHICH FLOW ASKED (0066). `transition_key` carries no flow, so once one record can execute two
+     * flows, a signature granted for `priced>confirmed` under the standard flow was spendable by an
+     * identically-named arrow under insurance. This column, folded into the two indexes below with
+     * NULLS NOT DISTINCT, is what keeps them apart; null is the only correct reading of a pre-0066
+     * row and matches on purpose.
+     */
+    flowId: uuid("flow_id"),
     ...audit,
   },
   (t) => [
@@ -79,6 +100,20 @@ export const approvalRequests = pgTable(
     index("approval_requests_requested_by_idx").on(t.requestedBy),
     // one OPEN request per entity (0037) — the service checks-then-inserts; 23505 → 409
     uniqueIndex("approval_requests_pending_uq").on(t.tenantId, t.entityType, t.entityId).where(sql`overall_status = 'pending'`),
+    index("approval_requests_pending_idx")
+      .on(t.tenantId, t.environment, t.overallStatus)
+      .where(sql`overall_status = 'pending'`),
+    // the lookup that answers "is this move already signed off" on every guarded transition
+    index("approval_requests_granted_idx")
+      .on(t.tenantId, t.environment, t.entityId, t.flowId, t.transitionKey)
+      .where(sql`overall_status = 'approved' and consumed_at is null`),
+    // NOT DECLARED HERE: approval_requests_open_uq, the partial unique that keeps one open request
+    // per (entity, flow, arrow). It is `NULLS NOT DISTINCT`, and drizzle-orm 0.36 offers that only
+    // on a unique CONSTRAINT, never on a partial unique INDEX — the same limitation that made 0026
+    // hand-written SQL. Declaring it without the clause would be worse than leaving it out: the .ts
+    // would then describe an index that treats two pre-0066 rows (flow_id null) as distinct, which
+    // is the collision the index exists to prevent. It lives in 0052/0066 and stays there.
+
   ],
 );
 

@@ -470,6 +470,13 @@
       "when": 1785001415122,
       "tag": "0066_workflow_crossings",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1785261372114,
+      "tag": "0067_snapshot_sync",
+      "breakpoints": true
     }
   ]
 }
