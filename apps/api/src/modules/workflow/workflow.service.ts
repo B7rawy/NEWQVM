@@ -1793,7 +1793,7 @@ export class WorkflowService {
     }
     if (errs.length) throw new BadRequestException(errs.join("; "));
 
-    await this.assertCrossingsResolve(tx, id, edges);
+    const crossingWarns = await this.assertCrossingsResolve(tx, id, edges);
 
     // An owner role with no holders is not a configuration opinion — it is a step no human can move
     // a record out of. Activation is the last cheap moment to say so; after it, real orders stall.
@@ -1815,7 +1815,13 @@ export class WorkflowService {
         );
     }
 
-    return WorkflowService.crossingWarnings(flow.entry_mode ?? "selected", steps, edges);
+    // A draft crossing target is worth telling the admin about, and it is the reason this publish
+    // was allowed at all — see assertCrossingsResolve. It rides the same channel as every other
+    // activation warning rather than a second one nobody reads.
+    return [
+      ...crossingWarns,
+      ...WorkflowService.crossingWarnings(flow.entry_mode ?? "selected", steps, edges),
+    ];
   }
 
   /**
@@ -1868,31 +1874,62 @@ export class WorkflowService {
     const self = (await tx.execute(sql`
       select flow_key, tenant_id, environment, status_domain from workflow_flows where id = ${id}::uuid`))[0] as
       { flow_key: string; tenant_id: string; environment: string; status_domain: string } | undefined;
-    if (!self) return;
+    if (!self) return [];
 
     const errs: string[] = [];
+    /** Things worth saying that are not reasons to refuse the publish. */
+    const warns: string[] = [];
 
     // ── FORWARD: everywhere this flow sends a record, can it actually land? ──────────────────────
     const outbound = edges.filter((e) => e.to_flow_key);
     for (const e of [...new Map(outbound.map((e) => [`${e.to_flow_key}:${e.to_step_id}`, e])).values()]) {
+      // THE TARGET MAY STILL BE A DRAFT, AND REFUSING THAT MADE THE FEATURE UNBUILDABLE.
+      //
+      // This asked for an ACTIVE target and raised an error otherwise. Two flows that hand records
+      // to each other — an order flow and the insurance flow it detours through, which is the case
+      // this feature was asked for — then deadlocked: A will not activate until B is live, and B
+      // will not activate until A is live. There is no order in which the pair can be published,
+      // so the round trip could not be configured at all.
+      //
+      // A draft target is now a WARNING. It is a real thing to say — a record reaching that arrow
+      // before the other flow is published is held, by the run-time check in status.service.ts —
+      // but it is the admin's own half-finished work in front of them, not a reason to refuse the
+      // publish that makes finishing it possible. Publish B (warned about A), then publish A
+      // (clean, B is live), and the pair is up. A key that names NO flow at all is still an error:
+      // that is a typo, and no amount of publishing will resolve it.
       const landing = (await tx.execute(sql`
         select coalesce(i.code, v.code) as code,
                (select f2.id from workflow_flows f2
                  where f2.tenant_id = ${self.tenant_id}::uuid and f2.environment = ${self.environment}::environment_type
                    and f2.status_domain = ${self.status_domain}::status_domain
-                   and f2.flow_key = ${e.to_flow_key} and f2.status = 'active') as target_id
+                   and f2.flow_key = ${e.to_flow_key} and f2.status <> 'retired'
+                 order by case f2.status when 'active' then 0 else 1 end, f2.version desc
+                 limit 1) as target_id,
+               (select f2.status::text from workflow_flows f2
+                 where f2.tenant_id = ${self.tenant_id}::uuid and f2.environment = ${self.environment}::environment_type
+                   and f2.status_domain = ${self.status_domain}::status_domain
+                   and f2.flow_key = ${e.to_flow_key} and f2.status <> 'retired'
+                 order by case f2.status when 'active' then 0 else 1 end, f2.version desc
+                 limit 1) as target_status
         from workflow_steps s
         left join item_statuses i on i.id = s.item_status_id
         left join vendor_statuses v on v.id = s.vendor_status_id
-        where s.id = ${e.to_step_id}::uuid`))[0] as { code: string; target_id: string | null } | undefined;
+        where s.id = ${e.to_step_id}::uuid`))[0] as
+        { code: string; target_id: string | null; target_status: string | null } | undefined;
       if (!landing) continue;
 
       if (!landing.target_id) {
         errs.push(
-          `'${landing.code}' hands the record to the '${e.to_flow_key}' workflow, which has no ` +
-            `active version in this workspace — publish it first`,
+          `'${landing.code}' hands the record to a workflow called '${e.to_flow_key}', and this ` +
+            `workspace has no such workflow — check the name`,
         );
         continue;
+      }
+      if (landing.target_status !== "active") {
+        warns.push(
+          `'${landing.code}' hands the record to the '${e.to_flow_key}' workflow, which is still a ` +
+            `draft. Records reaching this point will be held until you publish it.`,
+        );
       }
       const has = (await tx.execute(sql`
         select 1 from workflow_steps s
@@ -1940,5 +1977,6 @@ export class WorkflowService {
     }
 
     if (errs.length) throw new BadRequestException(errs.join("; "));
+    return warns;
   }
 }

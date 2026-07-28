@@ -2723,9 +2723,42 @@ XFWD=$(xdraft forward '{"selectionCondition":{"all":[{"field":"order_type","op":
  "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","isTerminal":true,"x":340,"y":100}],
  "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Hand over","toFlowKey":"smoke-x-nowhere"}]}')
 ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$XFWD/activate" | $PY -c "
-import sys,json;print(1 if 'no active version' in str(json.load(sys.stdin).get('message','')) else 0)")" \
-  "FORWARD: a border into a workflow with no active version is refused at activation"
+import sys,json;print(1 if 'no such workflow' in str(json.load(sys.stdin).get('message','')) else 0)")" \
+  "FORWARD: a border naming a workflow that does not exist is refused — that is a typo, not a sequence"
 ok draft "$(psql "select status from workflow_flows where id='$XFWD'")" "…and the flow stays a draft rather than half-activating"
+
+# A DRAFT TARGET IS A WARNING, NOT A REFUSAL, AND THAT DISTINCTION IS THE WHOLE FEATURE.
+# Requiring the target to be ACTIVE deadlocked the only arrangement anybody actually wants: an order
+# flow and the flow it detours through both name each other, so A would not publish until B was live
+# and B would not publish until A was. There was no order in which the pair could go up, which meant
+# the round trip could not be configured at all. Naming a flow that does NOT EXIST is still refused —
+# no amount of publishing resolves a typo.
+# A returns to whatever step B hands back to, so A must contain it — that is a SEPARATE check and it
+# still bites; the point here is only that neither flow has to be live before the other.
+XPAIRA=$(xdraft pair-a '{"selectionCondition":{"all":[{"field":"order_type","op":"eq","value":"bulk"}]},
+ "steps":[{"status":"new_rfq","isEntry":true,"x":80,"y":100},{"status":"priced","x":340,"y":100},
+          {"status":"confirmed","isTerminal":true,"x":600,"y":100}],
+ "transitions":[{"from":"new_rfq","to":"priced","labelEn":"Out","toFlowKey":"smoke-x-pair-b"},
+   {"from":"priced","to":"confirmed","labelEn":"Finish"}]}')
+# entryMode is xdraft's FOURTH argument, not a graph field — a sub-flow created without it is an
+# ordinary 'selected' flow with no routing, and activation refuses it for a reason that has nothing
+# to do with what this section is testing.
+XPAIRB=$(xdraft pair-b '{"selectionCondition":null,
+ "steps":[{"status":"priced","isEntry":true,"x":80,"y":100},{"status":"confirmed","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"confirmed","labelEn":"Back","toFlowKey":"smoke-x-pair-a"}]}' false handoff)
+XPAIRAR=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$XPAIRA/activate")
+ok active "$(echo "$XPAIRAR" | $PY -c "
+import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "one of a mutually-referencing pair publishes while the other is still a draft"
+ok 1 "$(echo "$XPAIRAR" | $PY -c "
+import sys, json
+# the warning has to have been SAID. A silent allow is how an admin ends up with half a pair live
+# and no idea the other half is what is holding their records.
+print(1 if any('still a draft' in w for w in (json.load(sys.stdin).get('warnings') or [])) else 0)")" \
+  "…having been told the other half is not published yet"
+ok active "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$XPAIRB/activate" | $PY -c "
+import sys,json;print(json.load(sys.stdin).get('status') or 'REFUSED')")" \
+  "and the second then publishes too — the pair is up, which was impossible before"
 
 XREV=$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$XHOME4/new-version" \
   | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
