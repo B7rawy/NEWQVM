@@ -988,7 +988,17 @@ export class WorkflowService {
                exists (select 1 from workflow_flows p
                         where p.tenant_id = f.tenant_id and p.environment = f.environment
                           and p.flow_key = f.flow_key and p.status = 'active' and p.is_default
-                          and p.id <> f.id) as inherits_default
+                          and p.id <> f.id) as inherits_default,
+               -- DOES ANYTHING ACTUALLY HAND WORK HERE? A handoff flow is reached only by being
+               -- crossed into, and publishing one that nothing names is allowed — no check refuses
+               -- it, because a pair is legitimately published one at a time. But the screen then
+               -- listed it as though work arrived, which is the mirror image of the bug this whole
+               -- change fixed: a live workflow no record can ever enter, presented as working.
+               (select count(*) from workflow_transitions t
+                 join workflow_flows src on src.id = t.flow_id and src.status = 'active'
+                where t.to_flow_key = f.flow_key and src.id <> f.id
+                  and src.tenant_id = f.tenant_id and src.environment = f.environment
+                  and src.status_domain = f.status_domain)::int as handed_by_flows
         from workflow_flows f
         where f.tenant_id = ${tenantId}::uuid and f.environment = ${envOf(ctx)}
         order by f.status_domain, f.selection_priority desc, f.created_at asc, f.version desc`),
@@ -1783,6 +1793,40 @@ export class WorkflowService {
                     },
                   }
                 : {}),
+
+              // EVERYTHING ELSE THE ARROW CARRIES, for the same reason toFlowKey is here: the
+              // assistant REPLACES the graph, and zod defaults any field the model does not send —
+              // condition to {}, gates to [], autoAdvance to false, autoOnce to true. So an admin
+              // who wrote "only when the payer is insurance" on an arrow, or made a move automatic,
+              // and then asked the assistant to add a step, silently lost it. 0066 closed exactly
+              // this hole for crossings and said why: "asking the assistant to adjust anything would
+              // have it propose a graph in which every crossing had quietly vanished." The same
+              // sentence is true of every one of these, and the model is shown all of them in the
+              // current graph, so carrying them back is a matter of letting it.
+              //
+              // `actions` stays out, deliberately and unlike the rest: an action carries params the
+              // model would be inventing rather than echoing, and a library receipt names a row by
+              // uuid. It is the one field the assistant may not author, which is why saveGraph
+              // preserves it separately rather than trusting a round trip.
+              condition: {
+                type: "object",
+                description:
+                  "when this move is allowed, echoed back UNCHANGED from the current graph unless " +
+                  "the admin asked to change it. Omitting it clears it.",
+              },
+              gates: {
+                type: "array",
+                items: { type: "object" },
+                description: "rules that must hold first; echo back unchanged unless asked to change",
+              },
+              autoAdvance: {
+                type: "boolean",
+                description: "does this move happen by itself; echo back unchanged unless asked",
+              },
+              autoOnce: {
+                type: "boolean",
+                description: "if automatic, at most once per record; echo back unchanged unless asked",
+              },
             },
             required: ["from", "to"],
           },
@@ -2101,11 +2145,19 @@ export class WorkflowService {
   private static crossingWarnings(
     entryMode: string,
     steps: Array<{ id: string; code: string; is_terminal: boolean }>,
-    edges: Array<{ from_step_id: string; to_flow_key: string | null }>,
+    edges: Array<{ from_step_id: string; to_step_id: string; to_flow_key: string | null }>,
   ): string[] {
     if (entryMode !== "handoff") return [];
+    // A crossing leaves FROM a step and also lands ON one, and only the first was counted — so the
+    // hand-back arrow, which is drawn INTO a terminal step carrying to_flow_key, looked like no way
+    // out at all. Activating a correctly drawn sub-flow therefore warned that its records "stay in
+    // this workflow for good" and told the admin to draw the very arrow they had just drawn. The
+    // record never occupies that step in this flow: it leaves at the moment of the move.
     const crossesOut = new Set(edges.filter((e) => e.to_flow_key).map((e) => e.from_step_id));
-    const dead = steps.filter((s) => s.is_terminal && !crossesOut.has(s.id)).map((s) => s.code);
+    const crossesAway = new Set(edges.filter((e) => e.to_flow_key).map((e) => e.to_step_id));
+    const dead = steps
+      .filter((s) => s.is_terminal && !crossesOut.has(s.id) && !crossesAway.has(s.id))
+      .map((s) => s.code);
     if (!dead.length) return [];
     return [
       `records that reach ${dead.map((c) => `'${c}'`).join(", ")} stay in this workflow for good — ` +

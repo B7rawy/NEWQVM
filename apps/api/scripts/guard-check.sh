@@ -2555,11 +2555,24 @@ ok active "$(echo "$XINSACT" | $PY -c "import sys,json;print(json.load(sys.stdin
   "a HANDOFF flow activates with no selection condition — records reach it by being handed one"
 ok handoff "$(psql "select entry_mode from workflow_flows where id='$XINS'")" \
   "and says so in a column, rather than storing '{}' — which this codebase defines as 'matches EVERY record'"
-# Said, not enforced: a sub-flow that legitimately ends some records for ever is indistinguishable
-# from one whose way home was never drawn, and intent is not a property of a graph.
-ok 1 "$(echo "$XINSACT" | $PY -c "
+# NOT WARNED ABOUT, and that is the correction. 'cancelled' here is where the RETURN arrow lands —
+# the record leaves at the moment of that move and never occupies the step inside this flow. The
+# warning counted only the steps a crossing departs FROM, so it fired on the correctly drawn
+# hand-back arrow and told the admin to draw the very thing they had just drawn.
+ok 0 "$(echo "$XINSACT" | $PY -c "
 import sys,json;print(1 if any('stay in this workflow for good' in w for w in json.load(sys.stdin).get('warnings',[])) else 0)")" \
-  "activation WARNS about a terminal nothing hands back from — and activates anyway"
+  "a terminal that is where the hand-back arrow LANDS is not called a dead end"
+
+# The warning still has to fire where it means something: a terminal with no crossing at either end
+# really is somewhere records stop for good, and a sub-flow whose way home was never drawn looks
+# exactly like one that ends records on purpose. Said, not enforced — intent is not a property of a
+# graph, so the admin decides.
+XDEAD=$(xdraft deadend '{"steps":[{"status":"priced","isEntry":true,"x":80,"y":100},
+          {"status":"cancelled","isTerminal":true,"x":340,"y":100}],
+ "transitions":[{"from":"priced","to":"cancelled","labelEn":"Ends here"}]}' false handoff)
+ok 1 "$(curl -s "${AR[@]}" -X POST "$B/api/admin/workflows/$XDEAD/activate" | $PY -c "
+import sys,json;print(1 if any('stay in this workflow for good' in w for w in json.load(sys.stdin).get('warnings',[])) else 0)")" \
+  "…while a terminal with no crossing at either end still is — and it activates anyway"
 
 # The border is added in a NEW VERSION of the home flow, the only supported way to change a live
 # one. The order this has to happen in is itself the point: the destination must already be

@@ -38,6 +38,8 @@ interface Flow {
    * only way this screen and the engine cannot drift apart.
    */
   selection_summary: string;
+  /** How many ACTIVE flows carry an arrow that hands a record here. Zero means nothing reaches it. */
+  handed_by_flows?: number;
   steps: number;
   transitions: number;
   records: number;
@@ -374,9 +376,24 @@ export default function Workflows() {
                         Not checked when a record is raised. A move in another workflow hands work
                         here, and the way back is an arrow drawn in here.
                       </p>
+                      {/* Publishing a sub-flow nothing crosses into is allowed — a pair goes live one
+                          at a time — but describing it as receiving work would be describing traffic
+                          that does not exist. It is the mirror of the defect this screen was fixed
+                          for: a live workflow no record can enter, shown as working. */}
+                      {subs.some((s) => !s.handed_by_flows) && (
+                        <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--chip-amber-fg)]">
+                          Some of these have nothing pointing at them yet, so nothing reaches them.
+                          Draw the arrow that hands work over in the workflow it should come from.
+                        </p>
+                      )}
                       <ul className="mt-2 space-y-1.5">
                         {subs.map((s) => (
                           <li key={s.id} className="text-[12.5px] text-muted">
+                            {!s.handed_by_flows && (
+                              <span className="mr-1 rounded bg-[var(--chip-amber-bg)] px-1 py-0.5 text-[9.5px] font-bold text-[var(--chip-amber-fg)]">
+                                NOTHING SENDS HERE
+                              </span>
+                            )}
                             <button
                               className="font-medium text-ink underline-offset-2 hover:underline"
                               onClick={() => nav(`/admin/workflows/${s.id}`)}

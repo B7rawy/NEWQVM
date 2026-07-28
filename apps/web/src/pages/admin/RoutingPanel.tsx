@@ -132,7 +132,18 @@ export default function RoutingPanel({
     <div className="flex flex-col gap-3">
       <div>
         <h3 className="text-[14px] font-semibold text-ink">Which records this workflow takes</h3>
-        <p className="mt-0.5 text-[11.5px] text-faint">Right now: {flow.selection_summary}</p>
+        {/* A draft cloned from the live fallback inherits the fallback on publish, and the stored
+            columns say "every record" because the clone carries {} with is_default off. Printing
+            that here contradicted the lock message directly underneath and the checked radio beside
+            it — three answers on one panel, two of them wrong — and "every record" is the phrase
+            this codebase reserves for a NON-default flow that outranks the fallback and captures
+            everything, so an admin read it as "my draft will beat the live one". */}
+        <p className="mt-0.5 text-[11.5px] text-faint">
+          Right now:{" "}
+          {flow.inherits_default && !flow.is_default
+            ? "any record no other workflow claims — it takes over as the fallback when you publish it"
+            : flow.selection_summary}
+        </p>
       </div>
 
       {frozen ? (
