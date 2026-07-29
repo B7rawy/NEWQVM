@@ -274,13 +274,29 @@ export default function AppShell() {
                   ))}
               </NavLink>
             </div>
+          {/* The MCP pill. It is the one thing in this sidebar announcing itself, so it has to survive
+              the collapsed rail too — an announcement only the wide sidebar can make is invisible to
+              anybody who works collapsed. Wide: a pill beside the label. Collapsed: the same accent
+              as a dot on the icon's corner, which is all the room there is. */}
           <NavLink
             to="/developers"
-            title={collapsed ? "Developers" : undefined}
+            title={collapsed ? "Developers — MCP" : undefined}
             className={({ isActive }) => `nav-item ${isActive ? "active" : ""} ${collapsed ? "justify-center" : ""}`}
           >
-            <Code2 className="h-[17px] w-[17px] shrink-0" />
-            {!collapsed && <span>Developers</span>}
+            <span className="relative flex shrink-0">
+              <Code2 className="h-[17px] w-[17px]" />
+              {collapsed && (
+                <span className="absolute -right-1 -top-0.5 h-[7px] w-[7px] rounded-full bg-[var(--chip-red-fg)] ring-2 ring-[var(--panel)]" />
+              )}
+            </span>
+            {!collapsed && (
+              <>
+                <span>Developers</span>
+                <span className="ms-auto shrink-0 rounded-full bg-[var(--chip-red-bg)] px-1.5 py-[3px] text-[9.5px] font-bold uppercase leading-none tracking-[0.06em] text-[var(--chip-red-fg)]">
+                  MCP
+                </span>
+              </>
+            )}
           </NavLink>
           <NavLink
             to="/settings"
