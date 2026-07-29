@@ -36,6 +36,7 @@ import MyWork from "./pages/MyWork";
 import Approvals from "./pages/Approvals";
 import StatusLogs from "./pages/StatusLogs";
 import Communications from "./pages/Communications";
+import Developers from "./pages/Developers";
 import WorkflowCanvas from "./pages/admin/WorkflowCanvas";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
@@ -84,6 +85,9 @@ const WIRED = new Set([
   "/admin/workflows",
   "/onboarding",
   "/onboarding/review",
+  // Reached from the sidebar's footer rather than from a nav group, so it never appears in
+  // ALL_ITEMS — listed here anyway so this set stays readable as "paths with a real page".
+  "/developers",
   "/vendor",
   "/vendor/quotations",
   "/vendor/confirmed",
@@ -161,7 +165,7 @@ export default function App() {
         {placeholders.map((p) => (
           <Route key={p.path} path={p.path} element={<Placeholder />} />
         ))}
-        <Route path="/developers" element={<Placeholder />} />
+        <Route path="/developers" element={<Developers />} />
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>
     </Routes>

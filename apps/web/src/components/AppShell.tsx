@@ -293,7 +293,12 @@ export default function AppShell() {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-col">
+      {/* min-h-0 is load-bearing, not tidying. A flex item defaults to min-height:auto, so without it
+          this column grows to its content instead of to the grid row, <main>'s overflow-auto never
+          has a height to scroll within, and the DOCUMENT scrolls instead — taking the sidebar and
+          the header with it. It only shows up once a page is taller than the viewport, which is why
+          it survived this long. */}
+      <div className="flex min-h-0 min-w-0 flex-col">
         {/* Sandbox must be impossible to miss: the whole point is that nothing here is real, and the
             expensive mistake is believing test data is production data (or the reverse). */}
         {environment === "sandbox" && (
