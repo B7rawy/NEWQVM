@@ -9,6 +9,7 @@ import {
   KeyRound,
   Link2,
   ListTree,
+  Plug,
   Rocket,
   ShieldAlert,
   Terminal,
@@ -34,11 +35,14 @@ import {
  * missing pagination, the missing token refresh, and the fact that a sandbox webhook really does
  * call your server. See "What is not available yet"; it is a section, not a footnote.
  *
- * WHY IT IS A PAGE IN THE PRODUCT rather than a README. The two facts an integrator gets wrong most
- * often — which workspace they are addressing and which environment they are writing to — are
- * exactly the two the app already knows about the person reading. So the curl examples are filled
- * in with the reader's own workspace slug and their current environment, and are copy-paste correct
- * for them rather than for a fictional tenant they then have to substitute.
+ * WHY IT IS A PAGE IN THE PRODUCT rather than a README. It is served from the same deployment as
+ * the API it documents, so the two ship together and cannot drift apart in a release. It is public:
+ * no session, no workspace, no account — the reader is at another company and has none of those.
+ *
+ * ONE SECTION IS NOT LIVE. The MCP server is documented ahead of itself, and says so in its own
+ * heading and first line — including the exact failure a client hits today, which is not a refused
+ * connection but a 200 of this very page, because /mcp falls through to the SPA catch-all. That is the only forward-looking section on the page; everything else
+ * answers today.
  */
 
 /* ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -54,6 +58,7 @@ const SECTIONS = [
   { id: "resources", label: "Core resources", icon: Boxes },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
   { id: "quote-links", label: "Vendor quote links", icon: Link2 },
+  { id: "mcp", label: "MCP server", icon: Plug },
   { id: "errors", label: "Errors", icon: TriangleAlert },
   { id: "limits", label: "Limits", icon: ListTree },
   { id: "gaps", label: "What is not available yet", icon: ShieldAlert },
@@ -126,7 +131,10 @@ function Code({ code, label }: { code: string; label?: string }) {
 /** Inline code — endpoints, headers, field names. */
 function C({ children }: { children: ReactNode }) {
   return (
-    <code className="rounded bg-[var(--panel-2)] px-1 py-0.5 font-mono text-[12px] text-ink">{children}</code>
+    // overflow-wrap:anywhere, not break-all: a long unbroken token (a quote-link URL) is the only
+    // thing on this page that made the whole document scroll sideways on a phone. `anywhere` breaks
+    // it only when it would otherwise overflow, so short tokens like X-Tenant stay on one line.
+    <code className="rounded bg-[var(--panel-2)] px-1 py-0.5 font-mono text-[12px] text-ink [overflow-wrap:anywhere]">{children}</code>
   );
 }
 
@@ -146,13 +154,18 @@ function Note({ tone = "info", title, children }: { tone?: "info" | "warn"; titl
 }
 
 function Section({
-  id, title, icon: Icon, lede, children,
-}: { id: string; title: string; icon: typeof Rocket; lede?: ReactNode; children: ReactNode }) {
+  id, title, icon: Icon, lede, badge, children,
+}: { id: string; title: string; icon: typeof Rocket; lede?: ReactNode; badge?: string; children: ReactNode }) {
   return (
     <section id={id} className="scroll-mt-4 border-t border-line pt-8 first:border-0 first:pt-0">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Icon className="h-[18px] w-[18px] text-accent" />
         <h2 className="text-[17px] font-semibold tracking-tight text-ink">{title}</h2>
+        {badge && (
+          <span className="rounded-full border border-line bg-[var(--panel-2)] px-2 py-0.5 text-[10.5px] font-medium uppercase tracking-wide text-faint">
+            {badge}
+          </span>
+        )}
       </div>
       {lede && <p className="mt-1.5 max-w-3xl text-[13px] leading-relaxed text-sub">{lede}</p>}
       <div className="mt-4">{children}</div>
@@ -1179,6 +1192,167 @@ def qvm_webhook():
               <C>{`{"rfqId":"…","sent":1,"isSandbox":true,"results":[{"vendorId":"…","notify":"suppressed","token":"fi-NKqyGECg…"}]}`}</C>
               . Since no environment actually delivers email today, that is currently the only way to
               obtain one.
+            </Note>
+          </Section>
+
+          {/* ── MCP ──────────────────────────────────────────────────────────────────────────
+              Documented ahead of the implementation, at the product owner's request, and carrying
+              the one word that keeps that honest: PREVIEW, in the heading and in the first line.
+              Every other section on this page answers today. This one is a specification of what
+              will answer, and a reader who tries the endpoint now gets a connection refused — so
+              the page has to say so before they spend an afternoon on it. Everything else here is
+              real: the tools map one-to-one onto endpoints documented above, the header trio is
+              the same trio, and the client configuration snippets are the actual formats those
+              clients take, so none of it has to be rewritten when the server lands.
+              ──────────────────────────────────────────────────────────────────────────────── */}
+          <Section
+            id="mcp"
+            title="MCP server"
+            icon={Plug}
+            badge="Preview"
+            lede={
+              <>
+                Point an AI agent at a workspace instead of writing a client. Same credentials, same
+                permissions, and the same audit trail as the REST API above.{" "}
+                <b className="font-medium text-ink">Not open for connections yet.</b> Nothing is
+                listening for MCP at that URL today: a client pointed at it gets this website's HTML
+                back with a <C>200</C>, so it will fail inside your client on a parse error rather
+                than on a refused connection. This section is here so you can design against it —
+                ask your Qparts contact to be told when it opens.
+              </>
+            }>
+            <H3>What it is</H3>
+            <P>
+              The Model Context Protocol is an open standard for handing an AI agent a set of tools
+              it can discover and call. An MCP client — Claude Desktop, Claude Code, Cursor, or an
+              agent you built yourself — connects to a server, reads the tools it offers, and calls
+              them on the model's behalf.
+            </P>
+            <P>
+              This server puts one workspace behind that protocol. An agent can raise a request,
+              read what the vendors quoted, pick a winner, book a delivery and move an order along,
+              without you writing an HTTP client for any of it.
+            </P>
+            <P>
+              Every tool below is one of the endpoints documented above, described to the agent.{" "}
+              <b className="font-medium text-ink">
+                Nothing is reachable through MCP that is not reachable over HTTP
+              </b>{" "}
+              — the protocol changes who is driving, not what they are allowed to do.
+            </P>
+
+            <H3>The endpoint</H3>
+            <Table head={["", ""]}>
+              {[
+                ["URL", `${base}/mcp`],
+                ["Transport", "Streamable HTTP. No stdio server to install and nothing to run on your side."],
+                ["Authentication", "The same bearer token as the REST API. Obtained the same way, expires the same way."],
+                ["Workspace", "X-Tenant, sent as a connection header rather than per call."],
+                ["Environment", "X-Environment, likewise. Pinned for the whole session — see below."],
+              ].map(([a, b]) => (
+                <tr key={a} className="trow">
+                  <td className="td w-44 align-top font-medium">{a}</td>
+                  <td className="td font-mono text-[12px]">{b}</td>
+                </tr>
+              ))}
+            </Table>
+
+            <H3>Connecting</H3>
+            <P>
+              Get a token exactly as in <a className="link" href="#authentication">Authentication</a>,
+              then register the server with your client. Both placeholders below are yours to
+              replace — <C>{"<your-workspace>"}</C> and the environment.
+            </P>
+            <Code
+              label="Claude Code"
+              code={`claude mcp add --transport http qparts ${base}/mcp \\
+  --header "Authorization: Bearer $QPARTS_TOKEN" \\
+  --header "X-Tenant: ${tenant}" \\
+  --header "X-Environment: sandbox"`}
+            />
+            <Code
+              label="Claude Desktop — claude_desktop_config.json"
+              code={`{
+  "mcpServers": {
+    "qparts": {
+      "type": "http",
+      "url": "${base}/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>",
+        "X-Tenant": "${tenant}",
+        "X-Environment": "sandbox"
+      }
+    }
+  }
+}`}
+            />
+            <P>
+              Cursor, Windsurf and most other clients take the same <C>mcpServers</C> object; only
+              the file it lives in differs. An agent you wrote yourself connects to the same URL with
+              the same three headers.
+            </P>
+
+            <H3>The tools</H3>
+            <P>
+              Names and shapes are stable. A tool marked <b className="font-medium text-ink">writes</b>{" "}
+              changes data in the workspace.
+            </P>
+            <Table head={["Tool", "What it does", ""]}>
+              {[
+                ["list_rfqs", "Requests in the workspace, newest first, under the same cap as the REST list.", ""],
+                ["get_rfq", "One request: its lines, the vendors it went to, and every quote received.", ""],
+                ["create_rfq", "Raises a request for a workshop branch, with its part lines.", "writes"],
+                ["send_rfq_to_vendors", "Invites vendors to quote and issues each one a quote link.", "writes"],
+                ["get_quotes", "Every vendor's price against a line, with the winner marked if one is chosen.", ""],
+                ["select_winning_quote", "Picks the vendor for one line and moves that line's status.", "writes"],
+                ["confirm_rfq", "Turns a priced request into an order.", "writes"],
+                ["list_orders", "Orders in the workspace, filterable by status.", ""],
+                ["get_order", "One order with its lines, deliveries and invoice.", ""],
+                ["record_delivery", "Books a full or partial delivery against order lines.", "writes"],
+                ["issue_invoice", "Invoices a delivered order.", "writes"],
+                ["list_vendors", "Vendors this workspace can send to, with their activation state.", ""],
+                ["get_record_workflow", "Which flow a record is in, the step it sits on, and the moves available from here.", ""],
+                ["move_status", "Moves a record along its workflow. Refused when the flow has no arrow for it.", "writes"],
+              ].map(([a, b, c]) => (
+                <tr key={a} className="trow">
+                  <td className="td whitespace-nowrap align-top font-mono text-[12px]">{a}</td>
+                  <td className="td">{b}</td>
+                  <td className="td w-20 align-top">
+                    {c && (
+                      <span className="rounded-full bg-[var(--chip-red-bg)] px-2 py-0.5 text-[11px] font-medium text-accent">
+                        {c}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </Table>
+
+            <H3>Permissions are the token's permissions</H3>
+            <P>
+              The agent is the user whose token you connected with. It gains nothing by arriving over
+              MCP: a role that cannot confirm an order over HTTP cannot confirm one here either, and
+              the tool is not offered to that session at all rather than offered and then refused.
+            </P>
+            <P>
+              Every write is attributed to that user in the workspace's status log, marked as having
+              arrived through MCP. Give the integration its own account with the smallest role that
+              does the job — the same advice as for the REST API, and for the same reason.
+            </P>
+
+            <H3>Environment is fixed when you connect</H3>
+            <P>
+              <C>X-Environment</C> is a connection header, not a per-call argument, so an agent
+              cannot decide mid-conversation to write to <C>live</C>. A session pointed at{" "}
+              <C>sandbox</C> stays in sandbox until you reconfigure the client yourself. Build
+              against sandbox; move the header when you are finished.
+            </P>
+            <Note tone="warn" title="A write tool is a real write">
+              An agent calling <C>create_rfq</C> creates a request that vendors can see, and{" "}
+              <C>confirm_rfq</C> creates an order somebody will be invoiced for. Nothing is staged
+              and nothing waits for a human unless the workspace's own workflow puts an approval in
+              the way. Turn on your client's confirmation prompt for write tools before you point one
+              at <C>live</C>.
             </Note>
           </Section>
 

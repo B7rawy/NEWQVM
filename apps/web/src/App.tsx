@@ -111,9 +111,13 @@ export default function App() {
   // it unreachable by the only people it is written for — confirmed by clearing a session and
   // landing on "Sign in to your workspace". It needs no token, no workspace and no environment to
   // render, so it is served to anyone who has the link.
-  const path = typeof window !== "undefined" ? window.location.pathname : "";
-  if (path === "/developers") return <Developers />;
-  if (!authed) return path === "/signup" ? <Signup /> : <Login />;
+  // useLocation, NOT window.location. Reading the address directly looked equivalent and was not:
+  // App subscribes to the auth context and nothing else, so a click in the sidebar pushes the new
+  // URL without re-rendering this component — the check never ran again and the previous page just
+  // stayed on screen. useLocation subscribes App to the router, so navigation re-renders it.
+  const { pathname } = useLocation();
+  if (pathname === "/developers") return <Developers />;
+  if (!authed) return pathname === "/signup" ? <Signup /> : <Login />;
   // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
