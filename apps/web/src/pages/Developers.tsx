@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -15,7 +15,6 @@ import {
   TriangleAlert,
   Webhook,
 } from "lucide-react";
-import { useAuth } from "../lib/auth";
 
 /**
  * DEVELOPERS — what somebody outside this company needs in order to connect their system to ours.
@@ -70,15 +69,16 @@ const SECTIONS = [
  * different workspace. Stripping back to the apex makes the header in every example the thing that
  * actually decides.
  */
-function apiOrigin(): string {
-  if (typeof window === "undefined") return "https://easycarty.store";
-  const { protocol, hostname, origin, port } = window.location;
-  // Dev: the SPA is on 5173, the API on 4000. Same rule the API client uses (lib/api.ts).
-  if (hostname === "localhost" || hostname === "127.0.0.1") return "http://localhost:4000";
-  const labels = hostname.split(".");
-  if (labels.length > 2) return `${protocol}//${labels.slice(-2).join(".")}${port ? `:${port}` : ""}`;
-  return origin;
-}
+/**
+ * THE ONE ADDRESS THIS PAGE DOCUMENTS.
+ *
+ * It used to be derived from `window.location`, which is right for a page our own engineers read on
+ * whatever host they happen to be on, and wrong for this one: an outside integrator reading it on a
+ * staging mirror, or a colleague who opened it on localhost and pasted a snippet into an email,
+ * would hand a customer a base URL that answers on nobody's machine but their own. The public API
+ * has one address, so the page states it rather than guessing it.
+ */
+const PUBLIC_API_BASE = "https://easycarty.store";
 
 /** One copyable block. `label` names what it is so a reader scanning for "the Python one" finds it. */
 function Code({ code, label }: { code: string; label?: string }) {
@@ -185,11 +185,20 @@ function Table({ head, children }: { head: string[]; children: ReactNode }) {
 }
 
 export default function Developers() {
-  const { activeSlug, environment } = useAuth();
-  const base = useMemo(apiOrigin, []);
-  // The reader's own workspace, so the examples are correct as copied rather than as adapted.
-  const tenant = activeSlug ?? "your-workspace";
-  const env = environment;
+  const base = PUBLIC_API_BASE;
+  /**
+   * PLACEHOLDERS, NOT THIS BROWSER'S VALUES.
+   *
+   * An earlier draft filled the examples in from the reader's own session — their workspace slug,
+   * their current environment — which reads beautifully to one of us and is wrong for everybody
+   * this page is written for. The reader is a developer at ANOTHER COMPANY. They have no session
+   * here and no workspace of their own; they were issued a slug, an environment and credentials by
+   * the QVM customer they are integrating with, and this page cannot know any of them. An example
+   * pre-filled with somebody else's workspace is worse than a placeholder, because it looks
+   * copy-pasteable and is not.
+   */
+  const tenant = "<your-workspace>";
+  const env = "<live|sandbox>";
   const [active, setActive] = useState<string>(SECTIONS[0].id);
 
   /**
@@ -252,7 +261,29 @@ export default function Developers() {
   };
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:gap-8">
+    <div className="min-h-screen bg-panel">
+      {/* ── Public header ─────────────────────────────────────────────────────────────────────
+          This page is served OUTSIDE the application shell, so it inherits no branding at all. A
+          reader arrives from a link somebody emailed them, with no account and no context: without
+          this bar the first thing they see is the word "Developers" floating on a white page, with
+          nothing saying whose API it documents or where to go if they turn out to have an account
+          after all. */}
+      <header className="sticky top-0 z-10 border-b border-line bg-surface/90 backdrop-blur">
+        <div className="mx-auto flex max-w-[1180px] items-center justify-between px-5 py-3">
+          <div className="flex items-baseline gap-2">
+            <span className="text-[17px] font-bold tracking-tight text-accent">Q</span>
+            <span className="text-[15px] font-semibold tracking-tight text-ink">PARTS</span>
+            <span className="ml-1.5 rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted">
+              API docs
+            </span>
+          </div>
+          <a href="/" className="text-[12.5px] text-muted transition hover:text-ink">
+            Have an account? Sign in
+          </a>
+        </div>
+      </header>
+
+      <div className="mx-auto flex max-w-[1180px] flex-col gap-5 px-5 py-6 lg:flex-row lg:items-start lg:gap-8">
       {/* ── Table of contents ─────────────────────────────────────────────────────────────── */}
       <nav className="shrink-0 lg:sticky lg:top-0 lg:w-56 lg:py-1">
         <p className="mb-2 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-faint">
@@ -286,11 +317,41 @@ export default function Developers() {
             <h1 className="text-[20px] font-semibold tracking-tight text-ink">Developers</h1>
           </div>
           <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-muted">
-            Everything needed to connect another system to QVM: how to authenticate, how to address a
-            workspace and an environment, the endpoints worth integrating against, and how to receive
-            and verify our outbound webhooks. Every example on this page was run against a live API
-            before it was published.
+            For engineers outside QVM connecting their own system to a customer's workspace here: how
+            to authenticate, how to address a workspace and an environment, the endpoints worth
+            integrating against, and how to receive and verify our outbound webhooks. Every example on
+            this page was run against a live API before it was published.
           </p>
+
+          {/* Written first because every one of these comes from a person, not from an API, and an
+              integrator who discovers that on day three has lost three days. */}
+          <div className="mt-4 max-w-3xl rounded-lg border border-line bg-surface p-4">
+            <p className="text-[13px] font-semibold text-ink">Before you write any code</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
+              Four things, and all four come from the QVM workspace you are integrating with — none of
+              them can be obtained from this API:
+            </p>
+            <ol className="mt-2 space-y-1.5 text-[12.5px] leading-relaxed text-sub">
+              <li>
+                <b className="font-medium text-ink">1. Credentials.</b> There is no API key yet, so
+                they will issue you a normal user account. Your system signs in with it and holds the
+                password — say so in your own security review before you start.
+              </li>
+              <li>
+                <b className="font-medium text-ink">2. The workspace slug.</b> A short name like{" "}
+                <C>riyadh</C>, sent on every request as <C>X-Tenant</C>.
+              </li>
+              <li>
+                <b className="font-medium text-ink">3. Which environment.</b>{" "}
+                <C>sandbox</C> while you build, <C>live</C> when you go live. They are fully separate
+                sets of data; nothing you write in one is visible in the other.
+              </li>
+              <li>
+                <b className="font-medium text-ink">4. The webhook signing secret</b> — only if you
+                want to receive events. They generate it; you verify every delivery against it.
+              </li>
+            </ol>
+          </div>
         </div>
 
         <div className="flex flex-col gap-8">
@@ -309,14 +370,12 @@ export default function Developers() {
               </a>
               ).
             </P>
+            {/* One row. `localhost` belonged to the draft written for our own engineers; to an
+                outside integrator it is an address that answers on their own laptop and not here. */}
             <Table head={["Environment", "Base URL"]}>
               <tr className="trow">
-                <td className="td">Production</td>
+                <td className="td">All requests</td>
                 <td className="td font-mono text-[12px]">https://easycarty.store/api</td>
-              </tr>
-              <tr className="trow">
-                <td className="td">Local development</td>
-                <td className="td font-mono text-[12px]">http://localhost:4000/api</td>
               </tr>
             </Table>
             <Note>
@@ -328,10 +387,11 @@ export default function Developers() {
 
             <H3>Three things every call needs</H3>
             <P>
-              A bearer token, the workspace you are addressing, and the environment you are writing to.
-              The examples on this page are already filled in with{" "}
-              <b className="font-medium text-ink">your</b> workspace (<C>{tenant}</C>) and{" "}
-              <b className="font-medium text-ink">your</b> current environment (<C>{env}</C>).
+              A bearer token, the workspace you are addressing, and the environment you are writing
+              to. The examples below use <C>{tenant}</C> and <C>{env}</C> as placeholders —{" "}
+              <b className="font-medium text-ink">replace both</b> with the values the workspace gave
+              you. Getting the environment wrong is the quiet one: it does not error, it writes your
+              data somewhere nobody is looking.
             </P>
             <Code
               label="1. Get a token"
@@ -783,16 +843,25 @@ curl -s ${base}/api/rfqs -H "Authorization: Bearer $QVM_TOKEN" \\
             title="Webhooks"
             icon={Webhook}
             lede="Outbound only: QVM calls your server when a record crosses a step in a workflow. There is no inbound webhook endpoint — nothing here receives a signed call from you.">
-            <H3>How one is configured</H3>
+            <H3>You do not configure this — they do</H3>
             <P>
               A webhook is an <b className="font-medium text-ink">action attached to a transition</b> in
-              a workflow — an arrow between two steps, not a subscription to a topic. Open{" "}
-              <b className="font-medium text-ink">Workflows</b>, select the arrow you care about, and
-              add the action <b className="font-medium text-ink">"Call another system"</b> with a
-              destination URL. It then fires every time a record crosses that arrow. Choosing which
-              arrows carry the action is how you choose which events you receive; there is no filter
-              expression and no subscription API.
+              a workflow: an arrow between two steps, not a subscription to a topic. It is set up
+              inside the workspace's own builder, which you have no access to. There is no
+              subscription API, so there is nothing for you to call to register a URL — the workspace
+              adds it for you, and which arrows carry the action is how they choose which events you
+              receive. There is no filter expression either.
             </P>
+            <Note>
+              <b className="font-medium text-ink">What to send the workspace administrator.</b> Ask
+              them to add the <C>Call another system</C> action to each transition you need, pointing
+              at your endpoint, and to send you the signing secret for the environment you are
+              integrating with. Your URL must be <C>https</C> and resolve to a publicly routable
+              address — a private or loopback address is refused when they save it, so a tunnel to
+              your laptop will not be accepted. The exact rules are in{" "}
+              <b className="font-medium text-ink">Security</b> below, and it is worth quoting them the
+              relevant line if their save is rejected.
+            </Note>
 
             <H3>The guarantee</H3>
             <P>
@@ -1264,6 +1333,7 @@ def qvm_webhook():
             </Note>
           </Section>
         </div>
+      </div>
       </div>
     </div>
   );

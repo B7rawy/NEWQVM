@@ -104,7 +104,16 @@ const WIRED = new Set([
 export default function App() {
   const { authed, me, activeSlug } = useAuth();
   // Unauthenticated: /signup shows the self-registration page, everything else the login page.
-  if (!authed) return typeof window !== "undefined" && window.location.pathname === "/signup" ? <Signup /> : <Login />;
+  // PUBLIC ROUTES, decided before anything asks whether you are signed in.
+  //
+  // /developers is documentation for engineers at OTHER companies integrating with a customer's
+  // workspace. They have no account here by definition, so gating it behind the sign-in screen made
+  // it unreachable by the only people it is written for — confirmed by clearing a session and
+  // landing on "Sign in to your workspace". It needs no token, no workspace and no environment to
+  // render, so it is served to anyone who has the link.
+  const path = typeof window !== "undefined" ? window.location.pathname : "";
+  if (path === "/developers") return <Developers />;
+  if (!authed) return path === "/signup" ? <Signup /> : <Login />;
   // wait for the persona to resolve before routing, so vendors land on /vendor not /overview
   if (!me) return <div className="grid h-full place-items-center"><Spinner label="Loading…" /></div>;
 
@@ -165,7 +174,6 @@ export default function App() {
         {placeholders.map((p) => (
           <Route key={p.path} path={p.path} element={<Placeholder />} />
         ))}
-        <Route path="/developers" element={<Developers />} />
         <Route path="*" element={<Navigate to={home} replace />} />
       </Route>
     </Routes>
