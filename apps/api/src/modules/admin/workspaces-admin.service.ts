@@ -6,6 +6,30 @@ import { WorkflowTemplateService } from "../workflow/template.service.js";
 
 const INTERNAL: RlsContext = { tenantId: null, userId: null, isInternal: true };
 
+/**
+ * The three counterparty families a workspace can link, and the link table for each.
+ *
+ * Written as maps rather than the ternaries that were here because a ternary chain silently picks a
+ * branch for an unknown value — adding "service_provider" to a `kind === "vendor" ? … : …` would have
+ * archived a VENDOR link for a provider id and reported success. A lookup on a keyed-by-union record
+ * cannot: a new kind fails to compile until both maps list it.
+ *
+ * "service_provider" spans both scopes. An internal team is a provider with scope='internal', so it
+ * shares this row rather than adding a fourth — see /me's persona split.
+ */
+export type CounterpartyKind = "vendor" | "workshop" | "service_provider";
+export const COUNTERPARTY_KINDS: CounterpartyKind[] = ["vendor", "workshop", "service_provider"];
+const LINK_TABLE: Record<CounterpartyKind, string> = {
+  vendor: "tenant_vendors",
+  workshop: "tenant_workshops",
+  service_provider: "tenant_service_providers",
+};
+const LINK_COLUMN: Record<CounterpartyKind, string> = {
+  vendor: "vendor_id",
+  workshop: "workshop_id",
+  service_provider: "service_provider_id",
+};
+
 export const createWorkspaceSchema = z.object({
   name: z.string().min(2),
   slug: z
@@ -144,15 +168,41 @@ export class WorkspacesAdminService {
         where i.tenant_id = ${id}::uuid
         order by i.created_at desc limit 25`);
 
-      return { workspace, environment, users, workshops, vendors, submissions, rfqs, orders, invoices };
+      // Both scopes in one query, split in the payload. The page shows them as two sections because
+      // they are two different relationships to the business — an outside partner you contracted vs
+      // your own back office — even though they are one table.
+      const providerRows = (await tx.execute(sql`
+        select sp.id, sp.legal_name, sp.scope, sp.service_type, tsp.status, tsp.classification,
+          (select spu.user_id from service_provider_users spu
+            where spu.service_provider_id = sp.id order by spu.is_provider_admin desc limit 1) as user_id
+        from tenant_service_providers tsp join service_providers sp on sp.id = tsp.service_provider_id
+        where tsp.tenant_id = ${id}::uuid and tsp.status <> 'archived' order by sp.legal_name`)) as Array<{ scope: string }>;
+      const providers = providerRows.filter((p) => p.scope === "external");
+      const internalTeams = providerRows.filter((p) => p.scope === "internal");
+
+      return { workspace, environment, users, workshops, vendors, providers, internalTeams, submissions, rfqs, orders, invoices };
     });
   }
 
-  /** Directory entities NOT yet linked to this workspace — the pick-list for "link existing". */
-  async linkable(id: string, kind: "vendor" | "workshop") {
+  /** Directory entities NOT yet linked to this workspace — the pick-list for "link existing".
+   *
+   *  service_provider covers BOTH scopes. An internal team is a provider with scope='internal', so
+   *  the caller narrows by scope rather than this asking for a fourth branch. */
+  async linkable(id: string, kind: CounterpartyKind, scope?: "internal" | "external") {
     return this.dbService.withContext(INTERNAL, async (tx) => {
       const rows =
-        kind === "vendor"
+        kind === "service_provider"
+          ? await tx.execute(sql`
+              select sp.id, sp.legal_name as name, sp.counterparty_type, sp.tax_number, sp.primary_phone,
+                     sp.scope, sp.service_type
+              from service_providers sp
+              where sp.is_active
+                and (${scope ?? null}::text is null or sp.scope::text = ${scope ?? null})
+                and not exists (
+                  select 1 from tenant_service_providers tsp
+                  where tsp.service_provider_id = sp.id and tsp.tenant_id = ${id}::uuid and tsp.status <> 'archived')
+              order by sp.legal_name limit 100`)
+        : kind === "vendor"
           ? await tx.execute(sql`
               select v.id, v.legal_name as name, v.counterparty_type, v.tax_number, v.primary_phone
               from vendors v
@@ -170,9 +220,14 @@ export class WorkspacesAdminService {
   }
 
   /** Link an EXISTING directory identity to this workspace (re-activates an archived link). */
-  async linkCounterparty(actorUserId: string, id: string, kind: "vendor" | "workshop", entityId: string, classification?: string) {
+  async linkCounterparty(actorUserId: string, id: string, kind: CounterpartyKind, entityId: string, classification?: string) {
     return this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
-      if (kind === "vendor") {
+      if (kind === "service_provider") {
+        await tx.execute(sql`
+          insert into tenant_service_providers (tenant_id, service_provider_id, status, classification, linked_by, created_by, updated_by)
+          values (${id}::uuid, ${entityId}::uuid, 'active', ${classification ?? null}, ${actorUserId}::uuid, ${actorUserId}::uuid, ${actorUserId}::uuid)
+          on conflict (tenant_id, service_provider_id) do update set status = 'active', updated_at = now()`);
+      } else if (kind === "vendor") {
         await tx.execute(sql`
           insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
           values (${id}::uuid, ${entityId}::uuid, 'active', ${classification ?? null}, ${actorUserId}::uuid, ${actorUserId}::uuid, ${actorUserId}::uuid)
@@ -191,10 +246,10 @@ export class WorkspacesAdminService {
   }
 
   /** Unlink (archive the relationship) — the global identity itself is never deleted. */
-  async unlinkCounterparty(actorUserId: string, id: string, kind: "vendor" | "workshop", entityId: string) {
+  async unlinkCounterparty(actorUserId: string, id: string, kind: CounterpartyKind, entityId: string) {
     return this.dbService.withContext({ ...INTERNAL, userId: actorUserId }, async (tx) => {
-      const table = kind === "vendor" ? "tenant_vendors" : "tenant_workshops";
-      const col = kind === "vendor" ? "vendor_id" : "workshop_id";
+      const table = LINK_TABLE[kind];
+      const col = LINK_COLUMN[kind];
       const rows = (await tx.execute(sql`
         update ${sql.raw(table)} set status = 'archived', updated_by = ${actorUserId}::uuid, updated_at = now()
         where tenant_id = ${id}::uuid and ${sql.raw(col)} = ${entityId}::uuid returning id`)) as Array<{ id: string }>;

@@ -17,6 +17,19 @@ interface WsDetail {
   rfqs: Array<{ id: string; order_number: string; plate_number: string | null; status: string | null; items: number }>;
   orders: Array<{ id: string; order_number: string; status: string | null; items: number }>;
   invoices: Array<{ id: string; invoice_number: string | null; total_incl_vat: string | null; status: string | null; order_number: string }>;
+  providers: LinkedProvider[];
+  internalTeams: LinkedProvider[];
+}
+
+/** Both scopes are the same row shape — the server splits them, the page shows them apart. */
+interface LinkedProvider {
+  id: string;
+  legal_name: string;
+  scope: "internal" | "external";
+  service_type: string | null;
+  status: string;
+  classification: string | null;
+  user_id: string | null;
 }
 
 const roleLabel: Record<string, string> = {
@@ -24,7 +37,7 @@ const roleLabel: Record<string, string> = {
   branch_manager: "Branch manager",
   service_advisor: "Service advisor",
 };
-type Tab = "overview" | "users" | "vendors" | "workshops" | "rfqs" | "orders" | "invoices";
+type Tab = "overview" | "users" | "vendors" | "workshops" | "providers" | "internal" | "rfqs" | "orders" | "invoices";
 
 export default function WorkspaceDetail() {
   const { id } = useParams();
@@ -33,7 +46,7 @@ export default function WorkspaceDetail() {
   const [d, setD] = useState<WsDetail | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
-  const [linking, setLinking] = useState<"vendor" | "workshop" | null>(null);
+  const [linking, setLinking] = useState<"vendor" | "workshop" | "provider" | "internal" | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function toggleActive(active: boolean) {
@@ -41,7 +54,7 @@ export default function WorkspaceDetail() {
     try { await api.patch(`/admin/workspaces/${id}`, { isActive: active }); await load(); }
     catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
   }
-  async function unlink(kind: "vendor" | "workshop", entityId: string) {
+  async function unlink(kind: "vendor" | "workshop" | "service_provider", entityId: string) {
     setErr("");
     try { await api.post(`/admin/workspaces/${id}/unlink/${kind}/${entityId}`, {}); await load(); }
     catch (e) { setErr((e as Error).message); }
@@ -58,7 +71,7 @@ export default function WorkspaceDetail() {
 
   if (err) return <EmptyState title="Couldn't load workspace" hint={err} />;
   if (!d) return <Spinner />;
-  const { workspace: w, users, workshops, vendors, submissions, rfqs, orders, invoices } = d;
+  const { workspace: w, users, workshops, vendors, providers, internalTeams, submissions, rfqs, orders, invoices } = d;
   const admins = users.filter((u) => u.role === "company_admin");
 
   const tabs: { key: Tab; label: string; count?: number }[] = [
@@ -66,6 +79,8 @@ export default function WorkspaceDetail() {
     { key: "users", label: "Users", count: users.length },
     { key: "vendors", label: "Vendors", count: vendors.length },
     { key: "workshops", label: "Workshops", count: workshops.length },
+    { key: "providers", label: "Providers", count: providers.length },
+    { key: "internal", label: "Internal", count: internalTeams.length },
     { key: "rfqs", label: "RFQs", count: rfqs.length },
     { key: "orders", label: "Orders", count: orders.length },
     { key: "invoices", label: "Invoices", count: invoices.length },
@@ -291,6 +306,62 @@ export default function WorkspaceDetail() {
           data — switch Live/Sandbox at the top to change.
         </div>
       )}
+
+      {/* Providers and Internal are ONE table split by scope, so they share a renderer rather than
+          being copied — the only differences are the words and which scope the pick-list offers. */}
+      {(tab === "providers" || tab === "internal") && (() => {
+        const isInternal = tab === "internal";
+        const rows = isInternal ? internalTeams : providers;
+        const noun = isInternal ? "internal team" : "provider";
+        return (
+          <>
+            <div className="mb-3 flex items-center gap-2">
+              <button className="btn btn-sm rounded-md" onClick={() => setLinking(isInternal ? "internal" : "provider")}>
+                <Link2 className="h-3.5 w-3.5" /> Link existing {noun}
+              </button>
+              <RouterLink to={isInternal ? "/internal-teams" : "/providers"} className="btn btn-sm rounded-md">
+                <Plus className="h-3.5 w-3.5" /> New {noun}
+              </RouterLink>
+            </div>
+            {linking === (isInternal ? "internal" : "provider") && (
+              <LinkCounterpartyDialog
+                workspaceId={w.id}
+                kind="service_provider"
+                scope={isInternal ? "internal" : "external"}
+                onClose={(l) => { setLinking(null); if (l) load(); }}
+              />
+            )}
+            <Card pad={false}>
+              {rows.length === 0 ? (
+                <EmptyState
+                  title={isInternal ? "No internal teams linked" : "No providers linked"}
+                  hint={`Link an existing ${noun} from the directory, or create a new one.`}
+                />
+              ) : (
+                <table className="w-full">
+                  <thead><tr><th className="th">{isInternal ? "Team" : "Provider"}</th><th className="th">Service</th><th className="th">Class</th><th className="th">Status</th><th className="th" /></tr></thead>
+                  <tbody>
+                    {rows.map((p) => (
+                      <tr key={p.id} className="trow">
+                        <td className="td font-medium text-ink">{p.legal_name}</td>
+                        <td className="td text-muted">{p.service_type ?? "—"}</td>
+                        <td className="td tnum">{p.classification ?? "—"}</td>
+                        <td className="td"><Badge tone={statusTone(p.status)}>{p.status}</Badge></td>
+                        <td className="td text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {p.user_id && <button className="btn btn-sm rounded-md" onClick={() => impersonate(p.user_id!)}><Eye className="h-3.5 w-3.5" /> View as</button>}
+                            <button className="btn btn-sm rounded-md text-accent" onClick={() => unlink("service_provider", p.id)}><Unlink className="h-3.5 w-3.5" /> Unlink</button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Card>
+          </>
+        );
+      })()}
 
       {tab === "rfqs" && (
         <Card pad={false}>

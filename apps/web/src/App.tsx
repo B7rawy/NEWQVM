@@ -79,6 +79,7 @@ const WIRED = new Set([
   "/vendors",
   "/providers",
   "/internal",
+  "/internal-teams",
   "/management-overview",
   "/admin/users",
   "/admin/workspaces",
@@ -153,7 +154,9 @@ export default function App() {
         <Route path="/org/workshops/:id" element={<WorkshopDetail />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/vendors/:id" element={<VendorDetail />} />
-        <Route path="/providers" element={<Providers />} />
+        <Route path="/providers" element={<Providers only="external" />} />
+        {/* Same component, the other scope. See Providers.tsx: one table, two pages. */}
+        <Route path="/internal-teams" element={<Providers only="internal" />} />
         <Route path="/internal" element={<InternalDashboard />} />
         <Route path="/management-overview" element={<ManagementOverview />} />
         <Route path="/admin/users" element={<Users />} />

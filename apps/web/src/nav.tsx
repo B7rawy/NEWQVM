@@ -86,6 +86,7 @@ export const platformNav: NavGroup[] = [
       { label: "Vendors", path: "/vendors", icon: Store },
       { label: "Workshops", path: "/org/workshops", icon: Wrench },
       { label: "Providers", path: "/providers", icon: Handshake },
+      { label: "Internal", path: "/internal-teams", icon: Boxes },
     ],
   },
   {
@@ -129,6 +130,7 @@ export const platformSystemNav: NavGroup[] = [
       { label: "Vendors", path: "/vendors", icon: Store },
       { label: "Workshops", path: "/org/workshops", icon: Wrench },
       { label: "Providers", path: "/providers", icon: Handshake },
+      { label: "Internal", path: "/internal-teams", icon: Boxes },
     ],
   },
   {
@@ -195,6 +197,7 @@ export const workspaceNav: NavGroup[] = [
       { label: "Workshops", path: "/org/workshops", icon: Wrench, adminOnly: true },
       { label: "Vendors", path: "/vendors", icon: Store, adminOnly: true },
       { label: "Providers", path: "/providers", icon: Handshake, adminOnly: true },
+      { label: "Internal", path: "/internal-teams", icon: Boxes, adminOnly: true },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, adminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users, adminOnly: true },
       { label: "Status Logs", path: "/status-logs", icon: History, adminOnly: true },

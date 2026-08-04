@@ -14,12 +14,18 @@ interface Candidate {
 }
 
 export default function LinkCounterpartyDialog({
-  workspaceId, kind, onClose,
+  workspaceId, kind, scope, onClose,
 }: {
   workspaceId: string;
-  kind: "vendor" | "workshop";
+  kind: "vendor" | "workshop" | "service_provider";
+  /** Providers only: narrows the pick-list to one scope, so the Internal tab cannot offer an
+   *  external partner and vice versa. */
+  scope?: "internal" | "external";
   onClose: (linked: boolean) => void;
 }) {
+  // The wire value is the kind; the sentence needs a noun. "Link an existing service_provider" is
+  // what the user would otherwise read.
+  const noun = kind === "service_provider" ? (scope === "internal" ? "internal team" : "provider") : kind;
   const [rows, setRows] = useState<Candidate[] | null>(null);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -27,10 +33,12 @@ export default function LinkCounterpartyDialog({
   const [linked, setLinked] = useState(false);
 
   useEffect(() => {
-    api.get<{ candidates: Candidate[] }>(`/admin/workspaces/${workspaceId}/linkable/${kind}`)
+    api.get<{ candidates: Candidate[] }>(
+      `/admin/workspaces/${workspaceId}/linkable/${kind}${scope ? `?scope=${scope}` : ""}`,
+    )
       .then((r) => setRows(r.candidates))
       .catch((e) => { setErr((e as Error).message); setRows([]); });
-  }, [workspaceId, kind]);
+  }, [workspaceId, kind, scope]);
 
   const visible = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -54,7 +62,7 @@ export default function LinkCounterpartyDialog({
     <Card className="mb-5">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="text-[14px] font-semibold text-ink">Link an existing {kind}</h3>
+          <h3 className="text-[14px] font-semibold text-ink">Link an existing {noun}</h3>
           <p className="mt-0.5 text-[12.5px] text-muted">
             The directory is shared — linking connects this workspace to an identity that already exists, instead of creating a duplicate.
           </p>
@@ -69,7 +77,7 @@ export default function LinkCounterpartyDialog({
         <Spinner />
       ) : visible.length === 0 ? (
         <p className="text-[12.5px] text-muted">
-          {rows.length === 0 ? `Every ${kind} in the directory is already linked to this workspace.` : "No match."}
+          {rows.length === 0 ? `Every ${noun} in the directory is already linked to this workspace.` : "No match."}
         </p>
       ) : (
         <div className="max-h-72 overflow-y-auto">

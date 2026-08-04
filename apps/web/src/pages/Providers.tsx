@@ -6,9 +6,16 @@ import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState, Field } from 
 import CreateAccountDialog from "../components/CreateAccountDialog";
 
 /**
- * Service providers (QNEW-71 AC11) — the third counterparty family, now wired to the /providers API.
- * Global directory entities (individual|company) with an internal/external scope; creating/linking is
- * platform-only, matching Vendors/Workshops.
+ * Service providers (QNEW-71 AC11) — the third counterparty family, wired to the /providers API.
+ * Global directory entities (individual|company); creating/linking is platform-only, matching
+ * Vendors/Workshops.
+ *
+ * ONE COMPONENT, TWO PAGES. `/providers` shows the external partners and `/internal-teams` shows the
+ * internal back office, both from this file with `only` set. They are the same table (an internal
+ * team IS a provider with scope='internal') and the same four operations, so a second page would
+ * have been 200 lines that drift apart the first time one of them is fixed. What differs is title,
+ * wording, whether the scope is a choice or a fact, and whether the All/Internal/External tabs are
+ * worth showing — all of which is data, not code.
  */
 type Scope = "internal" | "external";
 interface Provider {
@@ -24,7 +31,22 @@ interface Provider {
 }
 type Filter = "all" | Scope;
 
-export default function Providers() {
+/** Copy that changes between the two pages. Everything else below is shared. */
+const COPY = {
+  external: {
+    title: "Providers", subtitle: "External service partners", cta: "New provider",
+    empty: "No providers yet", emptyHint: "Add your first service partner.",
+    emptyLinked: "No providers linked to this workspace.", noun: "provider",
+  },
+  internal: {
+    title: "Internal", subtitle: "Your own back-office teams", cta: "New internal team",
+    empty: "No internal teams yet", emptyHint: "Add your first internal team.",
+    emptyLinked: "No internal teams linked to this workspace.", noun: "internal team",
+  },
+} as const;
+
+export default function Providers({ only }: { only?: Scope } = {}) {
+  const copy = COPY[only ?? "external"];
   const { me } = useAuth();
   const isPlatform = me?.persona === "platform";
   const [rows, setRows] = useState<Provider[] | null>(null);
@@ -33,7 +55,7 @@ export default function Providers() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [acct, setAcct] = useState<{ id: string; name: string } | null>(null);
-  const [f, setF] = useState({ counterpartyType: "company", scope: "external" as Scope, legalName: "", taxNumber: "", serviceType: "", primaryPhone: "", primaryEmail: "" });
+  const [f, setF] = useState({ counterpartyType: "company", scope: (only ?? "external") as Scope, legalName: "", taxNumber: "", serviceType: "", primaryPhone: "", primaryEmail: "" });
   const isCompany = f.counterpartyType === "company";
 
   const load = useCallback(async () => {
@@ -50,7 +72,9 @@ export default function Providers() {
     internal: rows?.filter((r) => r.scope === "internal").length ?? 0,
     external: rows?.filter((r) => r.scope === "external").length ?? 0,
   }), [rows]);
-  const visible = (rows ?? []).filter((r) => filter === "all" || r.scope === filter);
+  // `only` wins over the tab. A page that is ABOUT one scope must never be able to show the other,
+  // however the filter state got there.
+  const visible = (rows ?? []).filter((r) => (only ? r.scope === only : filter === "all" || r.scope === filter));
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -65,7 +89,7 @@ export default function Providers() {
         primaryPhone: f.primaryPhone || undefined,
         primaryEmail: f.primaryEmail || undefined,
       });
-      setF({ counterpartyType: "company", scope: "external", legalName: "", taxNumber: "", serviceType: "", primaryPhone: "", primaryEmail: "" });
+      setF({ counterpartyType: "company", scope: only ?? "external", legalName: "", taxNumber: "", serviceType: "", primaryPhone: "", primaryEmail: "" });
       setShow(false);
       await load();
     } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
@@ -85,11 +109,11 @@ export default function Providers() {
   return (
     <>
       <PageHeader
-        title="Providers"
-        subtitle="Internal & external service providers"
+        title={copy.title}
+        subtitle={copy.subtitle}
         actions={isPlatform ? (
           <button className="btn-primary rounded-md" onClick={() => setShow((v) => !v)}>
-            <Plus className="h-4 w-4" /> New provider
+            <Plus className="h-4 w-4" /> {copy.cta}
           </button>
         ) : undefined}
       />
@@ -110,12 +134,18 @@ export default function Providers() {
                 ))}
               </div>
             </Field>
-            <Field label="Scope">
-              <select className="input" value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value as Scope })}>
-                <option value="external">External partner</option>
-                <option value="internal">Internal team</option>
-              </select>
-            </Field>
+            {only ? (
+              <Field label="Scope">
+                <div className="input flex items-center text-muted">{only === "internal" ? "Internal team" : "External partner"}</div>
+              </Field>
+            ) : (
+              <Field label="Scope">
+                <select className="input" value={f.scope} onChange={(e) => setF({ ...f, scope: e.target.value as Scope })}>
+                  <option value="external">External partner</option>
+                  <option value="internal">Internal team</option>
+                </select>
+              </Field>
+            )}
             <Field label={isCompany ? "Legal name" : "Full name"}>
               <input className="input" value={f.legalName} onChange={(e) => setF({ ...f, legalName: e.target.value })} placeholder={isCompany ? "SMSA Express" : "Ahmed Al-Otaibi"} />
             </Field>
@@ -136,7 +166,7 @@ export default function Providers() {
             </Field>
             <div className="flex items-end">
               <button className="btn-primary mb-3 w-full rounded-md" disabled={busy || f.legalName.trim().length < 2 || (isCompany ? !f.taxNumber : !f.primaryPhone)}>
-                {busy ? "Creating…" : "Create provider"}
+                {busy ? "Creating…" : `Create ${copy.noun}`}
               </button>
             </div>
           </form>
@@ -144,7 +174,7 @@ export default function Providers() {
         </Card>
       )}
 
-      <div className="mb-3 flex items-center gap-1.5">
+      <div className={`mb-3 flex items-center gap-1.5 ${only ? "hidden" : ""}`}>
         {tabs.map((t) => (
           <button key={t.key} className={`btn btn-sm rounded-md ${filter === t.key ? "btn-primary" : ""}`} onClick={() => setFilter(t.key)}>
             {t.label} <span className="text-faint tnum">{counts[t.key]}</span>
@@ -156,14 +186,14 @@ export default function Providers() {
         {rows === null ? (
           <Spinner />
         ) : visible.length === 0 ? (
-          <EmptyState title="No providers yet" hint={isPlatform ? "Add your first service provider." : "No providers linked to this workspace."} />
+          <EmptyState title={copy.empty} hint={isPlatform ? copy.emptyHint : copy.emptyLinked} />
         ) : (
           <table className="w-full">
             <thead>
               <tr>
                 <th className="th">Provider</th>
                 <th className="th">Type</th>
-                <th className="th">Scope</th>
+                {!only && <th className="th">Scope</th>}
                 <th className="th">Service</th>
                 <th className="th">Contact</th>
                 <th className="th">Status</th>
@@ -175,7 +205,7 @@ export default function Providers() {
                 <tr key={p.id} className="trow">
                   <td className="td font-medium text-ink">{p.legal_name}</td>
                   <td className="td"><Badge tone={p.counterparty_type === "company" ? "gray" : "amber"}>{p.counterparty_type}</Badge></td>
-                  <td className="td text-muted">{p.scope}</td>
+                  {!only && <td className="td text-muted">{p.scope}</td>}
                   <td className="td text-muted">{p.service_type ?? "—"}</td>
                   <td className="td text-muted">{p.primary_email ?? p.primary_phone ?? "—"}</td>
                   <td className="td">
