@@ -94,7 +94,7 @@ export default function AppShell() {
   });
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
   const portalLabel =
-    ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider" } as const)[
+    ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider", internal: "Internal" } as const)[
       persona
     ] ?? "Workspace";
 
@@ -396,6 +396,7 @@ export default function AppShell() {
                 <option value="vendor">Vendor</option>
                 <option value="workshop">Workshop</option>
                 <option value="service_provider">Provider</option>
+                <option value="internal">Internal (back office)</option>
               </select>
             </label>
           )}

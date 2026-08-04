@@ -37,7 +37,7 @@ import {
 
   Stamp,} from "lucide-react";
 
-export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider";
+export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider" | "internal";
 
 export interface NavItem {
   label: string;
@@ -60,7 +60,6 @@ export const platformNav: NavGroup[] = [
       { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Approvals", path: "/approvals", icon: Stamp },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
-      { label: "Internal Dashboard", path: "/internal", icon: Boxes },
       { label: "Management Overview", path: "/management-overview", icon: Gauge },
     ],
   },
@@ -158,7 +157,6 @@ export const workspaceNav: NavGroup[] = [
       { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Management Overview", path: "/management-overview", icon: Gauge, adminOnly: true },
-      { label: "Internal Dashboard", path: "/internal", icon: Boxes, adminOnly: true },
     ],
   },
   {
@@ -294,6 +292,30 @@ export const providerNav: NavGroup[] = [
   },
 ];
 
+/**
+ * Internal-operations portal — the back office that works the procurement pipeline (extract part
+ * numbers, tender to vendors, chase delivery) rather than a workshop raising requests or a vendor
+ * quoting them.
+ *
+ * An internal team is a `service_providers` row with scope='internal', reached through
+ * `service_provider_users` and `tenant_service_providers` — the same triad as every other
+ * counterparty, deliberately NOT a fourth set of tables. `/me` splits the persona on that scope, so
+ * external providers keep `providerNav` and internal ones land here.
+ *
+ * Internal Dashboard is the real page; the rest are scaffolded like providerNav, which is why they
+ * carry `soon` — the item still routes, to the honest ComingSoon placeholder.
+ */
+export const internalNav: NavGroup[] = [
+  {
+    heading: "Internal",
+    items: [
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes },
+      { label: "Assignments", path: "/internal/assignments", icon: ClipboardList, soon: true },
+      { label: "Profile", path: "/internal/profile", icon: UserCircle, soon: true },
+    ],
+  },
+];
+
 /** Pick + filter the nav tree for the resolved persona and role. */
 export function navForPersona(
   persona: Persona,
@@ -302,6 +324,7 @@ export function navForPersona(
   if (persona === "vendor") return vendorNav;
   if (persona === "workshop") return workshopNav;
   if (persona === "service_provider") return providerNav;
+  if (persona === "internal") return internalNav;
   if (persona === "platform") {
     // No workspace selected → the system (super-admin) view; inside a workspace → the full nav.
     const tree = opts.unscoped ? platformSystemNav : platformNav;

@@ -12,7 +12,20 @@ export class MeController {
   constructor(private readonly dbService: DbService) {}
 
   /** Current user + the tenant/role resolved for this request, plus the resolved persona
-   *  (which portal the frontend renders): platform | vendor | workspace. */
+   *  (which portal the frontend renders): platform | vendor | workshop | service_provider |
+   *  internal | workspace.
+   *
+   *  INTERNAL IS NOT A FOURTH COUNTERPARTY. It is a service provider whose `scope` is 'internal' —
+   *  the enum `provider_scope` has had exactly the two values internal|external since the entity was
+   *  created, and one internal row (Qparts Logistics) predates this. So the back office gets its own
+   *  PORTAL without its own TABLE: no internal_teams, no internal_team_users, no
+   *  tenant_internal_teams shadowing three tables that already hold this. The split is here, at the
+   *  last possible moment, where a portal is chosen — everything upstream (the guard, the tenant
+   *  link, the activation lifecycle, RLS) stays one code path for all providers.
+   *
+   *  The cost of that choice, stated plainly: `ctx.role` is still "service_provider" for these users,
+   *  because the guard does not read scope. Any future endpoint that must be internal-only has to
+   *  check the scope itself rather than trust the role. */
   @Get()
   async me(@Req() req: Request) {
     const ctx = getContext(req);
@@ -43,10 +56,17 @@ export class MeController {
               )}
               where id = ${cp.entityId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
           : undefined;
+        // Its own query, not a column on the `entity` select above: `scope` exists on
+        // service_providers and on neither of the other two tables, and that select interpolates the
+        // table name, so asking for it there would fail for every vendor and workshop.
+        const providerScope = isProvider
+          ? ((await tx.execute(sql`
+              select scope from service_providers where id = ${cp!.entityId}::uuid limit 1`)) as Array<{ scope: string }>)[0]?.scope ?? null
+          : null;
         const impersonator = ctx.impersonatorId
           ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
           : undefined;
-        return { user, platformRole, isVendor, isWorkshop, isProvider, entity, impersonatorName: impersonator?.full_name ?? null };
+        return { user, platformRole, isVendor, isWorkshop, isProvider, providerScope, entity, impersonatorName: impersonator?.full_name ?? null };
       },
     );
 
@@ -57,7 +77,9 @@ export class MeController {
         : info.isWorkshop
           ? "workshop"
           : info.isProvider
-            ? "service_provider"
+            ? info.providerScope === "internal"
+              ? "internal"
+              : "service_provider"
             : "workspace";
     return {
       user: info.user,
@@ -71,6 +93,7 @@ export class MeController {
       platformRole: info.platformRole ?? null,
       isVendor: info.isVendor,
       isWorkshop: info.isWorkshop,
+      providerScope: info.providerScope,
       activationStatus: info.entity?.activation_status ?? null,
       counterpartyType: info.entity?.counterparty_type ?? null,
       persona,
