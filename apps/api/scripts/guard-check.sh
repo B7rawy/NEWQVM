@@ -3961,3 +3961,11 @@ ok 0 "$(psql "select count(*) from app_pages
   "the order chain and the pricing pages are gated on a linked counterparty"
 ok 1 "$(psql "select count(*) from app_pages where persona='workspace' and path='/onboarding' and module='core'")" \
   "and 'Add supplier / workshop' is not — an empty workspace must be able to fill itself"
+# A heading holds ONE owner, so the tags read as a pattern rather than a scatter. "Directory" is the
+# deliberate exception — it is the index OF the counterparties, so four different tags in a row is
+# what that group means.
+ok 0 "$(psql "select count(*) from (
+    select persona, group_heading from app_pages
+    where module <> 'core' and group_heading <> 'Directory'
+    group by persona, group_heading having count(distinct module) > 1) x")" \
+  "no group mixes two counterparties except the Directory that indexes them"

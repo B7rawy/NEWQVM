@@ -161,16 +161,20 @@ export const platformNav: NavGroup[] = [
     ],
   },
   {
-    heading: "Services",
+    heading: "Reports",
     items: [
-      { label: "Pricing Engine", path: "/pricing", icon: Percent, soon: true, module: "vendor" },
-      { label: "Profit Percentages", path: "/profit", icon: BarChart3, soon: true, module: "vendor" },
       { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true, module: "workshop" },
-      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
     ],
   },
   {
-    heading: "Master data",
+    heading: "Pricing",
+    items: [
+      { label: "Pricing Engine", path: "/pricing", icon: Percent, soon: true, module: "vendor" },
+      { label: "Profit Percentages", path: "/profit", icon: BarChart3, soon: true, module: "vendor" },
+    ],
+  },
+  {
+    heading: "Directory",
     items: [
       { label: "Vendors", path: "/vendors", icon: Store, module: "vendor" },
       { label: "Workshops", path: "/org/workshops", icon: Wrench, module: "workshop" },
@@ -181,6 +185,7 @@ export const platformNav: NavGroup[] = [
   {
     heading: "Admin",
     items: [
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
       { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
@@ -196,6 +201,11 @@ export const platformSystemNav: NavGroup[] = [
     heading: "Platform",
     items: [
       { label: "Management Overview", path: "/management-overview", icon: Gauge },
+    ],
+  },
+  {
+    heading: "Back office",
+    items: [
       { label: "Internal Dashboard", path: "/internal", icon: Boxes, module: "internal" },
     ],
   },
@@ -210,7 +220,7 @@ export const platformSystemNav: NavGroup[] = [
     ],
   },
   {
-    heading: "Master data",
+    heading: "Directory",
     items: [
       { label: "Vendors", path: "/vendors", icon: Store, module: "vendor" },
       { label: "Workshops", path: "/org/workshops", icon: Wrench, module: "workshop" },
@@ -257,23 +267,33 @@ export const workspaceNav: NavGroup[] = [
     ],
   },
   {
-    heading: "Reports & pricing",
+    heading: "Reports",
     items: [
       { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true, module: "workshop", adminOnly: true },
-      { label: "Parts Pricing Report", path: "/parts-pricing-report", icon: BarChart3, soon: true, module: "vendor", adminOnly: true },
       { label: "Targets", path: "/targets", icon: Target, soon: true, module: "workshop", adminOnly: true },
-      { label: "Profit Percentages", path: "/profit", icon: Percent, soon: true, module: "vendor", adminOnly: true },
-      { label: "Pricing Engine", path: "/pricing", icon: SlidersHorizontal, soon: true, module: "vendor", adminOnly: true },
     ],
   },
   {
-    heading: "Setup",
+    heading: "Pricing",
+    items: [
+      { label: "Pricing Engine", path: "/pricing", icon: SlidersHorizontal, soon: true, module: "vendor", adminOnly: true },
+      { label: "Profit Percentages", path: "/profit", icon: Percent, soon: true, module: "vendor", adminOnly: true },
+      { label: "Parts Pricing Report", path: "/parts-pricing-report", icon: BarChart3, soon: true, module: "vendor", adminOnly: true },
+    ],
+  },
+  {
+    heading: "Directory",
     items: [
       { label: "Add supplier / workshop", path: "/onboarding", icon: UserPlus, adminOnly: true },
       { label: "Workshops", path: "/org/workshops", icon: Wrench, module: "workshop", adminOnly: true },
       { label: "Vendors", path: "/vendors", icon: Store, module: "vendor", adminOnly: true },
       { label: "Providers", path: "/providers", icon: Handshake, module: "service_provider", adminOnly: true },
       { label: "Internal", path: "/internal-teams", icon: Boxes, module: "internal", adminOnly: true },
+    ],
+  },
+  {
+    heading: "Setup",
+    items: [
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, adminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users, adminOnly: true },
       { label: "Status Logs", path: "/status-logs", icon: History, adminOnly: true },
@@ -467,6 +487,11 @@ export const internalNav: NavGroup[] = [
     items: [
       { label: "Users & Permissions", path: "/admin/users", icon: Users, module: "internal" },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, module: "internal" },
+    ],
+  },
+  {
+    heading: "Directory",
+    items: [
       { label: "Vendors", path: "/vendors", icon: Store, module: "vendor" },
     ],
   },
