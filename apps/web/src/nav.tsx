@@ -37,6 +37,53 @@ import {
 
   Stamp,} from "lucide-react";
 
+/**
+ * NAME → COMPONENT. /nav returns an icon NAME, because a database column cannot hold a React
+ * component. This is the only place that mapping exists, and it is built from the same names the
+ * static trees below use, so any page seeded from those trees can always be drawn.
+ *
+ * A name with no entry falls back to a generic glyph rather than throwing: losing one icon is a
+ * blemish, losing the whole sidebar is being locked out of the product.
+ */
+export const NAV_ICONS: Record<string, LucideIcon> = {
+  Banknote,
+  BarChart3,
+  Boxes,
+  Building2,
+  CalendarClock,
+  CheckCircle,
+  ClipboardCheck,
+  ClipboardList,
+  FilePlus2,
+  FileText,
+  Files,
+  Gauge,
+  GitBranch,
+  Handshake,
+  History,
+  Inbox,
+  LayoutDashboard,
+  LineChart,
+  PackageSearch,
+  Percent,
+  Receipt,
+  Settings,
+  ShoppingCart,
+  SlidersHorizontal,
+  Stamp,
+  Store,
+  Target,
+  Truck,
+  Undo2,
+  UserCircle,
+  UserPlus,
+  Users,
+  Wallet,
+  Webhook,
+  Wrench,
+};
+export const iconByName = (name: string): LucideIcon => NAV_ICONS[name] ?? LayoutDashboard;
+
 export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider" | "internal";
 
 export interface NavItem {

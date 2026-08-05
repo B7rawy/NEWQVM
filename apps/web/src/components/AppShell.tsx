@@ -20,7 +20,8 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
-import { navForPersona, type Persona } from "../nav";
+import { navForPersona, iconByName, type NavGroup, type Persona } from "../nav";
+import { api } from "../lib/api";
 import ActivationBanner from "./ActivationBanner";
 import UpgradeBanner from "./UpgradeBanner";
 
@@ -87,11 +88,40 @@ export default function AppShell() {
   }
   const previewing = canPreview && !!previewPersona && previewPersona !== realPersona;
   const persona: Persona = canPreview && previewPersona ? previewPersona : realPersona;
-  const groups = navForPersona(persona, {
+  /**
+   * THE SIDEBAR COMES FROM THE SERVER, because only the server knows which counterparties this
+   * workspace has linked and which pages this role may see. The static tree in nav.tsx is kept as
+   * the FALLBACK, not as dead code: if /nav fails — offline, a bad deploy, a 500 — a stale menu is
+   * recoverable and an empty one is not, since with no links there is no way to navigate to safety.
+   *
+   * Previewing another portal deliberately keeps using the static tree. The preview is a client-side
+   * "what does a vendor see" for platform staff, and /nav answers for who you ACTUALLY are — asking
+   * it while previewing would return your own tree and make the switcher look broken.
+   */
+  const [served, setServed] = useState<NavGroup[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean }> }> }>("/nav")
+      .then((d) => {
+        if (!live) return;
+        setServed(d.groups.map((g) => ({
+          heading: g.heading,
+          items: g.items.map((i) => ({ label: i.label, path: i.path, icon: iconByName(i.icon), soon: i.soon })),
+        })));
+      })
+      .catch(() => { if (live) setServed(null); });
+    return () => { live = false; };
+    // re-resolves when the workspace or the environment changes: linking a counterparty in another
+    // tab is picked up the next time either of those does, without a reload.
+  }, [realPersona, activeSlug, environment]);
+
+  const fallback = navForPersona(persona, {
     isSuperAdmin: previewing ? true : me?.platformRole === "super_admin",
     isCompanyAdmin: previewing ? true : me?.role === "company_admin",
     unscoped: persona === "platform" && !activeSlug,
   });
+  const groups = previewing || !served ? fallback : served;
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
   const portalLabel =
     ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider", internal: "Internal" } as const)[

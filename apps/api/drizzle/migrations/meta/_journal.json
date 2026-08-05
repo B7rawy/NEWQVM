@@ -484,6 +484,13 @@
       "when": 1785266005595,
       "tag": "0068_drop_duplicate_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1785266006595,
+      "tag": "0069_app_pages",
+      "breakpoints": true
     }
   ]
 }

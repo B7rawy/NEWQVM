@@ -4,6 +4,7 @@ import type { Request } from "express";
 import { AuthGuard } from "../../common/auth.guard.js";
 import { getContext } from "../../common/request-context.js";
 import { resolveCounterparty } from "../../common/counterparty.helpers.js";
+import { resolvePersona } from "../../common/persona.helpers.js";
 import { DbService } from "../../db/db.service.js";
 
 @Controller("me")
@@ -56,31 +57,16 @@ export class MeController {
               )}
               where id = ${cp.entityId}::uuid limit 1`)) as Array<{ activation_status: string; counterparty_type: string }>)[0]
           : undefined;
-        // Its own query, not a column on the `entity` select above: `scope` exists on
-        // service_providers and on neither of the other two tables, and that select interpolates the
-        // table name, so asking for it there would fail for every vendor and workshop.
-        const providerScope = isProvider
-          ? ((await tx.execute(sql`
-              select scope from service_providers where id = ${cp!.entityId}::uuid limit 1`)) as Array<{ scope: string }>)[0]?.scope ?? null
-          : null;
+        // ONE persona implementation, shared with /nav. The shell /me picks and the tree /nav
+        // returns have to agree or the sidebar navigates nowhere.
+        const { persona, providerScope } = await resolvePersona(tx, ctx.userId, ctx.isInternal);
         const impersonator = ctx.impersonatorId
           ? ((await tx.execute(sql`select full_name from users where id = ${ctx.impersonatorId}::uuid limit 1`)) as Array<{ full_name: string }>)[0]
           : undefined;
-        return { user, platformRole, isVendor, isWorkshop, isProvider, providerScope, entity, impersonatorName: impersonator?.full_name ?? null };
+        return { user, platformRole, isVendor, isWorkshop, isProvider, persona, providerScope, entity, impersonatorName: impersonator?.full_name ?? null };
       },
     );
 
-    const persona = ctx.isInternal
-      ? "platform"
-      : info.isVendor
-        ? "vendor"
-        : info.isWorkshop
-          ? "workshop"
-          : info.isProvider
-            ? info.providerScope === "internal"
-              ? "internal"
-              : "service_provider"
-            : "workspace";
     return {
       user: info.user,
       tenant: { slug: ctx.tenantSlug, id: ctx.tenantId },
@@ -96,7 +82,7 @@ export class MeController {
       providerScope: info.providerScope,
       activationStatus: info.entity?.activation_status ?? null,
       counterpartyType: info.entity?.counterparty_type ?? null,
-      persona,
+      persona: info.persona,
       impersonating: !!ctx.impersonatorId,
       impersonatorName: info.impersonatorName,
     };
