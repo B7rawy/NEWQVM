@@ -102,6 +102,18 @@ export interface NavGroup {
 }
 
 /** Platform portal — Qparts staff (super admin + service roles), cross-workspace. */
+/* ─────────────────────────────────────────────────────────────────────────────────────────────
+   GENERATED FROM app_pages. Do not hand-edit — the next regeneration overwrites it.
+
+   These trees are the FALLBACK the shell renders when /nav cannot be reached. The database has
+   been the source of truth since migration 0069, and the reconciliation migrations that followed
+   moved it; regenerating keeps the offline copy telling the same story as the live one. A fallback
+   that disagrees with the product is worse than no fallback, because it appears exactly when
+   something has already gone wrong.
+
+   To change a menu, change the catalog (the Pages screen, or a migration) and regenerate.
+   ──────────────────────────────────────────────────────────────────────────────────────────── */
+
 export const platformNav: NavGroup[] = [
   {
     heading: "Workspace",
@@ -151,11 +163,6 @@ export const platformNav: NavGroup[] = [
   },
 ];
 
-/**
- * Platform SYSTEM view — what a super admin controls across the WHOLE platform when no workspace is
- * selected ("All workspaces" / unscoped). Focused on platform administration, not one workspace's
- * day-to-day. (When a platform user enters a specific workspace subdomain they get `platformNav`.)
- */
 export const platformSystemNav: NavGroup[] = [
   {
     heading: "Platform",
@@ -193,19 +200,10 @@ export const platformSystemNav: NavGroup[] = [
   },
 ];
 
-/**
- * Workspace portal — the manager (company_admin) runs the whole procurement operation for ONE
- * workspace. Non-admin workspace users (branch managers / service advisors) see the ungated core;
- * the management dashboards, reports/pricing and setup/master-data are `adminOnly` (the manager).
- */
 export const workspaceNav: NavGroup[] = [
   {
     heading: "Dashboard",
     items: [
-      // FIRST, AND DELIBERATELY NOT adminOnly. Custody assigns work to company_admin,
-      // branch_manager and service_advisor alike, so a branch manager holding three overdue
-      // records is exactly the person this link is for. It sits above Overview because "what is
-      // waiting on me" is the question a workspace user opens the product to answer.
       { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Management Overview", path: "/management-overview", icon: Gauge, adminOnly: true },
@@ -256,24 +254,23 @@ export const workspaceNav: NavGroup[] = [
   },
 ];
 
-/** Vendor portal — a supplier, across every workspace it's linked to. */
 export const vendorNav: NavGroup[] = [
   {
     heading: "Sales",
     items: [
       { label: "Overview", path: "/vendor", icon: LayoutDashboard },
-      { label: "Quotation Requests", path: "/vendor/quotations", icon: Files },
+      { label: "Quotations", path: "/vendor/quotations", icon: Files },
       { label: "Confirmed Orders", path: "/vendor/confirmed", icon: ShoppingCart },
     ],
   },
   {
     heading: "Fulfillment & finance",
     items: [
-      { label: "Deliveries", path: "/vendor/deliveries", icon: Truck, soon: true },
-      { label: "Invoices", path: "/vendor/invoices", icon: Receipt, soon: true },
-      { label: "Returns & Exchanges", path: "/vendor/returns", icon: Undo2, soon: true },
+      { label: "Purchase & Return Invoices", path: "/vendor/invoices", icon: Receipt, soon: true },
       { label: "Statement & Payments", path: "/vendor/statement", icon: Wallet, soon: true },
+      { label: "Returns & Exchanges", path: "/vendor/returns", icon: Undo2, soon: true },
       { label: "Invoice Financing", path: "/vendor/financing", icon: Banknote, soon: true },
+      { label: "Shipping & Delivery", path: "/vendor/deliveries", icon: Truck, soon: true },
     ],
   },
   {
@@ -281,37 +278,54 @@ export const vendorNav: NavGroup[] = [
     items: [
       { label: "Parts Catalog", path: "/vendor/catalog", icon: PackageSearch, soon: true },
       { label: "Online Store", path: "/vendor/store", icon: Store, soon: true },
+      { label: "Paid Quotations", path: "/vendor/paid-quotations", icon: Stamp, soon: true },
+      { label: "Wallet", path: "/vendor/wallet", icon: Wallet, soon: true },
       { label: "Market Index", path: "/vendor/market-index", icon: LineChart, soon: true },
     ],
   },
   {
     heading: "Account",
     items: [
-      { label: "Vendor Profile", path: "/vendor/profile", icon: UserCircle },
-      { label: "Branches & Users", path: "/vendor/branches", icon: Building2, soon: true },
+      { label: "Users & Permissions", path: "/vendor/branches", icon: Building2, soon: true },
+      { label: "Profit Percentages", path: "/vendor/margins", icon: Percent, soon: true },
+      { label: "Account Managers", path: "/vendor/account-managers", icon: CalendarClock, soon: true },
+      { label: "My Profile", path: "/vendor/profile", icon: UserCircle },
       { label: "Settings", path: "/vendor/settings", icon: Settings, soon: true },
     ],
   },
 ];
 
-/** Workshop portal — the customer (a repair shop) that requests parts and receives them. */
 export const workshopNav: NavGroup[] = [
   {
     heading: "Overview",
-    items: [{ label: "Dashboard", path: "/workshop", icon: LayoutDashboard }],
-  },
-  {
-    heading: "Request parts",
     items: [
-      { label: "New Request", path: "/workshop/requests/new", icon: FilePlus2 },
-      { label: "My Requests", path: "/workshop/requests", icon: Files },
+      { label: "Overview", path: "/workshop", icon: LayoutDashboard },
     ],
   },
   {
-    heading: "Orders & deliveries",
+    heading: "Storefront",
     items: [
-      { label: "My Orders", path: "/workshop/orders", icon: ShoppingCart },
-      { label: "Deliveries", path: "/deliveries", icon: Truck, soon: true },
+      { label: "Online Store", path: "/workshop/store", icon: Store, soon: true },
+      { label: "Shipping & Delivery", path: "/shipping", icon: Truck, soon: true },
+      { label: "Paid Quotations", path: "/paid-quotations", icon: Stamp, soon: true },
+      { label: "Wallet", path: "/wallet", icon: Wallet, soon: true },
+    ],
+  },
+  {
+    heading: "Requests",
+    items: [
+      { label: "New RFQ", path: "/workshop/requests/new", icon: FilePlus2,
+        children: [
+          { label: "Regular RFQ", path: "/workshop/requests/new/regular", icon: FileText, soon: true },
+        ] },
+      { label: "RFQs Dashboard", path: "/workshop/requests", icon: Files },
+    ],
+  },
+  {
+    heading: "Orders",
+    items: [
+      { label: "Orders Dashboard", path: "/workshop/orders", icon: ShoppingCart },
+      { label: "Delivered Orders", path: "/delivered", icon: Truck, soon: true },
       { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true },
     ],
   },
@@ -323,48 +337,115 @@ export const workshopNav: NavGroup[] = [
     ],
   },
   {
+    heading: "Records",
+    items: [
+      { label: "Notes Archive", path: "/notes-archive", icon: History, soon: true },
+    ],
+  },
+  {
     heading: "Account",
     items: [
       { label: "Branches", path: "/workshop/branches", icon: Building2 },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
+      { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
+      { label: "My Profile", path: "/workshop/profile", icon: UserCircle, soon: true },
       { label: "Settings", path: "/settings", icon: UserCircle },
     ],
   },
 ];
 
-/** Service-provider portal — internal/external providers. Scaffolded (coming soon) for now. */
 export const providerNav: NavGroup[] = [
   {
     heading: "Provider",
     items: [
       { label: "Overview", path: "/provider", icon: LayoutDashboard },
       { label: "Assignments", path: "/provider/assignments", icon: ClipboardList, soon: true },
+    ],
+  },
+  {
+    heading: "Part numbers",
+    items: [
+      { label: "Part Number Extraction", path: "/provider/extraction", icon: PackageSearch, soon: true },
+      { label: "Part Number Request Settings", path: "/provider/extraction-settings", icon: SlidersHorizontal, soon: true },
+    ],
+  },
+  {
+    heading: "Procurement",
+    items: [
+      { label: "New RFQ", path: "/provider/rfq-new", icon: FilePlus2, soon: true,
+        children: [
+          { label: "Regular RFQ", path: "/provider/rfq-new/regular", icon: FileText, soon: true },
+        ] },
+      { label: "RFQs Dashboard", path: "/provider/rfqs", icon: Files, soon: true },
+      { label: "Orders Dashboard", path: "/provider/orders", icon: ShoppingCart, soon: true },
+    ],
+  },
+  {
+    heading: "Finance",
+    items: [
       { label: "Invoices", path: "/provider/invoices", icon: Receipt, soon: true },
-      { label: "Profile", path: "/provider/profile", icon: UserCircle, soon: true },
+      { label: "Wallet", path: "/provider/wallet", icon: Wallet, soon: true },
+    ],
+  },
+  {
+    heading: "Account",
+    items: [
+      { label: "Users & Permissions", path: "/provider/users", icon: Users, soon: true },
+      { label: "Account Managers", path: "/provider/account-managers", icon: CalendarClock, soon: true },
+      { label: "My Profile", path: "/provider/profile", icon: UserCircle, soon: true },
     ],
   },
 ];
 
-/**
- * Internal-operations portal — the back office that works the procurement pipeline (extract part
- * numbers, tender to vendors, chase delivery) rather than a workshop raising requests or a vendor
- * quoting them.
- *
- * An internal team is a `service_providers` row with scope='internal', reached through
- * `service_provider_users` and `tenant_service_providers` — the same triad as every other
- * counterparty, deliberately NOT a fourth set of tables. `/me` splits the persona on that scope, so
- * external providers keep `providerNav` and internal ones land here.
- *
- * Internal Dashboard is the real page; the rest are scaffolded like providerNav, which is why they
- * carry `soon` — the item still routes, to the honest ComingSoon placeholder.
- */
 export const internalNav: NavGroup[] = [
   {
-    heading: "Internal",
+    heading: "Dashboard",
     items: [
+      { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes },
+      { label: "Part Number Extraction", path: "/internal/extraction", icon: PackageSearch, soon: true },
       { label: "Assignments", path: "/internal/assignments", icon: ClipboardList, soon: true },
-      { label: "Profile", path: "/internal/profile", icon: UserCircle, soon: true },
+    ],
+  },
+  {
+    heading: "Operations",
+    items: [
+      { label: "Delivery & Return Notes", path: "/notes", icon: FileText, soon: true },
+      { label: "Notes Archive", path: "/notes-archive", icon: History, soon: true },
+      { label: "Status Logs", path: "/status-logs", icon: History },
+      { label: "Purchase & Return Invoices", path: "/purchase-invoices", icon: Receipt, soon: true },
+      { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true },
+    ],
+  },
+  {
+    heading: "Fulfilment",
+    items: [
+      { label: "Shipping & Delivery", path: "/shipping", icon: Truck, soon: true },
+      { label: "Paid Quotations", path: "/paid-quotations", icon: Stamp, soon: true },
+      { label: "Wallet", path: "/wallet", icon: Wallet, soon: true },
+    ],
+  },
+  {
+    heading: "Reports",
+    items: [
+      { label: "Performance Reports", path: "/reports", icon: LineChart, soon: true },
+      { label: "Parts Pricing Report", path: "/parts-pricing-report", icon: BarChart3, soon: true },
+      { label: "Profit Percentages", path: "/profit", icon: Percent, soon: true },
+    ],
+  },
+  {
+    heading: "Setup",
+    items: [
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
+      { label: "Vendors", path: "/vendors", icon: Store },
+    ],
+  },
+  {
+    heading: "Account",
+    items: [
+      { label: "My Profile", path: "/internal/profile", icon: UserCircle, soon: true },
     ],
   },
 ];
