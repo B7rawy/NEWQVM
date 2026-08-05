@@ -174,6 +174,20 @@ export const platformNav: NavGroup[] = [
     ],
   },
   {
+    heading: "Back office",
+    items: [
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes, module: "internal" },
+      { label: "Part Number Extraction", path: "/internal/extraction", icon: PackageSearch, soon: true, module: "internal" },
+    ],
+  },
+  {
+    heading: "Service providers",
+    items: [
+      { label: "Assignments", path: "/provider/assignments", icon: ClipboardList, soon: true, module: "service_provider" },
+      { label: "Invoices", path: "/provider/invoices", icon: Receipt, soon: true, module: "service_provider" },
+    ],
+  },
+  {
     heading: "Directory",
     items: [
       { label: "Vendors", path: "/vendors", icon: Store, module: "vendor" },
@@ -279,6 +293,20 @@ export const workspaceNav: NavGroup[] = [
       { label: "Pricing Engine", path: "/pricing", icon: SlidersHorizontal, soon: true, module: "vendor", adminOnly: true },
       { label: "Profit Percentages", path: "/profit", icon: Percent, soon: true, module: "vendor", adminOnly: true },
       { label: "Parts Pricing Report", path: "/parts-pricing-report", icon: BarChart3, soon: true, module: "vendor", adminOnly: true },
+    ],
+  },
+  {
+    heading: "Back office",
+    items: [
+      { label: "Internal Dashboard", path: "/internal", icon: Boxes, module: "internal" },
+      { label: "Part Number Extraction", path: "/internal/extraction", icon: PackageSearch, soon: true, module: "internal" },
+    ],
+  },
+  {
+    heading: "Service providers",
+    items: [
+      { label: "Assignments", path: "/provider/assignments", icon: ClipboardList, soon: true, module: "service_provider" },
+      { label: "Invoices", path: "/provider/invoices", icon: Receipt, soon: true, module: "service_provider" },
     ],
   },
   {

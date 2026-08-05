@@ -3969,3 +3969,10 @@ ok 0 "$(psql "select count(*) from (
     where module <> 'core' and group_heading <> 'Directory'
     group by persona, group_heading having count(distinct module) > 1) x")" \
   "no group mixes two counterparties except the Directory that indexes them"
+# Every counterparty family must give a workspace something to DO, not just a Directory row that
+# lists it. Provider and internal each had exactly one page for a while, so linking one visibly
+# changed nothing and the whole feature read as broken for those two families.
+ok 0 "$(psql "select count(*) from (
+    select module from app_pages where persona = 'workspace' and module <> 'core'
+    group by module having count(*) < 2) x")" \
+  "each counterparty family has more than its Directory row in the workspace menu"

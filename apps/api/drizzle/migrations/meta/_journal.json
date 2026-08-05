@@ -554,6 +554,13 @@
       "when": 1785266015595,
       "tag": "0078_group_by_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1785266016595,
+      "tag": "0079_workspace_sees_counterparties",
+      "breakpoints": true
     }
   ]
 }
