@@ -88,9 +88,12 @@ export class NavService {
          * somebody who is explicitly allowed it. It becomes a top-level row instead.
          */
         const shown = new Set(visible.map((p) => p.key));
+        // `module` travels to the client so the sidebar can say WHOSE a page is. The client decides
+        // whether that is worth showing — inside a counterparty's own portal every page names that
+        // same counterparty, and a tag on every row is noise rather than information.
         const item = (i: (typeof visible)[number]) => ({
-          key: i.key, label: i.label, path: i.path, icon: i.icon, soon: !i.is_built,
-          children: [] as Array<{ key: string; label: string; path: string; icon: string; soon: boolean }>,
+          key: i.key, label: i.label, path: i.path, icon: i.icon, soon: !i.is_built, module: i.module,
+          children: [] as Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module: string }>,
         });
         const byKey = new Map(visible.map((p) => [p.key, item(p)]));
         const top = visible.filter((p) => !p.parent_key || !shown.has(p.parent_key));

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
-import { navForPersona, iconByName, type NavGroup, type Persona } from "../nav";
+import { navForPersona, iconByName, MODULE_TAG, OWN_MODULE, type NavGroup, type Persona } from "../nav";
 import { api } from "../lib/api";
 import ActivationBanner from "./ActivationBanner";
 import UpgradeBanner from "./UpgradeBanner";
@@ -105,14 +105,14 @@ export default function AppShell() {
   useEffect(() => {
     let live = true;
     api
-      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; children?: Array<{ key: string; label: string; path: string; icon: string; soon: boolean }> }> }> }>("/nav")
+      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string; children?: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string }> }> }> }>("/nav")
       .then((d) => {
         if (!live) return;
         setServed(d.groups.map((g) => ({
           heading: g.heading,
           items: g.items.map((i) => ({
-            label: i.label, path: i.path, icon: iconByName(i.icon), soon: i.soon,
-            children: (i.children ?? []).map((c) => ({ label: c.label, path: c.path, icon: iconByName(c.icon), soon: c.soon })),
+            label: i.label, path: i.path, icon: iconByName(i.icon), soon: i.soon, module: i.module,
+            children: (i.children ?? []).map((c) => ({ label: c.label, path: c.path, icon: iconByName(c.icon), soon: c.soon, module: c.module })),
           })),
         })));
       })
@@ -129,6 +129,30 @@ export default function AppShell() {
   });
   const groups = previewing || !served ? fallback : served;
   const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
+
+  /**
+   * Whose page is this? Shown only when the answer is not "yours". Inside the vendor portal every
+   * page is a vendor page and eighteen identical tags would be decoration; in a workspace menu the
+   * same tag tells you at a glance that RFQs are here because a workshop is linked and Pricing
+   * because a vendor is.
+   */
+  const own = OWN_MODULE[persona];
+  const tagFor = (m?: string) => (m && m !== "core" && m !== own ? MODULE_TAG[m] : undefined);
+  const Tag = ({ m }: { m?: string }) => {
+    const t = tagFor(m);
+    if (!t) return null;
+    return (
+      <span
+        title={`This page is here because a ${t.label.toLowerCase()} is linked to this workspace`}
+        // Sentence case, no letter-spacing. Uppercase + tracking made "Workshop" 66px wide, which
+        // left the label 67px and cut single words like "Statements" that cannot wrap. The same word
+        // set in normal case is ~48px and every label fits.
+        className={`mt-[2px] shrink-0 self-start rounded px-1 py-px text-[9.5px] font-semibold leading-[1.45] ${t.tone}`}
+      >
+        {t.label}
+      </span>
+    );
+  };
   const portalLabel =
     ({ platform: "Platform", workspace: "Workspace", vendor: "Vendor", workshop: "Workshop", service_provider: "Provider", internal: "Internal" } as const)[
       persona
@@ -256,8 +280,14 @@ export default function AppShell() {
                 className={({ isActive }) => `nav-item ${isActive ? "active" : ""} ${collapsed ? "justify-center" : ""}`}
               >
                 <it.icon className="h-[17px] w-[17px] shrink-0" />
-                {!collapsed && <span className="flex-1">{it.label}</span>}
-                {!collapsed && it.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
+                {/* WRAPS, does not truncate. A 248px rail cannot hold "Purchase & Return Invoices"
+                    plus a Workshop tag plus a Soon pill on one line — measured, the label got 67px of
+                    the 166 it needs and rendered as "Purchas…". Truncating the name to make room for
+                    a tag ABOUT that name is the wrong trade, so the label takes a second line and the
+                    row grows only for the few that need it. */}
+                {!collapsed && <span className="min-w-0 flex-1 leading-tight">{it.label}</span>}
+                {!collapsed && <Tag m={it.module} />}
+                {!collapsed && it.soon && <span className="mt-px shrink-0 self-start text-[10px] font-medium text-faint">Soon</span>}
                 {!collapsed && kids.length > 0 && (
                   // A span, not a button: a <button> inside the <a> is invalid HTML and React will
                   // hand the click to the link anyway. stopPropagation keeps the chevron from
@@ -284,8 +314,9 @@ export default function AppShell() {
                   className={({ isActive }) => `nav-item ms-4 ps-4 ${isActive ? "active" : ""}`}
                 >
                   <c.icon className="h-[15px] w-[15px] shrink-0" />
-                  <span className="flex-1">{c.label}</span>
-                  {c.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
+                  <span className="min-w-0 flex-1 leading-tight">{c.label}</span>
+                  <Tag m={c.module} />
+                  {c.soon && <span className="shrink-0 text-[10px] font-medium text-faint">Soon</span>}
                 </NavLink>
               ))}
             </div>
