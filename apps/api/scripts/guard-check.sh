@@ -3911,8 +3911,8 @@ ok 0 "$(psql "select count(*) from app_pages a
   "no counterparty page is roleless — those portals have no wildcard manager to recover it"
 ok 0 "$(psql "select count(*) from app_page_roles r
   where r.role not in ('super_admin','staff','account_manager','purchasing','part_extractor',
-                       'company_admin','branch_manager','service_advisor','vendor_admin','vendor_user','service_provider')")" \
-  "and no page is granted to a role that does not exist"
+                       'company_admin','branch_manager','service_advisor','vendor','workshop','service_provider')")" \
+  "and no page is granted to a role the guard can actually emit"
 # /nav must answer, and answer with something. An empty tree is being locked out of the product.
 NAVG=$(curl -s "${AR[@]}" "$B/api/nav" | $PY -c "import sys,json;print(len(json.load(sys.stdin).get('groups',[])))" 2>/dev/null || echo 0)
 ok 1 "$([ "${NAVG:-0}" -gt 0 ] && echo 1 || echo 0)" "/nav returns a non-empty tree for platform staff"
@@ -3924,3 +3924,14 @@ ok 0 "$(psql "with r as (select persona, group_heading, sort_order,
          select count(*) from (select persona, group_heading from r where prev is distinct from group_heading
                                group by persona, group_heading having count(*) > 1) x")" \
   "no heading is split into two groups by a stray sort order"
+
+# A portal whose pages all name a role nobody carries is an empty sidebar with no way out — exactly
+# what shipped in 0069 for vendor and workshop. Assert every portal can open at least one of its own.
+ok 0 "$(psql "select count(*) from (
+    select p.persona from app_pages p
+    join (values ('vendor','vendor'),('workshop','workshop'),
+                 ('service_provider','service_provider'),('internal','service_provider')) m(persona, rr)
+      on m.persona = p.persona
+    left join app_page_roles r on r.page_key = p.key and r.role = m.rr
+    group by p.persona having count(r.role) = 0) x")" \
+  "every counterparty portal has pages its own runtime role can open"

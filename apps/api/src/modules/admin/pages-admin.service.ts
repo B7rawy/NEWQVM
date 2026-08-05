@@ -6,17 +6,25 @@ import { DbService, type RlsContext } from "../../db/db.service.js";
 /**
  * Editing who sees which page, without a deploy.
  *
- * The roles offered depend on the portal, because they are different vocabularies: a vendor portal
- * page can no more be granted to a `service_advisor` than a workspace page to a `vendor_user`. This
- * map is the authority for both the UI's checkboxes and the server's validation, so the screen
- * cannot offer a role the server would then reject.
+ * THESE ARE THE VALUES auth.guard.ts PUTS ON A REQUEST, not the membership_role enum. They look
+ * similar and are not the same list: a counterparty user arrives as the bare "vendor", "workshop"
+ * or "service_provider", while company_admin / branch_manager / service_advisor come from a
+ * workspace membership. Seeding this from the enum instead of from the guard is what left the
+ * vendor and workshop sidebars empty (see migration 0072) — a role nobody carries matches nothing.
+ *
+ * The map is the authority for the screen's checkboxes AND the server's validation, so the UI
+ * cannot offer a role the server would reject, and neither can drift from what the guard emits.
  */
 export const ROLES_BY_PERSONA: Record<string, string[]> = {
   platform: ["super_admin", "staff", "account_manager", "purchasing", "part_extractor"],
   platform_system: ["super_admin", "staff", "account_manager", "purchasing", "part_extractor"],
   workspace: ["company_admin", "branch_manager", "service_advisor"],
-  workshop: ["branch_manager", "service_advisor"],
-  vendor: ["vendor_admin", "vendor_user"],
+  // One role per counterparty portal, because that is all the guard distinguishes today. Finer
+  // grain (a vendor ADMIN vs an ordinary vendor user) needs the guard to surface
+  // vendor_users.is_vendor_admin first; until it does, offering it here would be a checkbox that
+  // silently does nothing.
+  workshop: ["workshop"],
+  vendor: ["vendor"],
   service_provider: ["service_provider"],
   internal: ["service_provider"],
 };

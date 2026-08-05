@@ -62,7 +62,17 @@ export class NavService {
           group_heading: string; sort_order: number; is_built: boolean; roles: string[];
         }>;
 
-        const role = ctx.role;
+        /**
+         * A counterparty's role comes from the guard only when a workspace is resolved: without
+         * X-Tenant, `ctx.role` is null and a vendor would be handed an EMPTY sidebar — not a
+         * restricted one, an unusable one. Who they are does not depend on which workspace happens
+         * to be selected, so the persona supplies the role when the request did not.
+         */
+        const PORTAL_ROLE: Record<string, string> = {
+          vendor: "vendor", workshop: "workshop",
+          service_provider: "service_provider", internal: "service_provider",
+        };
+        const role = ctx.role ?? PORTAL_ROLE[persona] ?? null;
         const visible = rows.filter((p) => {
           if (!modules.has(p.module)) return false;
           if (role === "company_admin" || role === "super_admin") return true;

@@ -498,6 +498,20 @@
       "when": 1785266007595,
       "tag": "0070_pages_admin_nav",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1785266008595,
+      "tag": "0071_vendor_pages",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1785266009595,
+      "tag": "0072_fix_portal_roles",
+      "breakpoints": true
     }
   ]
 }
