@@ -326,8 +326,8 @@ export const workshopNav: NavGroup[] = [
     heading: "Account",
     items: [
       { label: "Branches", path: "/workshop/branches", icon: Building2 },
-      { label: "Users & Permissions", path: "/admin/users", icon: Users, soon: true },
-      { label: "Settings", path: "/settings", icon: UserCircle, soon: true },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Settings", path: "/settings", icon: UserCircle },
     ],
   },
 ];

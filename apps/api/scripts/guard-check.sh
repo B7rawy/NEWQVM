@@ -3945,3 +3945,9 @@ ok 0 "$(psql "select count(*) from app_pages c join app_pages p on p.key = c.par
                 and (c.sort_order <= p.sort_order or c.group_heading <> p.group_heading
                      or c.persona <> p.persona)")" \
   "and every child sits directly under its own parent, in the same group and portal"
+# The same route cannot be finished in one portal and a placeholder in another — that is a live link
+# onto a ComingSoon screen. Portals share paths deliberately (the back office looks at the workspace's
+# own screens), so the built flag has to agree wherever a path repeats.
+ok 0 "$(psql "select count(*) from (
+    select path from app_pages group by path having count(distinct is_built) > 1) x")" \
+  "a shared route is built, or not, for every portal alike"
