@@ -105,7 +105,9 @@ export default function AppShell() {
   useEffect(() => {
     let live = true;
     api
-      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string; children?: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string }> }> }> }>("/nav")
+      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string; children?: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; module?: string }> }> }> }>(
+        previewing ? `/nav?persona=${encodeURIComponent(persona)}` : "/nav",
+      )
       .then((d) => {
         if (!live) return;
         setServed(d.groups.map((g) => ({
@@ -120,14 +122,23 @@ export default function AppShell() {
     return () => { live = false; };
     // re-resolves when the workspace or the environment changes: linking a counterparty in another
     // tab is picked up the next time either of those does, without a reload.
-  }, [realPersona, activeSlug, environment]);
+  }, [realPersona, persona, previewing, activeSlug, environment]);
 
   const fallback = navForPersona(persona, {
     isSuperAdmin: previewing ? true : me?.platformRole === "super_admin",
     isCompanyAdmin: previewing ? true : me?.role === "company_admin",
     unscoped: persona === "platform" && !activeSlug,
   });
-  const groups = previewing || !served ? fallback : served;
+  /**
+   * The preview now asks the SERVER for the chosen portal instead of rendering the static tree. The
+   * static tree knows nothing about which counterparties a workspace has linked, so previewing an
+   * empty workspace showed New RFQ, Vendors, Providers and Internal — none of which a real manager
+   * there would see. A preview that contradicts the product is worse than no preview.
+   *
+   * The static tree stays as the fallback for BOTH cases: if the call fails, a stale menu is
+   * recoverable and an empty one is not.
+   */
+  const groups = served ?? fallback;
   // The heading travels with the first item of each group. The catalog has always had headings —
   // Procurement, Reports, Pricing, Directory, Setup — and the sidebar drew only a divider line, so
   // the grouping was invisible: three Workshop rows, a line, one more Workshop row, a line, two
