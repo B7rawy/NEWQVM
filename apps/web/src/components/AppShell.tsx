@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
-import { navForPersona, iconByName, MODULE_TAG, OWN_MODULE, type NavGroup, type Persona } from "../nav";
+import { navForPersona, iconByName, MODULE_TAG, type NavGroup, type Persona } from "../nav";
 import { api } from "../lib/api";
 import ActivationBanner from "./ActivationBanner";
 import UpgradeBanner from "./UpgradeBanner";
@@ -147,13 +147,19 @@ export default function AppShell() {
     g.items.map((it, idx) => ({ ...it, groupStart: idx === 0, heading: g.heading, firstGroup: i === 0 })));
 
   /**
-   * Whose page is this? Shown only when the answer is not "yours". Inside the vendor portal every
-   * page is a vendor page and eighteen identical tags would be decoration; in a workspace menu the
-   * same tag tells you at a glance that RFQs are here because a workshop is linked and Pricing
-   * because a vendor is.
+   * Whose page is this? Tagged means it belongs to a party; UNTAGGED MEANS THE PLATFORM'S.
+   *
+   * This used to be hidden inside a portal that owns its own pages, on the grounds that eighteen
+   * identical tags are decoration. That was half right: the back office does NOT own everything in
+   * its menu — Status Logs, Users & Permissions, Account Managers and Overview are the same screens
+   * the workspace has, at the same routes, and migration 0080 marks them core. So the tag now says
+   * something everywhere: in a workspace it explains why RFQs appeared (a workshop is linked), and
+   * inside the back office it separates its own work from the platform's furniture.
+   *
+   * The vendor and provider portals are built on their own routes and legitimately own every page,
+   * so they do show a column of identical tags — the honest answer to "which of these are mine".
    */
-  const own = OWN_MODULE[persona];
-  const tagFor = (m?: string) => (m && m !== "core" && m !== own ? MODULE_TAG[m] : undefined);
+  const tagFor = (m?: string) => (m && m !== "core" ? MODULE_TAG[m] : undefined);
   const Tag = ({ m }: { m?: string }) => {
     const t = tagFor(m);
     if (!t) return null;

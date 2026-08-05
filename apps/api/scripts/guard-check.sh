@@ -3976,3 +3976,13 @@ ok 0 "$(psql "select count(*) from (
     select module from app_pages where persona = 'workspace' and module <> 'core'
     group by module having count(*) < 2) x")" \
   "each counterparty family has more than its Directory row in the workspace menu"
+# A counterparty portal must keep pages of its own. 0080 reclassifies the platform screens a portal
+# merely REUSES (Status Logs, Users & Permissions) to 'core' so the sidebar can tell them apart from
+# its real work — if that rule ever widened, a portal would end up all furniture and no product.
+ok 0 "$(psql "select count(*) from (
+    select persona from app_pages
+    where persona in ('vendor','workshop','service_provider','internal') and module <> 'core'
+    group by persona having count(*) < 3) x")" \
+  "every counterparty portal still has pages of its own, not just platform screens"
+ok 0 "$(psql "select count(*) from app_pages where persona in ('vendor','service_provider') and module = 'core'")" \
+  "and portals built on their own routes own every page they show"

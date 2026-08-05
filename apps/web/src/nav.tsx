@@ -85,9 +85,9 @@ export const NAV_ICONS: Record<string, LucideIcon> = {
 export const iconByName = (name: string): LucideIcon => NAV_ICONS[name] ?? LayoutDashboard;
 
 /**
- * A page's owner, in words, for the sidebar tag. Only shown when the page belongs to somebody OTHER
- * than the portal you are in — inside the vendor portal every page is a vendor page, so tagging all
- * eighteen of them says nothing. See OWN_MODULE for which portal owns which.
+ * A page's owner, in words, for the sidebar tag. Shown wherever the page belongs to a party at all;
+ * a page with no tag is the platform's own (module 'core'). See migration 0080 for how a screen the
+ * back office merely REUSES — Status Logs, Users & Permissions — is told apart from one it owns.
  */
 export const MODULE_TAG: Record<string, { label: string; tone: string }> = {
   // The product's own --chip-* tokens, not raw Tailwind palette colours. Two reasons, both learned
@@ -99,14 +99,6 @@ export const MODULE_TAG: Record<string, { label: string; tone: string }> = {
   vendor:           { label: "Vendor",   tone: "bg-[var(--chip-green-bg)] text-[var(--chip-green-fg)]" },
   service_provider: { label: "Provider", tone: "bg-[var(--chip-amber-bg)] text-[var(--chip-amber-fg)]" },
   internal:         { label: "Internal", tone: "bg-[var(--chip-red-bg)] text-[var(--chip-red-fg)]" },
-};
-
-/** The counterparty a portal IS. Workspace and platform portals are nobody's, so they tag everything. */
-export const OWN_MODULE: Record<string, string | undefined> = {
-  vendor: "vendor",
-  workshop: "workshop",
-  service_provider: "service_provider",
-  internal: "internal",
 };
 
 export type Persona = "platform" | "workspace" | "vendor" | "workshop" | "service_provider" | "internal";
@@ -422,11 +414,11 @@ export const workshopNav: NavGroup[] = [
     heading: "Account",
     items: [
       { label: "Branches", path: "/workshop/branches", icon: Building2, module: "workshop" },
-      { label: "Users & Permissions", path: "/admin/users", icon: Users, module: "workshop" },
-      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, module: "workshop" },
-      { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true, module: "workshop" },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
+      { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
       { label: "My Profile", path: "/workshop/profile", icon: UserCircle, soon: true, module: "workshop" },
-      { label: "Settings", path: "/settings", icon: UserCircle, module: "workshop" },
+      { label: "Settings", path: "/settings", icon: UserCircle },
     ],
   },
 ];
@@ -478,7 +470,7 @@ export const internalNav: NavGroup[] = [
   {
     heading: "Dashboard",
     items: [
-      { label: "Overview", path: "/overview", icon: LayoutDashboard, module: "internal" },
+      { label: "Overview", path: "/overview", icon: LayoutDashboard },
       { label: "Internal Dashboard", path: "/internal", icon: Boxes, module: "internal" },
       { label: "Part Number Extraction", path: "/internal/extraction", icon: PackageSearch, soon: true, module: "internal" },
       { label: "Assignments", path: "/internal/assignments", icon: ClipboardList, soon: true, module: "internal" },
@@ -489,7 +481,7 @@ export const internalNav: NavGroup[] = [
     items: [
       { label: "Delivery & Return Notes", path: "/notes", icon: FileText, soon: true, module: "internal" },
       { label: "Notes Archive", path: "/notes-archive", icon: History, soon: true, module: "internal" },
-      { label: "Status Logs", path: "/status-logs", icon: History, module: "internal" },
+      { label: "Status Logs", path: "/status-logs", icon: History },
       { label: "Purchase & Return Invoices", path: "/purchase-invoices", icon: Receipt, soon: true, module: "internal" },
       { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true, module: "internal" },
     ],
@@ -513,8 +505,8 @@ export const internalNav: NavGroup[] = [
   {
     heading: "Setup",
     items: [
-      { label: "Users & Permissions", path: "/admin/users", icon: Users, module: "internal" },
-      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true, module: "internal" },
+      { label: "Users & Permissions", path: "/admin/users", icon: Users },
+      { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
     ],
   },
   {

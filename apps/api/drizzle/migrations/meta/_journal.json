@@ -561,6 +561,13 @@
       "when": 1785266016595,
       "tag": "0079_workspace_sees_counterparties",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1785266017595,
+      "tag": "0080_mark_system_pages",
+      "breakpoints": true
     }
   ]
 }
