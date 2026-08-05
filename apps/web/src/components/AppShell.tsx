@@ -128,7 +128,12 @@ export default function AppShell() {
     unscoped: persona === "platform" && !activeSlug,
   });
   const groups = previewing || !served ? fallback : served;
-  const items = groups.flatMap((g, i) => g.items.map((it, idx) => ({ ...it, groupStart: i > 0 && idx === 0 })));
+  // The heading travels with the first item of each group. The catalog has always had headings —
+  // Procurement, Reports, Pricing, Directory, Setup — and the sidebar drew only a divider line, so
+  // the grouping was invisible: three Workshop rows, a line, one more Workshop row, a line, two
+  // Vendor rows reads as arbitrary until you can see WHY each line is there.
+  const items = groups.flatMap((g, i) =>
+    g.items.map((it, idx) => ({ ...it, groupStart: idx === 0, heading: g.heading, firstGroup: i === 0 })));
 
   /**
    * Whose page is this? Shown only when the answer is not "yours". Inside the vendor portal every
@@ -273,7 +278,16 @@ export default function AppShell() {
             const open = expanded[it.path] ?? inside;
             return (
             <div key={it.path}>
-              {it.groupStart && <div className={`my-2 h-px bg-line-2 ${collapsed ? "mx-3" : "mx-4"}`} />}
+              {it.groupStart &&
+                // Collapsed to 64px there is no room for a word, so the rail keeps the old divider —
+                // and skips it above the first group, where it would draw a line under nothing.
+                (collapsed ? (
+                  !it.firstGroup && <div className="mx-3 my-2 h-px bg-line-2" />
+                ) : (
+                  <div className={`px-4 pb-1 text-[10px] font-semibold uppercase tracking-[0.07em] text-muted ${it.firstGroup ? "pt-1" : "mt-3 border-t border-line-2 pt-3"}`}>
+                    {it.heading}
+                  </div>
+                ))}
               <NavLink
                 to={it.path}
                 title={collapsed ? it.label : undefined}
