@@ -512,6 +512,13 @@
       "when": 1785266009595,
       "tag": "0072_fix_portal_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1785266010595,
+      "tag": "0073_provider_pages",
+      "breakpoints": true
     }
   ]
 }

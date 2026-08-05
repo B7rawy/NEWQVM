@@ -52,6 +52,7 @@ export class NavService {
 
         const rows = (await tx.execute(sql`
           select p.key, p.module, p.path, p.label, p.icon, p.group_heading, p.sort_order, p.is_built,
+                 p.parent_key,
                  coalesce(array_agg(r.role) filter (where r.role is not null), '{}') as roles
           from app_pages p
           left join app_page_roles r on r.page_key = p.key
@@ -59,7 +60,7 @@ export class NavService {
           group by p.key
           order by p.sort_order`)) as Array<{
           key: string; module: string; path: string; label: string; icon: string;
-          group_heading: string; sort_order: number; is_built: boolean; roles: string[];
+          group_heading: string; sort_order: number; is_built: boolean; parent_key: string | null; roles: string[];
         }>;
 
         /**
@@ -80,22 +81,32 @@ export class NavService {
           return role != null && p.roles.includes(role);
         });
 
+        /**
+         * A CHILD WHOSE PARENT IS HIDDEN IS PROMOTED, not dropped. The parent can disappear for a
+         * reason that has nothing to do with the child — a role it does not grant, a module not
+         * switched on — and silently deleting the child with it would take a page away from
+         * somebody who is explicitly allowed it. It becomes a top-level row instead.
+         */
+        const shown = new Set(visible.map((p) => p.key));
+        const item = (i: (typeof visible)[number]) => ({
+          key: i.key, label: i.label, path: i.path, icon: i.icon, soon: !i.is_built,
+          children: [] as Array<{ key: string; label: string; path: string; icon: string; soon: boolean }>,
+        });
+        const byKey = new Map(visible.map((p) => [p.key, item(p)]));
+        const top = visible.filter((p) => !p.parent_key || !shown.has(p.parent_key));
+        for (const p of visible) {
+          if (p.parent_key && shown.has(p.parent_key)) byKey.get(p.parent_key)!.children.push(byKey.get(p.key)!);
+        }
+
         // Regroup in catalog order. Built from the rows rather than a fixed list, so a heading that
         // loses every one of its pages disappears instead of leaving an empty divider behind.
-        const groups: Array<{ heading: string; items: typeof visible }> = [];
-        for (const p of visible) {
+        const groups: Array<{ heading: string; items: Array<ReturnType<typeof item>> }> = [];
+        for (const p of top) {
           const last = groups[groups.length - 1];
-          if (last && last.heading === p.group_heading) last.items.push(p);
-          else groups.push({ heading: p.group_heading, items: [p] });
+          if (last && last.heading === p.group_heading) last.items.push(byKey.get(p.key)!);
+          else groups.push({ heading: p.group_heading, items: [byKey.get(p.key)!] });
         }
-        return {
-          persona,
-          modules: [...modules].sort(),
-          groups: groups.map((g) => ({
-            heading: g.heading,
-            items: g.items.map((i) => ({ key: i.key, label: i.label, path: i.path, icon: i.icon, soon: !i.is_built })),
-          })),
-        };
+        return { persona, modules: [...modules].sort(), groups };
       },
     );
   }

@@ -3,20 +3,21 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import ErrorBoundary from "./ErrorBoundary";
 import { useUnreadMessages, unreadLabel } from "../lib/unread";
 import {
-  ChevronsUpDown,
-  Search,
-  Settings,
-  Code2,
-  MessagesSquare,
   ArrowUpRight,
   Check,
+  ChevronDown,
+  ChevronsUpDown,
+  Code2,
   Eye,
-  Sun,
+  FlaskConical,
+  Globe,
+  MessagesSquare,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  Globe,
-  FlaskConical,
+  Search,
+  Settings,
+  Sun,
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { useTheme } from "../lib/theme";
@@ -99,15 +100,20 @@ export default function AppShell() {
    * it while previewing would return your own tree and make the switcher look broken.
    */
   const [served, setServed] = useState<NavGroup[] | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const { pathname } = useLocation();
   useEffect(() => {
     let live = true;
     api
-      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean }> }> }>("/nav")
+      .get<{ groups: Array<{ heading: string; items: Array<{ key: string; label: string; path: string; icon: string; soon: boolean; children?: Array<{ key: string; label: string; path: string; icon: string; soon: boolean }> }> }> }>("/nav")
       .then((d) => {
         if (!live) return;
         setServed(d.groups.map((g) => ({
           heading: g.heading,
-          items: g.items.map((i) => ({ label: i.label, path: i.path, icon: iconByName(i.icon), soon: i.soon })),
+          items: g.items.map((i) => ({
+            label: i.label, path: i.path, icon: iconByName(i.icon), soon: i.soon,
+            children: (i.children ?? []).map((c) => ({ label: c.label, path: c.path, icon: iconByName(c.icon), soon: c.soon })),
+          })),
         })));
       })
       .catch(() => { if (live) setServed(null); });
@@ -236,7 +242,12 @@ export default function AppShell() {
 
         {/* nav */}
         <nav className="flex flex-col gap-0.5 py-1">
-          {items.map((it) => (
+          {items.map((it) => {
+            const kids = it.children ?? [];
+            // Open when you are inside it, so landing on a child by URL never hides where you are.
+            const inside = kids.some((c) => pathname === c.path || pathname.startsWith(c.path + "/"));
+            const open = expanded[it.path] ?? inside;
+            return (
             <div key={it.path}>
               {it.groupStart && <div className={`my-2 h-px bg-line-2 ${collapsed ? "mx-3" : "mx-4"}`} />}
               <NavLink
@@ -247,9 +258,38 @@ export default function AppShell() {
                 <it.icon className="h-[17px] w-[17px] shrink-0" />
                 {!collapsed && <span className="flex-1">{it.label}</span>}
                 {!collapsed && it.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
+                {!collapsed && kids.length > 0 && (
+                  // A span, not a button: a <button> inside the <a> is invalid HTML and React will
+                  // hand the click to the link anyway. stopPropagation keeps the chevron from
+                  // navigating while still letting the label itself work as a link.
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={open ? `Collapse ${it.label}` : `Expand ${it.label}`}
+                    aria-expanded={open}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setExpanded((x) => ({ ...x, [it.path]: !open })); }}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); setExpanded((x) => ({ ...x, [it.path]: !open })); } }}
+                    className="-me-1 grid h-5 w-5 shrink-0 place-items-center rounded hover:bg-[var(--panel-2)]"
+                  >
+                    <ChevronDown className={`h-3.5 w-3.5 text-faint transition-transform ${open ? "" : "-rotate-90"}`} />
+                  </span>
+                )}
               </NavLink>
+              {/* Children are hidden on the collapsed rail — there is no room to indent inside 64px,
+                  and the parent's tooltip is the only affordance left. */}
+              {!collapsed && open && kids.map((c) => (
+                <NavLink
+                  key={c.path}
+                  to={c.path}
+                  className={({ isActive }) => `nav-item ms-4 ps-4 ${isActive ? "active" : ""}`}
+                >
+                  <c.icon className="h-[15px] w-[15px] shrink-0" />
+                  <span className="flex-1">{c.label}</span>
+                  {c.soon && <span className="text-[10px] font-medium text-faint">Soon</span>}
+                </NavLink>
+              ))}
             </div>
-          ))}
+          );})}
         </nav>
 
         {/* bottom */}

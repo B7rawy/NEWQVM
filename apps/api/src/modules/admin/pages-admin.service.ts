@@ -39,6 +39,7 @@ export class PagesAdminService {
     return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true }, async (tx) => {
       const rows = (await tx.execute(sql`
         select p.key, p.module, p.persona, p.path, p.label, p.icon, p.group_heading, p.sort_order, p.is_built,
+               p.parent_key,
                coalesce(array_agg(r.role) filter (where r.role is not null), '{}') as roles
         from app_pages p
         left join app_page_roles r on r.page_key = p.key

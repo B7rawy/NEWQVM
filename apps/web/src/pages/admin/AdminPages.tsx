@@ -25,6 +25,7 @@ interface Page {
   group_heading: string;
   sort_order: number;
   is_built: boolean;
+  parent_key: string | null;
   roles: string[];
 }
 
@@ -149,10 +150,14 @@ export default function AdminPages() {
                             {p.group_heading}
                           </div>
                         )}
-                        <div className="font-medium text-ink">
+                        <div className={`font-medium text-ink ${p.parent_key ? "ms-4" : ""}`}>
+                          {/* Children are shown indented under their parent, the same shape the
+                              sidebar renders — this table is meant to be the map of the menu, and a
+                              flat list would misdescribe it. */}
+                          {p.parent_key && <span className="me-1 text-faint">└</span>}
                           {p.label} {!p.is_built && <span className="ms-1 text-[10.5px] font-medium text-faint">Soon</span>}
                         </div>
-                        <div className="font-mono text-[11.5px] text-faint">{p.path}</div>
+                        <div className={`font-mono text-[11.5px] text-faint ${p.parent_key ? "ms-4" : ""}`}>{p.path}</div>
                       </td>
                       <td className="td">
                         <Badge tone={MODULE_TONE[p.module] ?? "gray"}>

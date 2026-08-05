@@ -90,6 +90,8 @@ export interface NavItem {
   label: string;
   path: string;
   icon: LucideIcon;
+  /** One level only — see migration 0073, where the database refuses a third. */
+  children?: Array<{ label: string; path: string; icon: LucideIcon; soon?: boolean }>;
   soon?: boolean;
   superAdminOnly?: boolean; // platform portal — only super_admin
   adminOnly?: boolean; // workspace portal — only company_admin (the manager)

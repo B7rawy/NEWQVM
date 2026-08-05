@@ -3935,3 +3935,13 @@ ok 0 "$(psql "select count(*) from (
     left join app_page_roles r on r.page_key = p.key and r.role = m.rr
     group by p.persona having count(r.role) = 0) x")" \
   "every counterparty portal has pages its own runtime role can open"
+# One level of nesting, and a child that stays with its parent. The sidebar renders exactly one
+# level, so a deeper row would simply vanish from the menu with nothing reported anywhere.
+ok 0 "$(psql "select count(*) from app_pages c join app_pages p on p.key = c.parent_key
+              where c.parent_key is not null and p.parent_key is not null")" \
+  "no page is nested more than one level deep"
+ok 0 "$(psql "select count(*) from app_pages c join app_pages p on p.key = c.parent_key
+              where c.parent_key is not null
+                and (c.sort_order <= p.sort_order or c.group_heading <> p.group_heading
+                     or c.persona <> p.persona)")" \
+  "and every child sits directly under its own parent, in the same group and portal"
