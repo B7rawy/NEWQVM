@@ -3951,3 +3951,13 @@ ok 0 "$(psql "select count(*) from app_pages c join app_pages p on p.key = c.par
 ok 0 "$(psql "select count(*) from (
     select path from app_pages group by path having count(distinct is_built) > 1) x")" \
   "a shared route is built, or not, for every portal alike"
+# An empty workspace must not advertise work it cannot do. rfqs.workshop_branch_id is NOT NULL, so
+# the whole order chain is impossible without a linked workshop; the pricing pages price vendor
+# quotes. Both must stay gated, and the page that ESCAPES emptiness must not be.
+ok 0 "$(psql "select count(*) from app_pages
+  where persona in ('workspace','platform') and module = 'core'
+    and path in ('/rfq-new','/rfqs','/orders','/delivered','/closed','/purchase-invoices','/returns',
+                 '/notes','/statements','/reports','/targets','/parts-pricing-report','/profit','/pricing')")" \
+  "the order chain and the pricing pages are gated on a linked counterparty"
+ok 1 "$(psql "select count(*) from app_pages where persona='workspace' and path='/onboarding' and module='core'")" \
+  "and 'Add supplier / workshop' is not — an empty workspace must be able to fill itself"
