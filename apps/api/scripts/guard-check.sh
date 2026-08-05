@@ -3894,3 +3894,33 @@ psql "alter table workflow_flows disable trigger trg_workflow_flows_freeze;
       alter table workflow_transitions enable trigger trg_workflow_transitions_freeze" > /dev/null
 ok 0 "$(psql "select count(*) from workflow_flows where environment='sandbox'")" \
   "and this block leaves no sandbox flow behind to skew the next run" 
+
+# ── PAGE CATALOG ────────────────────────────────────────────────────────────────────────────────
+# The sidebar is data now, so the ways it can break are data problems: a page with no persona anyone
+# renders, a module nothing can switch on, or a catalog that quietly loses rows in a migration.
+echo "  ---- page catalog ----"
+ok 0 "$(psql "select count(*) from app_pages
+  where persona not in ('platform','platform_system','workspace','workshop','vendor','service_provider','internal')")" \
+  "every page belongs to a portal that actually renders"
+ok 0 "$(psql "select count(*) from app_pages a where a.module <> 'core' and not exists (
+    select 1 from (values ('workshop'),('vendor'),('service_provider'),('internal')) v(m) where v.m = a.module)")" \
+  "and to a module something can switch on"
+ok 0 "$(psql "select count(*) from app_pages a
+  where not exists (select 1 from app_page_roles r where r.page_key = a.key)
+    and a.persona in ('vendor','workshop','service_provider','internal')")" \
+  "no counterparty page is roleless — those portals have no wildcard manager to recover it"
+ok 0 "$(psql "select count(*) from app_page_roles r
+  where r.role not in ('super_admin','staff','account_manager','purchasing','part_extractor',
+                       'company_admin','branch_manager','service_advisor','vendor_admin','vendor_user','service_provider')")" \
+  "and no page is granted to a role that does not exist"
+# /nav must answer, and answer with something. An empty tree is being locked out of the product.
+NAVG=$(curl -s "${AR[@]}" "$B/api/nav" | $PY -c "import sys,json;print(len(json.load(sys.stdin).get('groups',[])))" 2>/dev/null || echo 0)
+ok 1 "$([ "${NAVG:-0}" -gt 0 ] && echo 1 || echo 0)" "/nav returns a non-empty tree for platform staff"
+# Group headings are runs, not labels: a page ordered away from its own heading opens a second group
+# with the same name further down the menu, which reads as a duplicated section.
+ok 0 "$(psql "with r as (select persona, group_heading, sort_order,
+                  lag(group_heading) over (partition by persona order by sort_order) as prev
+                from app_pages)
+         select count(*) from (select persona, group_heading from r where prev is distinct from group_heading
+                               group by persona, group_heading having count(*) > 1) x")" \
+  "no heading is split into two groups by a stray sort order"

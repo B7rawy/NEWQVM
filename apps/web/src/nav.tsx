@@ -167,6 +167,7 @@ export const platformSystemNav: NavGroup[] = [
     items: [
       { label: "Workspaces", path: "/admin/workspaces", icon: Building2, superAdminOnly: true },
       { label: "Workflows", path: "/admin/workflows", icon: GitBranch, superAdminOnly: true },
+      { label: "Pages", path: "/admin/pages", icon: SlidersHorizontal, superAdminOnly: true },
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Onboarding review", path: "/onboarding/review", icon: ClipboardCheck },
     ],

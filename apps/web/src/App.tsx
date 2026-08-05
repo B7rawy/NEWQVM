@@ -37,6 +37,7 @@ import Approvals from "./pages/Approvals";
 import StatusLogs from "./pages/StatusLogs";
 import Communications from "./pages/Communications";
 import Developers from "./pages/Developers";
+import AdminPages from "./pages/admin/AdminPages";
 import WorkflowCanvas from "./pages/admin/WorkflowCanvas";
 import WorkspaceDetail from "./pages/admin/WorkspaceDetail";
 import { PageHeader, ComingSoon, Spinner } from "./components/ui";
@@ -80,6 +81,7 @@ const WIRED = new Set([
   "/providers",
   "/internal",
   "/internal-teams",
+  "/admin/pages",
   "/management-overview",
   "/admin/users",
   "/admin/workspaces",
@@ -157,6 +159,7 @@ export default function App() {
         <Route path="/providers" element={<Providers only="external" />} />
         {/* Same component, the other scope. See Providers.tsx: one table, two pages. */}
         <Route path="/internal-teams" element={<Providers only="internal" />} />
+        <Route path="/admin/pages" element={<AdminPages />} />
         <Route path="/internal" element={<InternalDashboard />} />
         <Route path="/management-overview" element={<ManagementOverview />} />
         <Route path="/admin/users" element={<Users />} />

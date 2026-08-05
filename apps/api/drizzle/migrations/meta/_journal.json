@@ -491,6 +491,13 @@
       "when": 1785266006595,
       "tag": "0069_app_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1785266007595,
+      "tag": "0070_pages_admin_nav",
+      "breakpoints": true
     }
   ]
 }

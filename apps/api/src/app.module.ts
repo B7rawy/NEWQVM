@@ -18,6 +18,8 @@ import { UsersAdminController } from "./modules/admin/users-admin.controller.js"
 import { UsersAdminService } from "./modules/admin/users-admin.service.js";
 import { PlatformStaffController } from "./modules/admin/platform-staff.controller.js";
 import { PlatformStaffService } from "./modules/admin/platform-staff.service.js";
+import { PagesAdminController } from "./modules/admin/pages-admin.controller.js";
+import { PagesAdminService } from "./modules/admin/pages-admin.service.js";
 import { NavController } from "./modules/nav/nav.controller.js";
 import { NavService } from "./modules/nav/nav.service.js";
 import { ImpersonationController } from "./modules/admin/impersonation.controller.js";
@@ -109,6 +111,7 @@ import { ProviderPortalService } from "./modules/provider-portal/provider-portal
     PlatformStaffController,
     ImpersonationController,
     NavController,
+    PagesAdminController,
     CounterpartyController,
     AccountController,
     VendorPortalController,
@@ -143,6 +146,7 @@ import { ProviderPortalService } from "./modules/provider-portal/provider-portal
     PlatformStaffService,
     ImpersonationService,
     NavService,
+    PagesAdminService,
     CounterpartyService,
     AccountService,
     VendorPortalService,
