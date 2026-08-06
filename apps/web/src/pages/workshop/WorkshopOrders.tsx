@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { PageHeader, Card, Badge, statusTone, Spinner, EmptyState } from "../../components/ui";
 
@@ -19,7 +20,7 @@ export default function WorkshopOrders() {
 
   return (
     <>
-      <PageHeader title="My Orders" subtitle="Your confirmed orders across every workspace you work with." />
+      <PageHeader title="Orders Dashboard" subtitle="Your confirmed orders across every workspace you work with — open one for deliveries, invoices and your PO." />
       {err && <div className="mb-3 text-[13px] text-accent">{err}</div>}
       <Card pad={false}>
         {rows === null ? (
@@ -36,6 +37,7 @@ export default function WorkshopOrders() {
                   <th className="th">Branch</th>
                   <th className="th">Items</th>
                   <th className="th">Status</th>
+                  <th className="th" />
                 </tr>
               </thead>
               <tbody>
@@ -46,6 +48,7 @@ export default function WorkshopOrders() {
                     <td className="td text-muted">{o.branch}</td>
                     <td className="td tnum text-muted">{o.items}</td>
                     <td className="td"><Badge tone={statusTone(o.status_code)}>{o.status}</Badge></td>
+                    <td className="td text-right"><Link className="link" to={`/workshop/orders/${o.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -5,13 +5,17 @@ import { api } from "../../lib/api";
 import { PageHeader, Card, Field, Spinner } from "../../components/ui";
 
 interface Ctx { workspaces: { id: string; name: string }[]; branches: { id: string; name: string; workshop: string }[] }
-interface PartRow { partNumber: string; partDescription: string; quantity: string }
+interface Lists { brandClasses: Array<{ id: string; label_en: string }> }
+interface PartRow { partNumber: string; partDescription: string; quantity: string; brandClassId: string }
 
-const emptyRow = (): PartRow => ({ partNumber: "", partDescription: "", quantity: "1" });
+const emptyRow = (): PartRow => ({ partNumber: "", partDescription: "", quantity: "1", brandClassId: "" });
 
 export default function WorkshopNewRequest() {
   const nav = useNavigate();
   const [ctx, setCtx] = useState<Ctx | null>(null);
+  const [lists, setLists] = useState<Lists | null>(null);
+  const [vin, setVin] = useState("");
+  const [orderType, setOrderType] = useState<"regular" | "bulk">("regular");
   const [tenantId, setTenantId] = useState("");
   const [branchId, setBranchId] = useState("");
   const [plate, setPlate] = useState("");
@@ -26,6 +30,7 @@ export default function WorkshopNewRequest() {
       if (c.workspaces[0]) setTenantId(c.workspaces[0].id);
       if (c.branches[0]) setBranchId(c.branches[0].id);
     }).catch((e) => setErr((e as Error).message));
+    api.get<Lists>("/workshop/lists").then(setLists).catch(() => setLists(null));
   }, []);
 
   function setPart(i: number, field: keyof PartRow, value: string) {
@@ -37,13 +42,13 @@ export default function WorkshopNewRequest() {
     setErr("");
     const items = parts
       .filter((p) => (p.partNumber || p.partDescription) && Number(p.quantity) > 0)
-      .map((p) => ({ partNumber: p.partNumber || undefined, partDescription: p.partDescription || undefined, quantity: Number(p.quantity) }));
+      .map((p) => ({ partNumber: p.partNumber || undefined, partDescription: p.partDescription || undefined, quantity: Number(p.quantity), brandClassId: p.brandClassId || undefined }));
     if (!tenantId || !branchId) return setErr("Choose a workspace and a branch.");
     if (items.length === 0) return setErr("Add at least one part (number or description).");
     setBusy(true);
     try {
       const res = await api.post<{ id: string }>("/workshop/requests", {
-        tenantId, workshopBranchId: branchId, plateNumber: plate || undefined, model: model || undefined, items,
+        tenantId, workshopBranchId: branchId, plateNumber: plate || undefined, vin: vin || undefined, model: model || undefined, orderType, items,
       });
       nav(`/workshop/requests/${res.id}`);
     } catch (e) {
@@ -77,6 +82,16 @@ export default function WorkshopNewRequest() {
             <Field label="Vehicle model (optional)">
               <input className="input" value={model} onChange={(e) => setModel(e.target.value)} placeholder="Camry 2021" />
             </Field>
+            <Field label="VIN (optional)">
+              <input className="input" value={vin} onChange={(e) => setVin(e.target.value)} placeholder="JTDBT923771012345" />
+            </Field>
+            <Field label="Order type">
+              {/* the legacy pair: a Service Order fixes one car, Stock replenishes the shelf */}
+              <select className="input" value={orderType} onChange={(e) => setOrderType(e.target.value as "regular" | "bulk")}>
+                <option value="regular">Service order (one vehicle)</option>
+                <option value="bulk">Stock (bulk replenishment)</option>
+              </select>
+            </Field>
           </div>
         </Card>
 
@@ -94,6 +109,7 @@ export default function WorkshopNewRequest() {
                   <th className="th">Part number</th>
                   <th className="th">Description</th>
                   <th className="th">Qty</th>
+                  <th className="th">Brand class</th>
                   <th className="th" />
                 </tr>
               </thead>
@@ -103,6 +119,12 @@ export default function WorkshopNewRequest() {
                     <td className="td"><input className="input h-8 py-1" value={p.partNumber} onChange={(e) => setPart(i, "partNumber", e.target.value)} placeholder="12345-67890" /></td>
                     <td className="td"><input className="input h-8 py-1" value={p.partDescription} onChange={(e) => setPart(i, "partDescription", e.target.value)} placeholder="Brake Pad Set" /></td>
                     <td className="td"><input className="input h-8 w-20 py-1 tnum" type="number" min="1" value={p.quantity} onChange={(e) => setPart(i, "quantity", e.target.value)} /></td>
+                    <td className="td">
+                      <select className="input h-8 py-1" value={p.brandClassId} onChange={(e) => setPart(i, "brandClassId", e.target.value)}>
+                        <option value="">Any</option>
+                        {lists?.brandClasses.map((b) => <option key={b.id} value={b.id}>{b.label_en}</option>)}
+                      </select>
+                    </td>
                     <td className="td text-right">
                       {parts.length > 1 && (
                         <button type="button" className="text-faint hover:text-accent" onClick={() => setParts((pp) => pp.filter((_, idx) => idx !== i))}>

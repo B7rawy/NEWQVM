@@ -125,6 +125,12 @@ export class WorkshopPortalController {
     return this.svc.addNote(this.ctx(req), noteSchema.parse(body));
   }
 
+  @Get("exceptions")
+  myExceptions(@Req() req: Request) {
+    const k = (req.query as { kind?: "cancellation" | "return" }).kind;
+    return this.svc.myExceptions(this.ctx(req), k);
+  }
+
   @Get("profile")
   profile(@Req() req: Request) {
     return this.svc.profile(this.ctx(req));

@@ -382,7 +382,7 @@ export const workshopNav: NavGroup[] = [
     items: [
       { label: "New RFQ", path: "/workshop/requests/new", icon: FilePlus2, module: "workshop",
         children: [
-          { label: "Regular RFQ", path: "/workshop/requests/new/regular", icon: FileText, soon: true, module: "workshop" },
+          { label: "Regular RFQ", path: "/workshop/requests/new/regular", icon: FileText, module: "workshop" },
         ] },
       { label: "RFQs Dashboard", path: "/workshop/requests", icon: Files, module: "workshop" },
     ],
@@ -391,21 +391,21 @@ export const workshopNav: NavGroup[] = [
     heading: "Orders",
     items: [
       { label: "Orders Dashboard", path: "/workshop/orders", icon: ShoppingCart, module: "workshop" },
-      { label: "Delivered Orders", path: "/delivered", icon: Truck, soon: true, module: "workshop" },
-      { label: "Returns & Exchanges", path: "/returns", icon: Undo2, soon: true, module: "workshop" },
+      { label: "Delivered Orders", path: "/workshop/delivered", icon: Truck, module: "workshop" },
+      { label: "Returns & Exchanges", path: "/workshop/returns", icon: Undo2, module: "workshop" },
     ],
   },
   {
     heading: "Billing",
     items: [
-      { label: "Invoices", path: "/invoices", icon: Receipt, soon: true, module: "workshop" },
-      { label: "Statement & Payments", path: "/statement", icon: Wallet, soon: true, module: "workshop" },
+      { label: "Invoices", path: "/workshop/invoices", icon: Receipt, module: "workshop" },
+      { label: "Statement & Payments", path: "/workshop/statement", icon: Wallet, module: "workshop" },
     ],
   },
   {
     heading: "Records",
     items: [
-      { label: "Notes Archive", path: "/notes-archive", icon: History, soon: true, module: "workshop" },
+      { label: "Notes Archive", path: "/workshop/notes", icon: History, module: "workshop" },
     ],
   },
   {
@@ -415,7 +415,7 @@ export const workshopNav: NavGroup[] = [
       { label: "Users & Permissions", path: "/admin/users", icon: Users },
       { label: "Account Managers", path: "/account-managers", icon: CalendarClock, soon: true },
       { label: "Webhook Logs", path: "/webhook-logs", icon: Webhook, soon: true },
-      { label: "My Profile", path: "/workshop/profile", icon: UserCircle, soon: true, module: "workshop" },
+      { label: "My Profile", path: "/workshop/profile", icon: UserCircle, module: "workshop" },
       { label: "Settings", path: "/settings", icon: UserCircle },
     ],
   },

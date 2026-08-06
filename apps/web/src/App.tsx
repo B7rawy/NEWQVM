@@ -28,6 +28,13 @@ import WorkshopOrders from "./pages/workshop/WorkshopOrders";
 import WorkshopRequests from "./pages/workshop/WorkshopRequests";
 import WorkshopNewRequest from "./pages/workshop/WorkshopNewRequest";
 import WorkshopRequestDetail from "./pages/workshop/WorkshopRequestDetail";
+import WorkshopOrderDetail from "./pages/workshop/WorkshopOrderDetail";
+import WorkshopDelivered from "./pages/workshop/WorkshopDelivered";
+import WorkshopReturns from "./pages/workshop/WorkshopReturns";
+import WorkshopInvoices from "./pages/workshop/WorkshopInvoices";
+import WorkshopStatement from "./pages/workshop/WorkshopStatement";
+import WorkshopNotes from "./pages/workshop/WorkshopNotes";
+import WorkshopProfile from "./pages/workshop/WorkshopProfile";
 import Settings from "./pages/Settings";
 import Workspaces from "./pages/admin/Workspaces";
 import Workflows from "./pages/admin/Workflows";
@@ -101,6 +108,13 @@ const WIRED = new Set([
   "/workshop/branches",
   "/workshop/orders",
   "/settings",
+  "/workshop/delivered",
+  "/workshop/returns",
+  "/workshop/invoices",
+  "/workshop/statement",
+  "/workshop/notes",
+  "/workshop/profile",
+  "/workshop/requests/new/regular",
 ]);
 
 export default function App() {
@@ -176,6 +190,15 @@ export default function App() {
         <Route path="/workshop/requests" element={<WorkshopRequests />} />
         <Route path="/workshop/requests/new" element={<WorkshopNewRequest />} />
         <Route path="/workshop/requests/:id" element={<WorkshopRequestDetail />} />
+        {/* Regular RFQ is the same form — the catalog nests it under New RFQ like the legacy menu */}
+        <Route path="/workshop/requests/new/regular" element={<WorkshopNewRequest />} />
+        <Route path="/workshop/orders/:id" element={<WorkshopOrderDetail />} />
+        <Route path="/workshop/delivered" element={<WorkshopDelivered />} />
+        <Route path="/workshop/returns" element={<WorkshopReturns />} />
+        <Route path="/workshop/invoices" element={<WorkshopInvoices />} />
+        <Route path="/workshop/statement" element={<WorkshopStatement />} />
+        <Route path="/workshop/notes" element={<WorkshopNotes />} />
+        <Route path="/workshop/profile" element={<WorkshopProfile />} />
         <Route path="/workshop/branches" element={<WorkshopBranches />} />
         <Route path="/workshop/orders" element={<WorkshopOrders />} />
         <Route path="/admin/workflows" element={<Workflows />} />

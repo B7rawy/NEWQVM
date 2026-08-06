@@ -141,7 +141,14 @@ export class WorkshopPortalService {
         where r.id = ${rfqId}::uuid and r.environment = ${env}::environment_type limit 1`))[0] as { id: string } | undefined;
       if (!head) throw new NotFoundException("request not found");
       const items = await tx.execute(sql`
-        select id, part_number, part_description, quantity from rfq_items where rfq_id = ${rfqId}::uuid order by part_number`);
+        select i.id, i.part_number, i.part_description, i.quantity,
+               s.code as status, s.label_en as status_label,
+               i.estimated_price, i.selling_price, i.discount_pct, i.alternative_part_number,
+               (oi.id is not null) as ordered
+        from rfq_items i
+        left join item_statuses s on s.id = i.status_id
+        left join order_items oi on oi.rfq_item_id = i.id
+        where i.rfq_id = ${rfqId}::uuid order by i.created_at`);
       const vendors = await tx.execute(sql`
         select v.legal_name as vendor, vs.code as status, vs.label_en as status_label,
           (select count(*)::int from rfq_vendor_items vi where vi.rfq_vendor_id = rv.id) as quoted_items
@@ -205,7 +212,7 @@ export class WorkshopPortalService {
         join tenants t on t.id = o.tenant_id
         left join item_statuses s on s.id = o.status_id
         where o.environment = ${env}::environment_type
-          and ${queuePredicate(sql`ist.code`, queue, sql`o.tenant_id`)}
+          and ${queuePredicate(sql`s.code`, queue, sql`o.tenant_id`)}
         order by o.created_at desc`);
       return { count: rows.length, orders: rows };
     });
@@ -577,6 +584,40 @@ export class WorkshopPortalService {
     const text = [label, note?.trim()].filter(Boolean).join(" — ");
     if (text.length < 3) throw new BadRequestException("a reason is required");
     return text.slice(0, 500);
+  }
+
+  /** The workshop's own cancellation/return requests — pending and decided — so the portal can
+   *  show "طلبك تحت المراجعة/اتوافق عليه/اترفض" instead of a black hole after asking. */
+  async myExceptions(ctx: RlsContext, kind?: "cancellation" | "return") {
+    const env = envOf(ctx);
+    return this.dbService.withContext({ tenantId: null, userId: ctx.userId, isInternal: true, environment: env }, async (tx) => {
+      await this.requireWorkshopUser(tx, ctx.userId);
+      const rows = await tx.execute(sql`
+        with mine as (
+          select ri.id, 'rfq_item' as etype, r.order_number, coalesce(ri.part_number, ri.part_description) as part
+          from rfq_items ri
+          join rfqs r on r.id = ri.rfq_id
+          join workshop_branches wb on wb.id = r.workshop_branch_id
+          join workshop_users wu on wu.workshop_id = wb.workshop_id and wu.user_id = ${ctx.userId}::uuid
+          union all
+          select oi.id, 'order_item', o.order_number, oi.final_part_number
+          from order_items oi
+          join orders o on o.id = oi.order_id
+          join rfqs r2 on r2.id = o.rfq_id
+          join workshop_branches wb2 on wb2.id = r2.workshop_branch_id
+          join workshop_users wu2 on wu2.workshop_id = wb2.workshop_id and wu2.user_id = ${ctx.userId}::uuid
+        )
+        select e.id, e.kind, e.status, e.reason, e.created_at, e.resolved_at, e.resolution_note,
+               m.order_number, m.part
+        from workflow_exceptions e
+        join mine m on m.id = e.entity_id and m.etype = e.entity_type::text
+        where e.environment = ${env}::environment_type
+          and e.kind <> 'hold'
+          and (${kind ? sql`e.kind = ${kind}` : sql`true`})
+        order by case e.status when 'open' then 0 else 1 end, e.created_at desc
+        limit 200`);
+      return { count: rows.length, requests: rows };
+    });
   }
 
 }
