@@ -29,7 +29,10 @@ export const orders = pgTable(
   },
   (t) => [
     uniqueIndex("orders_tenant_order_number_uq").on(t.tenantId, t.orderNumber),
-    uniqueIndex("orders_rfq_uq").on(t.rfqId), // one order per RFQ (review #6)
+    // 0084 dropped the old orders_rfq_uq ("one order per RFQ", review #6): partial confirmation
+    // makes an order "what was confirmed together", so one RFQ legitimately owns several orders.
+    // The once-only rule lives at the LINE level — order_items.rfq_item_id stays unique.
+    index("orders_rfq_idx").on(t.rfqId),
     index("orders_tenant_idx").on(t.tenantId),
     index("orders_tenant_status_idx").on(t.tenantId, t.statusId),
   ],

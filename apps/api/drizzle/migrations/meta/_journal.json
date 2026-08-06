@@ -582,6 +582,20 @@
       "when": 1785266019595,
       "tag": "0082_fk_indexes_and_column_docs",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1785266020595,
+      "tag": "0083_workshop_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1786002779333,
+      "tag": "0084_drop_one_order_per_rfq",
+      "breakpoints": true
     }
   ]
 }

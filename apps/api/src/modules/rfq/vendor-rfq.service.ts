@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { DbService, schema, type RlsContext, type Tx } from "../../db/db.service.js";
 import { NotificationsService } from "../notifications/notifications.service.js";
-import { assertRfqNotConfirmed } from "../../common/rfq-guards.js";
+import { assertItemNotOrdered, assertRfqHasOpenItems } from "../../common/rfq-guards.js";
 import { assertEnvironment } from "../../common/env-guards.js";
 import { StatusService } from "../../common/status.service.js";
 
@@ -188,7 +188,9 @@ export class VendorRfqService {
     },
     dto: SubmitQuoteDto,
   ) {
-    await assertRfqNotConfirmed(tx, ids.rfqId, "this RFQ is already confirmed");
+    // partial confirmation (0083): a batch confirming SOME lines must not freeze quoting on the
+    // rest, so the guard is "any line still open", not "no order exists".
+    await assertRfqHasOpenItems(tx, ids.rfqId, "this RFQ is fully confirmed or closed — nothing left to quote");
 
     const pricedStatusId = (
       (await tx.execute(sql`select id from vendor_statuses where code = 'priced' limit 1`)) as Array<{ id: string }>
@@ -259,8 +261,9 @@ export class VendorRfqService {
   /** Pick the winning quote for an item (old cost_id). Validates the quote belongs to this RFQ+item. */
   async selectWinner(ctx: RlsContext, rfqId: string, itemId: string, quoteItemId: string) {
     return this.dbService.withContext(ctx, async (tx) => {
-      // can't change winners after the RFQ is confirmed (order_items already snapshotted — review #4)
-      await assertRfqNotConfirmed(tx, rfqId, "RFQ already confirmed — winners are locked");
+      // can't change THIS item's winner once its line is snapshotted onto an order (review #4);
+      // other items stay selectable — that is the whole point of partial confirmation (0083).
+      await assertItemNotOrdered(tx, itemId, "this item is already on an order — its winner is locked");
 
       const ok = (
         (await tx.execute(sql`

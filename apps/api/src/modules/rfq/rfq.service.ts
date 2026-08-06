@@ -4,7 +4,7 @@ import { queuePredicate } from "../workflow/routing.js";
 import { z } from "zod";
 import { DbService } from "../../db/db.service.js";
 import { schema } from "../../db/db.service.js";
-import type { RlsContext } from "../../db/db.service.js";
+import type { RlsContext, Tx } from "../../db/db.service.js";
 import { StatusService } from "../../common/status.service.js";
 
 export const createRfqSchema = z.object({
@@ -110,6 +110,11 @@ export class RfqService {
         )
         .returning({ id: schema.rfqItems.id });
 
+      // The workshop-facing guide price, ported from the legacy get_estimated_price engine
+      // (docs/legacy/workshop-logic.md §3.5). Computed in the SAME transaction so the creation
+      // response can already show it.
+      await this.applyEstimatedPrices(tx, rfq.id);
+
       // LINES ENTER BEFORE THE HEADER, on purpose. Entering runs the same auto-advance pass every
       // move does, and a gate on an arrow out of new_rfq asks a question about the lines
       // ("every line has reached a status"). With the header first, that pass would judge a request
@@ -173,4 +178,56 @@ export class RfqService {
       return { rfq, items, vendors };
     });
   }
+  /**
+   * ESTIMATED PRICE — the legacy engine, ported (docs/legacy/workshop-logic.md §3.5).
+   *
+   * Per item, in strict order:
+   *   (a) the same WORKSHOP bought the same part_number + brand_class in the last 60 days and it
+   *       was priced → that selling price, verbatim (their own recent price is the best guide);
+   *   (b) else the latest VENDOR cost for the part+class anywhere in this workspace, aged like the
+   *       legacy table: ≤90d as-is, ≤180d +1%, ≤360d +3%, older +7%;
+   *   (c) else NULL — which the UI renders as "needs manual review", never as zero.
+   *
+   * It is a guide, not a price: selling_price remains the only amount anything is billed from.
+   * One UPDATE for the whole RFQ rather than a query per item, because creation calls this inline.
+   */
+  async applyEstimatedPrices(tx: Tx, rfqId: string, onlyItemIds?: string[]): Promise<void> {
+    await tx.execute(sql`
+      update rfq_items ri
+      set estimated_price = est.price, updated_at = now()
+      from (
+        select i.id,
+          coalesce(
+            (select ri2.selling_price
+               from rfq_items ri2
+               join rfqs r2 on r2.id = ri2.rfq_id
+               join workshop_branches wb2 on wb2.id = r2.workshop_branch_id
+              where wb2.workshop_id = (select wb.workshop_id from workshop_branches wb
+                                        join rfqs r on r.workshop_branch_id = wb.id
+                                        where r.id = ${rfqId}::uuid)
+                and ri2.part_number = i.part_number
+                and ri2.brand_class_id is not distinct from i.brand_class_id
+                and ri2.selling_price is not null
+                and ri2.id <> i.id
+                and r2.created_at >= now() - interval '60 days'
+              order by r2.created_at desc limit 1),
+            (select round(vi.offered_cost * (1 + case
+                     when now() - vi.created_at <= interval '90 days' then 0
+                     when now() - vi.created_at <= interval '180 days' then 0.01
+                     when now() - vi.created_at <= interval '360 days' then 0.03
+                     else 0.07 end), 2)
+               from rfq_vendor_items vi
+               join rfq_items ri3 on ri3.id = vi.rfq_item_id
+              where ri3.part_number = i.part_number
+                and ri3.brand_class_id is not distinct from i.brand_class_id
+                and vi.offered_cost is not null
+              order by vi.created_at desc limit 1)
+          ) as price
+        from rfq_items i
+        where i.rfq_id = ${rfqId}::uuid and i.part_number is not null
+          and (${onlyItemIds?.length ? sql`i.id = any(array[${sql.join(onlyItemIds.map((x) => sql`${x}::uuid`), sql`, `)}])` : sql`true`})
+      ) est
+      where est.id = ri.id and est.price is not null`);
+  }
+
 }

@@ -4061,3 +4061,186 @@ psql "delete from vendor_selection_rule_vendors; delete from vendor_selection_ru
       update vendors set payment_terms_days=null where id='$OS_V'" >/dev/null 2>&1
 ok 0 "$(psql "select count(*) from vendor_stock_items where raw_part_number='OS-P1'")" \
   "and the orphan-surface block cleans up after itself"
+
+# ── WORKSHOP MODULE (the ported legacy logic — docs/legacy/workshop-logic.md) ───────────────────
+# The whole workshop journey driven THROUGH THE PORTAL as a real workshop user: estimate engine,
+# cart with approved quantities, order-per-batch, governed cancel/return requests, PO, notes,
+# invoices and statement. Staff-side steps (pricing, winner, delivery, invoice) use the workspace
+# API exactly as the product does.
+echo "  ---- workshop module (ported legacy logic) ----"
+WTOK=$(curl -s -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"email":"workshop@qparts.local","password":"workshop1234"}' | $PY -c "import sys,json;print(json.load(sys.stdin).get('token',''))")
+WH=(-H "Authorization: Bearer $WTOK" -H "Content-Type: application/json")
+WS_BR=$(psql "select wb.id from workshop_branches wb
+  join workshop_users wu on wu.workshop_id=wb.workshop_id
+  join users u on u.id=wu.user_id and u.email='workshop@qparts.local'
+  where wb.is_active limit 1")
+# the journey needs a workspace where the workshop is linked AND an active vendor exists to quote —
+# the first run picked jeddah (workshop link, zero vendors) and everything downstream cascaded.
+WS_TEN=$(psql "select tw.tenant_id from tenant_workshops tw
+  join workshop_users wu on wu.workshop_id=tw.workshop_id
+  join users u on u.id=wu.user_id and u.email='workshop@qparts.local'
+  join tenant_vendors tv on tv.tenant_id=tw.tenant_id and tv.status='active'
+  where tw.status='active' limit 1")
+WS_SLUG=$(psql "select slug from tenants where id='$WS_TEN'")
+BC=$(psql "select id from brand_classes where code='oem'")
+
+L=$(curl -s "${WH[@]}" "$B/api/workshop/lists")
+ok 5 "$(echo "$L" | $PY -c "import sys,json;print(len(json.load(sys.stdin)['brandClasses']))")" \
+  "lists: خمس فئات — بما فيها Any المزروعة من 0083"
+ok 10 "$(echo "$L" | $PY -c "import sys,json;print(len(json.load(sys.stdin)['cancellationReasons']))")" \
+  "وعشرة أسباب إلغاء من كتالوج القديم"
+
+# ── seed history so the estimate engine has something to remember: rfq0 priced at 240 by a vendor
+R0=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests" \
+  -d "{\"tenantId\":\"$WS_TEN\",\"workshopBranchId\":\"$WS_BR\",\"plateNumber\":\"WM-0\",\"items\":[{\"partNumber\":\"WM-PART\",\"quantity\":2,\"brandClassId\":\"$BC\"}]}")
+R0ID=$(echo "$R0" | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$R0ID" ] && echo 1 || echo 0)" "الورشة أنشأت طلبًا عبر البورتال"
+AR2=(-H "Authorization: Bearer $ATOK" -H "X-Tenant: $WS_SLUG" -H "Content-Type: application/json")
+V0=$(psql "select tv.vendor_id from tenant_vendors tv join vendors v on v.id=tv.vendor_id
+           where tv.tenant_id='$WS_TEN' and tv.status='active' and v.is_active limit 1")
+TOK0=$(curl -s "${AR2[@]}" -X POST "$B/api/rfqs/$R0ID/send" -d "{\"vendorIds\":[\"$V0\"]}" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0].get('token','') if d.get('results') else '')")
+IT0=$(psql "select id from rfq_items where rfq_id='$R0ID' limit 1")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$TOK0/quote" -H 'Content-Type: application/json' \
+  -d "{\"items\":[{\"rfqItemId\":\"$IT0\",\"offeredCost\":240}]}"
+
+# ── the engine: a NEW request for the same part+class estimates from that vendor cost (≤90d → +0%)
+R1=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests" \
+  -d "{\"tenantId\":\"$WS_TEN\",\"workshopBranchId\":\"$WS_BR\",\"plateNumber\":\"WM-1\",\"items\":[{\"partNumber\":\"WM-PART\",\"quantity\":4,\"brandClassId\":\"$BC\"},{\"partNumber\":\"WM-OTHER\",\"quantity\":1}]}")
+R1ID=$(echo "$R1" | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok "240.00" "$(psql "select estimated_price from rfq_items where rfq_id='$R1ID' and part_number='WM-PART'")" \
+  "محرك السعر الاسترشادي: آخر تكلفة مورّد لنفس القطعة والفئة"
+ok "" "$(psql "select estimated_price from rfq_items where rfq_id='$R1ID' and part_number='WM-OTHER'")" \
+  "وقطعة بلا تاريخ = NULL (مراجعة يدوية) مش صفر"
+
+# ── price both items, pick winners (staff side)
+TOK1=$(curl -s "${AR2[@]}" -X POST "$B/api/rfqs/$R1ID/send" -d "{\"vendorIds\":[\"$V0\"]}" \
+  | $PY -c "import sys,json;d=json.load(sys.stdin);print(d['results'][0].get('token','') if d.get('results') else '')")
+ITA=$(psql "select id from rfq_items where rfq_id='$R1ID' and part_number='WM-PART'")
+ITB=$(psql "select id from rfq_items where rfq_id='$R1ID' and part_number='WM-OTHER'")
+curl -s -o /dev/null -X POST "$B/api/quote-access/$TOK1/quote" -H 'Content-Type: application/json' \
+  -d "{\"items\":[{\"rfqItemId\":\"$ITA\",\"offeredCost\":250},{\"rfqItemId\":\"$ITB\",\"offeredCost\":90}]}"
+QA=$(psql "select id from rfq_vendor_items where rfq_item_id='$ITA' limit 1")
+QB=$(psql "select id from rfq_vendor_items where rfq_item_id='$ITB' limit 1")
+curl -s -o /dev/null "${AR2[@]}" -X POST "$B/api/rfqs/$R1ID/items/$ITA/winning-quote" -d "{\"quoteItemId\":\"$QA\"}"
+curl -s -o /dev/null "${AR2[@]}" -X POST "$B/api/rfqs/$R1ID/items/$ITB/winning-quote" -d "{\"quoteItemId\":\"$QB\"}"
+
+# ── the cart: approved qty must respect 1..requested
+BADQ=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/confirm" \
+  -d "{\"items\":[{\"rfqItemId\":\"$ITA\",\"approvedQty\":9}]}" | $PY -c "import sys,json;print('statusCode' in json.load(sys.stdin))")
+ok "True" "$BADQ" "كمية معتمدة أكبر من المطلوبة بترفض مش بتتقصقص"
+
+# ── batch 1: item A only, 3 of 4
+C1=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/confirm" \
+  -d "{\"items\":[{\"rfqItemId\":\"$ITA\",\"approvedQty\":3}]}")
+O1=$(echo "$C1" | $PY -c "import sys,json;print(json.load(sys.stdin).get('orderId',''))")
+ok 1 "$([ -n "$O1" ] && echo 1 || echo 0)" "دفعة أولى: تأكيد جزئي لبند واحد"
+ok "3" "$(psql "select approved_qty from order_items where order_id='$O1'")" "بالكمية المعتمدة 3 من 4"
+ok "priced" "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$ITB'")" \
+  "والبند التاني فِضِل Priced — التأكيد الجزئي مش بيجرّ الباقي"
+
+# ── batch 2: item B → a SECOND order with a -B2 number
+C2=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/confirm" -d "{\"items\":[{\"rfqItemId\":\"$ITB\"}]}")
+O2=$(echo "$C2" | $PY -c "import sys,json;print(json.load(sys.stdin).get('orderId',''))")
+N1=$(psql "select order_number from orders where id='$O1'"); N2=$(psql "select order_number from orders where id='$O2'")
+ok "${N1}-B2" "$N2" "دفعة تانية = أوردر تاني برقم مشتق ($N2)"
+DUP=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/confirm" -d "{\"items\":[{\"rfqItemId\":\"$ITA\"}]}" \
+  | $PY -c "import sys,json;print('statusCode' in json.load(sys.stdin))")
+ok "True" "$DUP" "وتأكيد بند متأكد قبل كده بيرفض"
+
+# ── governed cancel: request → exception open (status untouched) → staff approve → cancelled
+ADD=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/items" -d '{"partDescription":"عنصر للإلغاء","quantity":1}')
+ITC=$(echo "$ADD" | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 1 "$([ -n "$ITC" ] && echo 1 || echo 0)" "إضافة بند لطلب قائم (add_rfq_item_inline)"
+REASON=$(psql "select id from cancellation_reasons where code='part_not_needed'")
+EX=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/items/$ITC/cancel" -d "{\"reasonId\":\"$REASON\"}")
+EXID=$(echo "$EX" | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok "new_rfq" "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$ITC'")" \
+  "طلب الإلغاء استثناء محكوم — الحالة متتحركش لحد المراجعة"
+curl -s -o /dev/null "${AR2[@]}" -X POST "$B/api/workflow/exceptions/$EXID/resolve" -d '{"decision":"approve"}'
+ok "cancelled" "$(psql "select s.code from rfq_items i join item_statuses s on s.id=i.status_id where i.id='$ITC'")" \
+  "وموافقة الموظف هي اللي بتلغيه فعلًا"
+ok "Part not needed" "$(psql "select reason from workflow_exceptions where id='$EXID'")" \
+  "والسبب اتسجّل بصياغة الكتالوج مش بنص العميل"
+
+# ── delivery then a governed RETURN with quantity validation
+OIA=$(psql "select id from order_items where order_id='$O1'")
+curl -s -o /dev/null "${AR2[@]}" -X POST "$B/api/orders/$O1/deliveries" -d "{\"items\":[{\"orderItemId\":\"$OIA\",\"qty\":3}]}"
+ok "delivered" "$(psql "select s.code from order_items i join item_statuses s on s.id=i.status_id where i.id='$OIA'")" \
+  "التسليم الكامل وصل البند لـ delivered"
+PRECANCEL=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/requests/$R1ID/items/$ITA/cancel" -d "{\"reasonId\":\"$REASON\"}" \
+  | $PY -c "import sys,json;print('return' in str(json.load(sys.stdin)).lower())")
+ok "True" "$PRECANCEL" "إلغاء بعد التسليم بيترفض وبيوجّه للمرتجع (قاعدة §7.5)"
+BADR=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/orders/$O1/items/$OIA/return" -d '{"qty":9}' \
+  | $PY -c "import sys,json;print('statusCode' in json.load(sys.stdin))")
+ok "True" "$BADR" "كمية مرتجع أكبر من المعتمد بترفض"
+RR=$(psql "select id from return_reasons limit 1")
+REX=$(curl -s "${WH[@]}" -X POST "$B/api/workshop/orders/$O1/items/$OIA/return" -d "{\"qty\":1,\"reasonId\":\"$RR\"}")
+ok "return" "$(echo "$REX" | $PY -c "import sys,json;print(json.load(sys.stdin).get('kind',''))")" \
+  "طلب المرتجع اتفتح كاستثناء من نوع return"
+
+# ── PO + فاتورة + كشف + ملاحظات
+curl -s -o /dev/null "${WH[@]}" -X POST "$B/api/workshop/orders/$O1/client-po" -d '{"clientPo":"PO-777"}'
+ok "PO-777" "$(psql "select client_po from orders where id='$O1'")" "رقم أمر الشراء بتاع الورشة اتسجّل"
+curl -s -o /dev/null "${AR2[@]}" -X POST "$B/api/orders/$O1/invoice" -d '{}'
+INV=$(curl -s "${WH[@]}" "$B/api/workshop/invoices" | $PY -c "import sys,json;print(json.load(sys.stdin)['count'])")
+ok 1 "$([ "$INV" -ge 1 ] && echo 1 || echo 0)" "الفاتورة ظهرت في فواتير البورتال"
+ST=$(curl -s "${WH[@]}" "$B/api/workshop/statement" | $PY -c "import sys,json;print(json.load(sys.stdin)['totals']['invoiced'] > 0)")
+ok "True" "$ST" "وكشف الحساب بيجمع فعلًا"
+curl -s -o /dev/null "${WH[@]}" -X POST "$B/api/workshop/notes" -d "{\"entityType\":\"rfq\",\"entityId\":\"$R1ID\",\"body\":\"ملاحظة من الورشة\"}"
+psql "insert into notes (tenant_id, environment, entity_type, entity_id, body, is_internal)
+      values ('$WS_TEN','live','rfq','$R1ID','سري داخلي', true)" >/dev/null
+NT=$(curl -s "${WH[@]}" "$B/api/workshop/notes?entityType=rfq&entityId=$R1ID")
+ok 1 "$(echo "$NT" | $PY -c "import sys,json;print(json.load(sys.stdin)['count'])")" \
+  "الملاحظة الخارجية ظاهرة والداخلية محجوبة عن الورشة"
+ok 1 "$(curl -s "${WH[@]}" "$B/api/workshop/profile" | $PY -c "import sys,json;print(1 if json.load(sys.stdin).get('name') else 0)")" \
+  "وصفحة الهوية بترجع كيان الورشة"
+
+# ── التنظيف
+# keyed on the PLATE NUMBERS, not the captured ids: a failed mid-run leaves empty variables, and
+# an id-keyed cleanup then deletes nothing while the FK debris blocks the next run.
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs)),
+       ois as (select id from order_items where order_id in (select id from os)),
+       ris as (select id from rfq_items where rfq_id in (select id from rs))
+      delete from workflow_exceptions where entity_id in (select id from ois)
+        or entity_id in (select id from ris) or entity_id in (select id from os) or entity_id in (select id from rs)" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs))
+      delete from notes where entity_id in (select id from rs) or entity_id in (select id from os)" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs))
+      delete from invoice_items where invoice_id in (select id from invoices where order_id in (select id from os));
+      " >/dev/null 2>&1 || true
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs))
+      delete from invoices where order_id in (select id from os)" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs))
+      delete from delivery_items where delivery_id in (select id from deliveries where order_id in (select id from os))" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs))
+      delete from deliveries where order_id in (select id from os)" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs)),
+       ois as (select id from order_items where order_id in (select id from os)),
+       ris as (select id from rfq_items where rfq_id in (select id from rs))
+      delete from workflow_record_state where entity_id in (select id from ois)
+        or entity_id in (select id from ris) or entity_id in (select id from os) or entity_id in (select id from rs)" >/dev/null
+psql "with rs as (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')),
+       os as (select id from orders where rfq_id in (select id from rs)),
+       ois as (select id from order_items where order_id in (select id from os)),
+       ris as (select id from rfq_items where rfq_id in (select id from rs))
+      delete from status_logs where entity_id in (select id from ois)
+        or entity_id in (select id from ris) or entity_id in (select id from os) or entity_id in (select id from rs)" >/dev/null
+psql "delete from order_items where order_id in (select id from orders where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')))" >/dev/null
+psql "delete from orders where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2'))" >/dev/null
+psql "update rfq_items set winning_vendor_quote_item_id=null where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2'))" >/dev/null
+psql "delete from rfq_vendor_items where rfq_vendor_id in (select id from rfq_vendors where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')))" >/dev/null
+psql "delete from rfq_vendors where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2'))" >/dev/null
+psql "delete from rfq_items where rfq_id in (select id from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2'))" >/dev/null
+psql "delete from notification_log where template='vendor_rfq_invite'" >/dev/null
+psql "delete from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')" >/dev/null
+ok 0 "$(psql "select count(*) from rfqs where plate_number in ('WM-0','WM-1','DBG-0','DBG-2')")" \
+  "وبلوك الورشة نضّف وراه بالكامل (بما فيه حطام أي تشغيلة سابقة)"
