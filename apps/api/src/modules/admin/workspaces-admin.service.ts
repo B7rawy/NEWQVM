@@ -88,16 +88,6 @@ export class WorkspacesAdminService {
     return { id: t.id, slug: t.slug, workflows: flows };
   }
 
-  async get(id: string) {
-    const row = (
-      await this.dbService.withContext(INTERNAL, (tx) =>
-        tx.execute(sql`select id, slug, name, is_active, settings from tenants where id = ${id}::uuid limit 1`),
-      )
-    )[0];
-    if (!row) throw new NotFoundException("workspace not found");
-    return row;
-  }
-
   /**
    * Everything about ONE workspace (super-admin drill-in). Config (users/workshops/vendors) is the
    * same in both environments; the OPERATIONAL sections (rfqs/orders/invoices) are scoped to the

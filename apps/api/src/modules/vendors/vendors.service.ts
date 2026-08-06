@@ -38,7 +38,6 @@ export const vendorStatusSchema = z.object({
   status: z.enum(["active", "suspended", "archived"]),
   tenantId: z.string().uuid().optional(),
 });
-export const linkVendorSchema = z.object({ tenantId: z.string().uuid().optional(), classification: z.string().optional() });
 export const createVendorBranchSchema = z.object({
   vendorId: z.string().uuid(),
   name: z.string().min(2),
@@ -229,18 +228,6 @@ export class VendorsService {
           order by v.legal_name`),
     );
     return { vendors: rows };
-  }
-
-  /** Link an existing global vendor to the target workspace. */
-  async link(ctx: RlsContext, vendorId: string, dto: z.infer<typeof linkVendorSchema>) {
-    const target = this.targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
-      await tx.execute(sql`
-        insert into tenant_vendors (tenant_id, vendor_id, status, classification, linked_by, created_by, updated_by)
-        values (${target}::uuid, ${vendorId}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
-        on conflict (tenant_id, vendor_id) do update set status = 'active', updated_by = ${ctx.userId}::uuid, updated_at = now()`);
-      return { ok: true };
-    });
   }
 
   async listBranches(ctx: RlsContext, vendorId: string) {

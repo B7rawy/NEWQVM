@@ -7,7 +7,6 @@ import { getContext } from "../../common/request-context.js";
 import {
   createVendorBranchSchema,
   createVendorSchema,
-  linkVendorSchema,
   updateVendorSchema,
   vendorStatusSchema,
   VendorsService,
@@ -66,11 +65,6 @@ export class VendorsController {
     return this.svc.setStatus(this.ctxOpen(req), id, vendorStatusSchema.parse(body));
   }
 
-  @Post(":id/link")
-  @PlatformOnly()
-  link(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    return this.svc.link(this.ctxOpen(req), id, linkVendorSchema.parse(body));
-  }
 
   @Get(":id/branches")
   branches(@Req() req: Request, @Param("id") id: string) {

@@ -25,7 +25,6 @@ export const createProviderSchema = z
       ctx.addIssue({ code: "custom", path: ["primaryPhone"], message: "an individual requires a mobile number" });
   });
 export const providerStatusSchema = z.object({ status: z.enum(["active", "suspended", "archived"]) });
-export const linkProviderSchema = z.object({ classification: z.string().optional(), tenantId: z.string().uuid().optional() });
 
 @Injectable()
 export class ProvidersService {
@@ -90,18 +89,6 @@ export class ProvidersService {
         update tenant_service_providers set status = ${dto.status}, updated_by = ${ctx.userId}::uuid, updated_at = now()
         where service_provider_id = ${id}::uuid and tenant_id = ${target}::uuid returning id`)) as Array<{ id: string }>;
       if (!rows[0]) throw new NotFoundException("provider not linked to this workspace");
-      return { ok: true };
-    });
-  }
-
-  /** Link an existing global provider to the target workspace (dedupe, no new row). */
-  async link(ctx: RlsContext, id: string, dto: z.infer<typeof linkProviderSchema>) {
-    const target = targetTenant(ctx, dto.tenantId);
-    return this.dbService.withContext({ tenantId: target, userId: ctx.userId, isInternal: true, environment: envOf(ctx) }, async (tx) => {
-      await tx.execute(sql`
-        insert into tenant_service_providers (tenant_id, service_provider_id, status, classification, linked_by, created_by, updated_by)
-        values (${target}::uuid, ${id}::uuid, 'active', ${dto.classification ?? null}, ${ctx.userId}::uuid, ${ctx.userId}::uuid, ${ctx.userId}::uuid)
-        on conflict (tenant_id, service_provider_id) do update set status = 'active', updated_at = now()`);
       return { ok: true };
     });
   }

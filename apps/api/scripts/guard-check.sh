@@ -3992,3 +3992,72 @@ ok 0 "$(psql "select count(*) from (
     select persona from app_pages where path in ('/overview','/management-overview')
     group by persona having count(*) > 1) x")" \
   "no portal lists two dashboards"
+
+# ── ORPHAN SURFACE ──────────────────────────────────────────────────────────────────────────────
+# The API-surface audit found these endpoints consumed by NOTHING — no web page, no script, no doc.
+# They are shipped ticket work whose UI is still "Soon", which makes this suite their only consumer:
+# if one of them rots, this is where it shows, instead of on the day somebody builds the page.
+echo "  ---- orphan surface (API ahead of its UI) ----"
+OS_V=$(psql "select tv.vendor_id from tenant_vendors tv join vendors v on v.id=tv.vendor_id
+             where tv.status='active' and v.is_active limit 1")
+OS_WB=$(psql "select wb.id from workshop_branches wb join tenant_workshops tw on tw.workshop_id=wb.workshop_id
+              where tw.status='active' and wb.is_active limit 1")
+
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendor-selfservice/stock" \
+  -d "{\"vendorId\":\"$OS_V\",\"items\":[{\"partNumber\":\"OS-P1\",\"quantity\":5,\"wholesalePrice\":40,\"retailPrice\":55}]}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor stock upload answers"
+ok 1 "$(curl -s "${AR[@]}" "$B/api/vendor-selfservice/stock/$OS_V" | $PY -c "
+import sys,json;d=json.load(sys.stdin);print(1 if isinstance(d.get('items',d.get('stock',[])),list) else 0)")" \
+  "and reads back as a list"
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendor-selfservice/pricing-policy" \
+  -d "{\"vendorId\":\"$OS_V\",\"adjustmentPct\":5}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor pricing policy accepted"
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" "$B/api/vendor-selfservice/resolve-price?vendorId=$OS_V&base=100")" \
+  "resolve-price adjusts a base price by the vendor policy"
+
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendor-finance/payments" -d "{\"vendorId\":\"$OS_V\",\"amount\":100}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor payment recorded"
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" "$B/api/vendor-finance/statement/$OS_V")" \
+  "vendor statement answers"
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendor-finance/financing" -d "{\"vendorId\":\"$OS_V\",\"requestedAmount\":5000}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "financing request accepted"
+
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendor-selection-rules" -d "{\"vendorIds\":[\"$OS_V\"]}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor selection rule created"
+OS_RFQ=$(curl -s "${AR[@]}" -X POST "$B/api/rfqs" \
+  -d "{\"workshopBranchId\":\"$OS_WB\",\"plateNumber\":\"OS-1\",\"items\":[{\"partNumber\":\"OS-P1\",\"quantity\":1}]}" \
+  | $PY -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" "$B/api/rfqs/$OS_RFQ/suggested-vendors")" \
+  "suggested-vendors answers for a live request"
+
+R=$(curl -s "${AR[@]}" -X POST "$B/api/vendors/branches" -d "{\"vendorId\":\"$OS_V\",\"name\":\"OS Branch\"}")
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor branch created"
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" "$B/api/vendors/$OS_V/branches")" \
+  "and listed"
+R=$(curl -s "${AR[@]}" -X PATCH "$B/api/vendors/$OS_V" -d '{"paymentTermsDays":30}')
+ok 1 "$(echo "$R" | $PY -c "import sys,json;d=json.load(sys.stdin);print(0 if 'statusCode' in d else 1)")" \
+  "vendor PATCH accepted"
+ok 200 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" "$B/api/org/cities")" "org/cities answers"
+
+# the four routes the audit REMOVED as duplicates must stay gone — 404, not quietly resurrected
+ok 404 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" -X POST "$B/api/vendors/$OS_V/link" -d '{}')" \
+  "the old vendors/:id/link stays removed (canonical: workspace link)"
+ok 404 "$(curl -s -o /dev/null -w '%{http_code}' "${AR[@]}" -X POST "$B/api/providers/$OS_V/link" -d '{}')" \
+  "the old providers/:id/link stays removed"
+
+psql "delete from vendor_selection_rule_vendors; delete from vendor_selection_rules;
+      delete from vendor_payment_allocations; delete from vendor_payments;
+      delete from vendor_financing_requests; delete from vendor_pricing_policies;
+      delete from vendor_stock_items where raw_part_number='OS-P1';
+      delete from vendor_branches where name='OS Branch';
+      delete from workflow_record_state; delete from status_logs;
+      delete from rfq_items where rfq_id='$OS_RFQ'; delete from rfqs where id='$OS_RFQ';
+      update vendors set payment_terms_days=null where id='$OS_V'" >/dev/null 2>&1
+ok 0 "$(psql "select count(*) from vendor_stock_items where raw_part_number='OS-P1'")" \
+  "and the orphan-surface block cleans up after itself"

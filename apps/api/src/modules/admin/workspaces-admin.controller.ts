@@ -12,7 +12,6 @@ import {
   updateWorkspaceSchema,
   WorkspacesAdminService,
 } from "./workspaces-admin.service.js";
-import { updateMembershipSchema, UsersAdminService } from "./users-admin.service.js";
 
 /** /admin/workspaces — platform-staff management of tenants (the root of the hierarchy). */
 /** URL segment → kind. One gate for every route, so widening the set is a one-line change and
@@ -28,7 +27,6 @@ function asKind(kind: string): CounterpartyKind {
 export class WorkspacesAdminController {
   constructor(
     private readonly svc: WorkspacesAdminService,
-    private readonly users: UsersAdminService,
   ) {}
 
   @Get()
@@ -41,10 +39,6 @@ export class WorkspacesAdminController {
     return this.svc.create(getContext(req).userId!, createWorkspaceSchema.parse(body));
   }
 
-  @Get(":id")
-  get(@Param("id") id: string) {
-    return this.svc.get(id);
-  }
 
   @Get(":id/detail")
   detail(@Req() req: Request, @Param("id") id: string) {
@@ -77,19 +71,4 @@ export class WorkspacesAdminController {
     return this.svc.unlinkCounterparty(getContext(req).userId!, id, asKind(kind), entityId);
   }
 
-  /** Super-admin: edit a membership INSIDE a specific workspace (cross-workspace entrance). */
-  @Patch(":id/members/:membershipId")
-  updateMember(
-    @Req() req: Request,
-    @Param("id") id: string,
-    @Param("membershipId") membershipId: string,
-    @Body() body: unknown,
-  ) {
-    const ctx = getContext(req);
-    return this.users.updateMembership(
-      { tenantId: id, userId: ctx.userId, isInternal: true, impersonatorId: ctx.impersonatorId },
-      membershipId,
-      updateMembershipSchema.parse(body),
-    );
-  }
 }

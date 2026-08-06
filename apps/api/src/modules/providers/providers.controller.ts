@@ -4,12 +4,7 @@ import { AuthGuard } from "../../common/auth.guard.js";
 import { RolesGuard } from "../../common/roles.guard.js";
 import { PlatformOnly } from "../../common/roles.decorator.js";
 import { openCtx } from "../../common/request-context.js";
-import {
-  createProviderSchema,
-  linkProviderSchema,
-  providerStatusSchema,
-  ProvidersService,
-} from "./providers.service.js";
+import { createProviderSchema, providerStatusSchema, ProvidersService } from "./providers.service.js";
 
 /** Service providers linked to the active workspace. Global directory; create/link is platform-only. */
 @Controller("providers")
@@ -35,9 +30,4 @@ export class ProvidersController {
     return this.svc.setStatus(openCtx(req), id, providerStatusSchema.parse(body));
   }
 
-  @Post(":id/link")
-  @PlatformOnly()
-  link(@Req() req: Request, @Param("id") id: string, @Body() body: unknown) {
-    return this.svc.link(openCtx(req), id, linkProviderSchema.parse(body));
-  }
 }
