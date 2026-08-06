@@ -141,7 +141,6 @@ export const platformNav: NavGroup[] = [
       { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Approvals", path: "/approvals", icon: Stamp },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
-      { label: "Management Overview", path: "/management-overview", icon: Gauge },
     ],
   },
   {
@@ -206,7 +205,7 @@ export const platformSystemNav: NavGroup[] = [
   {
     heading: "Platform",
     items: [
-      { label: "Management Overview", path: "/management-overview", icon: Gauge },
+      { label: "Overview", path: "/management-overview", icon: Gauge },
     ],
   },
   {
@@ -250,7 +249,6 @@ export const workspaceNav: NavGroup[] = [
     items: [
       { label: "My work", path: "/my-work", icon: Inbox },
       { label: "Overview", path: "/overview", icon: LayoutDashboard },
-      { label: "Management Overview", path: "/management-overview", icon: Gauge, adminOnly: true },
     ],
   },
   {

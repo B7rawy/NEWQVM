@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  Wrench,
-  ShoppingBag,
-  Building2,
   Send,
   Clock,
   PackageCheck,
@@ -22,9 +19,8 @@ import {
   Gauge,
   MapPin,
   BadgeCheck,
-  Languages,
 } from "lucide-react";
-import { Card, PageHero } from "../components/ui";
+import { Card } from "../components/ui";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Management Overview — Executive Analytics Dashboard (frontend-only rebuild).
@@ -35,8 +31,8 @@ import { Card, PageHero } from "../components/ui";
    read on both light and dark panels; structure uses semantic tokens only.
 ──────────────────────────────────────────────────────────────────────────── */
 
-type Lang = "EN" | "AR";
-const L = (lang: Lang, en: string, ar: string) => (lang === "AR" ? ar : en);
+export type Lang = "EN" | "AR";
+export const L = (lang: Lang, en: string, ar: string) => (lang === "AR" ? ar : en);
 
 /* Categorical series colours — mid-tone hues legible on light (#fff) and dark
    (#151b2b) panels alike. Structural colour comes from semantic tokens. */
@@ -57,7 +53,7 @@ const fmtNum = (n: number) => Math.round(n).toLocaleString("en-US");
 
 /* ── count-up hook driven by a shared 0→1 progress value ──────────────────── */
 const ANIM_MS = 1000;
-function useProgress(resetKey: string) {
+export function useProgress(resetKey: string) {
   const [p, setP] = useState(0);
   const raf = useRef<number | null>(null);
   const done = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -530,100 +526,22 @@ const SUPPLIERS = [
   { en: "Swift Supply", ar: "التوريد السريع", resp: 4.0, sla: 3, actual: 3.2, confirmed: 142000, lost: 18000, status: [18, 52, 7, 5, 2] },
 ];
 
-type TabKey = "workshop" | "purchasing" | "suppliers";
 
-export default function ManagementOverview() {
-  const [lang, setLang] = useState<Lang>("EN");
-  const [tab, setTab] = useState<TabKey>("workshop");
-  const progress = useProgress(`${tab}-${lang}`);
-  const rtl = lang === "AR";
-
-  const dateLine = useMemo(() => {
-    const fmt = new Intl.DateTimeFormat(lang === "AR" ? "ar-SA" : "en-GB", {
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-    return fmt.format(new Date());
-  }, [lang]);
-
-  const tabs: { key: TabKey; en: string; ar: string; icon: ReactNode }[] = [
-    { key: "workshop", en: "Workshop Reports", ar: "تقارير الورش", icon: <Wrench className="h-4 w-4" /> },
-    { key: "purchasing", en: "Purchasing Reports", ar: "تقارير المشتريات", icon: <ShoppingBag className="h-4 w-4" /> },
-    { key: "suppliers", en: "Suppliers Reports", ar: "تقارير الموردين", icon: <Building2 className="h-4 w-4" /> },
-  ];
-
-  return (
-    <div dir={rtl ? "rtl" : "ltr"} className="space-y-6">
-      <style>{`
-        @keyframes ovFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-        .ov-fade-up-inner { animation: ovFadeUp .5s cubic-bezier(.16,1,.3,1) both; }
-        .ov-fade-up { animation: ovFadeUp .5s cubic-bezier(.16,1,.3,1) both; }
-        @media (prefers-reduced-motion: reduce) {
-          .ov-fade-up, .ov-fade-up-inner { animation: none !important; }
-        }
-      `}</style>
-
-      {/* ── Hero banner (shared identity) ───────────────────────────────── */}
-      <PageHero
-        rtl={rtl}
-        breadcrumb={[L(lang, "Home", "الرئيسية"), L(lang, "Management Overview", "نظرة الإدارة العامة")]}
-        title={L(lang, "Management Overview", "نظرة الإدارة العامة")}
-        badge={
-          <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ring-1 ring-white/25">
-            {L(lang, "Demo data", "بيانات تجريبية")}
-          </span>
-        }
-        meta={dateLine}
-        description={L(
-          lang,
-          "Executive analytics across workshops, purchasing and suppliers — durations, volumes, value and SLA performance at a glance.",
-          "تحليلات تنفيذية للورش والمشتريات والموردين — المدد والأحجام والقيمة والالتزام باتفاقيات الخدمة في لمحة.",
-        )}
-        corner={
-          <button
-            onClick={() => setLang((l) => (l === "AR" ? "EN" : "AR"))}
-            className="flex items-center gap-1.5 rounded-md bg-white/15 px-2.5 py-1.5 text-[12px] font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
-          >
-            <Languages className="h-3.5 w-3.5" />
-            {lang === "AR" ? "EN" : "عربي"}
-          </button>
-        }
-      />
-
-      {/* ── Tab switcher ────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((t) => {
-          const active = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`inline-flex items-center gap-2 rounded-xl2 px-3.5 py-2 text-[13px] font-semibold transition ${
-                active
-                  ? "bg-accent text-white shadow-card"
-                  : "border border-line bg-panel text-sub hover:border-accent hover:text-accent"
-              }`}
-            >
-              {t.icon}
-              {L(lang, t.en, t.ar)}
-            </button>
-          );
-        })}
-      </div>
-
-      {tab === "workshop" && <WorkshopTab lang={lang} progress={progress} />}
-      {tab === "purchasing" && <PurchasingTab lang={lang} progress={progress} />}
-      {tab === "suppliers" && <SuppliersTab lang={lang} progress={progress} />}
-    </div>
-  );
-}
+/*  THE STANDALONE PAGE WAS REMOVED HERE.
+ *
+ *  Every design board carried one blue note on its very first row: "تحتاج دمج وتوحيد" across
+ *  Overview and Management Overview. They were two dashboards a click apart, one live and one
+ *  analytical, each with its own hero and its own idea of where you start your day.
+ *
+ *  Overview.tsx is now the single dashboard and owns the hero, the tab strip and the language
+ *  toggle. What is left in this file is what it always really was: the three report bodies, which
+ *  Overview renders as tabs beside its own Snapshot.
+ */
 
 /* ════════════════════════════════════════════════════════════════════════════
    WORKSHOP TAB
 ════════════════════════════════════════════════════════════════════════════ */
-function WorkshopTab({ lang, progress }: { lang: Lang; progress: number }) {
+export function WorkshopTab({ lang, progress }: { lang: Lang; progress: number }) {
   const sent = BRANCHES.reduce((s, b) => s + b.sent, 0);
   const pending = BRANCHES.reduce((s, b) => s + b.pending, 0);
   const delivered = BRANCHES.reduce((s, b) => s + b.delivered, 0);
@@ -762,7 +680,7 @@ function WorkshopTab({ lang, progress }: { lang: Lang; progress: number }) {
 /* ════════════════════════════════════════════════════════════════════════════
    PURCHASING TAB
 ════════════════════════════════════════════════════════════════════════════ */
-function PurchasingTab({ lang, progress }: { lang: Lang; progress: number }) {
+export function PurchasingTab({ lang, progress }: { lang: Lang; progress: number }) {
   const po = [180, 210, 195, 240, 260, 255];
   const inv = [168, 201, 182, 232, 249, 251];
   const totalPO = po.reduce((s, v) => s + v, 0); // 1340
@@ -839,7 +757,7 @@ function PurchasingTab({ lang, progress }: { lang: Lang; progress: number }) {
 /* ════════════════════════════════════════════════════════════════════════════
    SUPPLIERS TAB
 ════════════════════════════════════════════════════════════════════════════ */
-function SuppliersTab({ lang, progress }: { lang: Lang; progress: number }) {
+export function SuppliersTab({ lang, progress }: { lang: Lang; progress: number }) {
   const activeSuppliers = SUPPLIERS.length;
   const confirmedValue = SUPPLIERS.reduce((s, x) => s + x.confirmed, 0); // 1,354,000
   const lostValue = SUPPLIERS.reduce((s, x) => s + x.lost, 0); // 196,000

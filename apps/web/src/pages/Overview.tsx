@@ -28,6 +28,10 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { PageHero, Card, StatStrip, StatCard, Badge, statusTone, Spinner, EmptyState } from "../components/ui";
+import {
+  L, useProgress, WorkshopTab, PurchasingTab, SuppliersTab, type Lang,
+} from "./ManagementOverview";
+import { Wrench, ShoppingBag, Building2, Languages, LayoutDashboard } from "lucide-react";
 
 /* ────────────────────────────────────────────────────────────────────────────
    Workspace Overview — a single workspace's procurement snapshot.
@@ -474,11 +478,36 @@ const TREND_MONTHS = ["Feb", "Mar", "Apr", "May", "Jun", "Jul"];
 const TREND_RFQS = [186, 204, 195, 232, 251, 268];
 const TREND_ORDERS = [142, 168, 161, 198, 214, 231];
 
-export default function Overview() {
+/**
+ * THE DASHBOARD. One page, four tabs — Snapshot plus the three management reports.
+ *
+ * Every design board opened with the same blue note on its first row: "تحتاج دمج وتوحيد" across
+ * Overview and Management Overview. They were two dashboards one click apart, each with its own
+ * hero, its own date line and its own claim to be where your day starts. Nothing was deleted in
+ * merging them — the Snapshot below is the live procurement view, and the three report bodies moved
+ * here from ManagementOverview.tsx as tabs.
+ *
+ * The Snapshot tab needs a workspace to read from, so it is HIDDEN when none is selected: platform
+ * staff looking across all workspaces land on Workshop Reports instead of an empty page full of
+ * dashes. `defaultTab` exists for /management-overview, which still resolves so old links and the
+ * unscoped platform menu keep working.
+ */
+type DashTab = "snapshot" | "workshop" | "purchasing" | "suppliers";
+
+export default function Overview({ defaultTab }: { defaultTab?: DashTab } = {}) {
   const { activeSlug, me, workspaces } = useAuth();
   const nav = useNavigate();
   const [rfqs, setRfqs] = useState<Rfq[] | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const canSnapshot = !!activeSlug;
+  const [tab, setTab] = useState<DashTab>(defaultTab ?? (canSnapshot ? "snapshot" : "workshop"));
+  const [lang, setLang] = useState<Lang>("EN");
+  const reportProgress = useProgress(`${tab}-${lang}`);
+  // A workspace can be deselected while you are standing on Snapshot; fall through rather than
+  // render a page of dashes.
+  const active: DashTab = tab === "snapshot" && !canSnapshot ? "workshop" : tab;
+  const onReports = active !== "snapshot";
+  const rtl = onReports && lang === "AR";
 
   const load = useCallback(async () => {
     const [r, o] = await Promise.all([
@@ -563,18 +592,39 @@ export default function Overview() {
         @media (prefers-reduced-motion: reduce) { .ov-fade-up, .ov-fade-up-inner { animation: none !important; } }
       `}</style>
 
-      {/* ── Hero / welcome banner ──────────────────────────────────────────── */}
+      {/* ── Hero / welcome banner — one hero for all four tabs ─────────────── */}
       <PageHero
-        breadcrumb={["Home", "Overview"]}
-        title={`${greeting}, ${firstName} 👋`}
+        rtl={rtl}
+        breadcrumb={[L(lang, "Home", "الرئيسية"), L(lang, "Overview", "النظرة العامة")]}
+        title={onReports ? L(lang, "Management Overview", "نظرة الإدارة العامة") : `${greeting}, ${firstName} 👋`}
         badge={
           <span className="rounded-full bg-white/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white ring-1 ring-white/25">
-            {wsName}
+            {/* The report tabs are demo data and say so; hiding that behind a shared hero would be
+                the merge quietly laundering one tab's honesty into another's. */}
+            {onReports ? L(lang, "Demo data", "بيانات تجريبية") : wsName}
           </span>
         }
         meta={dateLine}
-        description="Here is a snapshot of your procurement pipeline — track requests, pricing and fulfilment, and jump straight to what needs your attention."
+        description={
+          onReports
+            ? L(lang,
+                "Executive analytics across workshops, purchasing and suppliers — durations, volumes, value and SLA performance at a glance.",
+                "تحليلات تنفيذية للورش والمشتريات والموردين — المدد والأحجام والقيمة والالتزام باتفاقيات الخدمة في لمحة.")
+            : "Here is a snapshot of your procurement pipeline — track requests, pricing and fulfilment, and jump straight to what needs your attention."
+        }
+        corner={
+          onReports ? (
+            <button
+              onClick={() => setLang((l) => (l === "AR" ? "EN" : "AR"))}
+              className="flex items-center gap-1.5 rounded-md bg-white/15 px-2.5 py-1.5 text-[12px] font-semibold text-white ring-1 ring-white/25 transition hover:bg-white/25"
+            >
+              <Languages className="h-3.5 w-3.5" />
+              {lang === "AR" ? "EN" : "عربي"}
+            </button>
+          ) : undefined
+        }
         actions={
+          onReports ? undefined : (
           <>
             <button
               onClick={() => nav("/rfqs")}
@@ -589,8 +639,39 @@ export default function Overview() {
               <Files className="h-4 w-4" /> RFQs Dashboard
             </button>
           </>
+          )
         }
       />
+
+      {/* ── The four tabs. Snapshot is dropped when there is no workspace to read. ────── */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          ...(canSnapshot ? [{ key: "snapshot" as const, en: "Snapshot", ar: "لمحة", icon: <LayoutDashboard className="h-4 w-4" /> }] : []),
+          { key: "workshop" as const,   en: "Workshop Reports",   ar: "تقارير الورش",     icon: <Wrench className="h-4 w-4" /> },
+          { key: "purchasing" as const, en: "Purchasing Reports", ar: "تقارير المشتريات", icon: <ShoppingBag className="h-4 w-4" /> },
+          { key: "suppliers" as const,  en: "Suppliers Reports",  ar: "تقارير الموردين",  icon: <Building2 className="h-4 w-4" /> },
+        ]).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`inline-flex items-center gap-2 rounded-xl2 px-3.5 py-2 text-[13px] font-semibold transition ${
+              active === t.key
+                ? "bg-accent text-white shadow-card"
+                : "border border-line bg-panel text-sub hover:border-accent hover:text-accent"
+            }`}
+          >
+            {t.icon}
+            {L(lang, t.en, t.ar)}
+          </button>
+        ))}
+      </div>
+
+      {active === "workshop" && <WorkshopTab lang={lang} progress={reportProgress} />}
+      {active === "purchasing" && <PurchasingTab lang={lang} progress={reportProgress} />}
+      {active === "suppliers" && <SuppliersTab lang={lang} progress={reportProgress} />}
+
+      {active === "snapshot" && (
+        <>
 
       {/* ── Real KPI strip (preserved) ─────────────────────────────────────── */}
       <StatStrip>
@@ -763,6 +844,8 @@ export default function Overview() {
           ))}
         </div>
       </SectionCard>
+        </>
+      )}
     </>
   );
 }

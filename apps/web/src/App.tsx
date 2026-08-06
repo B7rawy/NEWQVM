@@ -13,7 +13,6 @@ import Vendors from "./pages/Vendors";
 import VendorDetail from "./pages/VendorDetail";
 import Providers from "./pages/Providers";
 import InternalDashboard from "./pages/InternalDashboard";
-import ManagementOverview from "./pages/ManagementOverview";
 import Users from "./pages/Users";
 import Onboarding from "./pages/Onboarding";
 import OnboardingReview from "./pages/OnboardingReview";
@@ -161,7 +160,9 @@ export default function App() {
         <Route path="/internal-teams" element={<Providers only="internal" />} />
         <Route path="/admin/pages" element={<AdminPages />} />
         <Route path="/internal" element={<InternalDashboard />} />
-        <Route path="/management-overview" element={<ManagementOverview />} />
+        {/* Merged into Overview. The route stays so old links, and the unscoped platform menu,
+            still land somewhere real — on the reports the page used to be. */}
+        <Route path="/management-overview" element={<Overview defaultTab="workshop" />} />
         <Route path="/admin/users" element={<Users />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/onboarding/review" element={<OnboardingReview />} />

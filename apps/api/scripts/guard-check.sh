@@ -3986,3 +3986,9 @@ ok 0 "$(psql "select count(*) from (
   "every counterparty portal still has pages of its own, not just platform screens"
 ok 0 "$(psql "select count(*) from app_pages where persona in ('vendor','service_provider') and module = 'core'")" \
   "and portals built on their own routes own every page they show"
+# One dashboard per portal. Overview and Management Overview sat a click apart in the workspace and
+# platform menus, each with its own hero — the merge every design board asked for on its first row.
+ok 0 "$(psql "select count(*) from (
+    select persona from app_pages where path in ('/overview','/management-overview')
+    group by persona having count(*) > 1) x")" \
+  "no portal lists two dashboards"
